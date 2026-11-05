@@ -125,6 +125,10 @@ type Env struct {
 	//
 	// @decision(DL-042)
 	PlatformToken func(ctx context.Context, p config.Platform) (string, error)
+	// GhToken reads gh's token for a host. Nil runs `gh auth token`.
+	//
+	// @decision(DL-083)
+	GhToken func(ctx context.Context, host string) (string, error)
 	// SelectRepos asks the user which repositories to bootstrap when none
 	// are configured. Nil disables the interactive picker, which is what
 	// tests and non-interactive runs want. Repositories carry their

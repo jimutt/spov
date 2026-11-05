@@ -387,6 +387,13 @@ storing it, and prompts without echo so it stays out of your shell history.
 removes one. A name is a platform from config (or `github`, or
 `forgejo:<host>`, `gitea:<host>` or `gitlab:<host>`), or a provider's variable such as `ANTHROPIC_API_KEY`.
 
+If `gh` is signed in on this machine, `spov credentials add github --from-gh`
+uses its login instead of a stored token: spov keeps only a note that the
+platform's credential is gh's, and asks `gh auth token` again at each launch, so
+`gh auth logout` or a re-login takes effect at once. The token reaches what gh's
+grant does (usually `repo`, often `workflow`); the credential proxy narrows what a
+sandbox can do with it, as for any stored token. A hosted server refuses it.
+
 **Hosted.** Each user's credentials are stored on the server, encrypted, and
 used for that user's sessions and jobs. Store them from the dashboard's Settings
 page, or from the CLI with the same commands: when the CLI is pointed at a hosted

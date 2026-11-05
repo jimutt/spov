@@ -145,6 +145,10 @@ type addOptions struct {
 	KeyFile        string
 	InstallationID string
 	NoVerify       bool
+	// FromGh stores gh's own login for a local GitHub platform.
+	//
+	// @decision(DL-083)
+	FromGh bool
 }
 
 func (o addOptions) app() bool { return o.AppID != "" || o.KeyFile != "" || o.InstallationID != "" }
@@ -172,6 +176,9 @@ func newCredentialsAddCmd(env *Env) *cobra.Command {
 	cmd.Flags().StringVar(&opts.KeyFile, "key-file", "", "path to the GitHub App private key, .pem (local server)")
 	cmd.Flags().StringVar(&opts.InstallationID, "installation-id", "",
 		"GitHub App installation id; discovered from the account if omitted (local server)")
+	// @decision(DL-083)
+	cmd.Flags().BoolVar(&opts.FromGh, "from-gh", false,
+		"use gh's own login for a GitHub platform, read again at each launch (local server)")
 	cmd.Flags().BoolVar(&opts.NoVerify, "no-verify", false,
 		"store without listing repositories to check it; the platform is still contacted while being built (local server)")
 	return cmd
@@ -192,6 +199,9 @@ func addCredential(ctx context.Context, env *Env, n credentialName, opts addOpti
 		if n.Provider != "" {
 			// Silently ignoring these would accept a mistyped command and
 			// store something the user did not mean to store.
+			if opts.FromGh {
+				return fmt.Errorf("--from-gh is for a GitHub platform, not a provider key")
+			}
 			if opts.app() {
 				return fmt.Errorf("--app-id, --key-file and --installation-id configure a GitHub platform, not a provider key")
 			}
@@ -200,6 +210,9 @@ func addCredential(ctx context.Context, env *Env, n credentialName, opts addOpti
 		return addLocalPlatform(ctx, env, n.Platform, opts)
 	}
 	switch {
+	// @decision(DL-083)
+	case opts.FromGh:
+		return fmt.Errorf("--from-gh is for a local server: a hosted server never reads this machine's gh login")
 	case opts.app() && n.Provider != "":
 		return fmt.Errorf("--app-id, --key-file and --installation-id configure a GitHub platform, not a provider key")
 	case opts.app():

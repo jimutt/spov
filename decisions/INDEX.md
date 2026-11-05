@@ -2,7 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-083 | A local server can use the gh CLI's own login, opted into once and read again at each launch, and never on a hosted server | proposed | cli | distribution, credentials, gh, local |
+| DL-083 | A local server can use the gh CLI's own login, opted into once and read again at each launch, and never on a hosted server | accepted | cli | distribution, credentials, gh, local |
 | DL-082 | Each release publishes a signed multi-architecture server image to ghcr.io, and the deployment examples pin it by digest | accepted | server | distribution, deployment, image, supply-chain |
 | DL-081 | A Homebrew tap carries a cask that goreleaser writes on each published release | accepted | cli | distribution, homebrew |
 | DL-080 | install.sh is the headline install: a release asset that verifies before it unpacks, installs to ~/.local/bin, and can fetch the pinned OpenCode | accepted | cli | distribution, install, security |
