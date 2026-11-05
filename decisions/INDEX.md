@@ -2,7 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-069 | The recorder reads a conversation's messages page by page | proposed | server | server, recorder |
+| DL-069 | The recorder reads a conversation's messages page by page, newest first, until a page changes nothing in the store | accepted | server | server, recorder |
 | DL-068 | A launch carries the user's extra egress domains, bounded, beside the server's | accepted | sandbox | sandbox, egress, config |
 | DL-067 | A bad Modal environment on a by-name sandbox lookup is an error, not a missing sandbox | accepted | sandbox | sandbox, modal |
 | DL-066 | A synced launch whose checkout matches several platforms is an error | accepted | cli | cli, sync, platforms |

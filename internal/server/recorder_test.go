@@ -2,11 +2,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -108,12 +112,63 @@ func (f *fakeSandbox) fetch(_ context.Context, _ Connection, path string) ([]byt
 		}
 		return []byte(f.listing), nil
 	}
+	route, query, _ := strings.Cut(path, "?")
 	for id, body := range f.messages {
-		if path == "/api/session/"+id+"/message" {
-			return []byte(body), nil
+		if route == "/api/session/"+id+"/message" {
+			return pageOfMessages(f.t, body, query), nil
 		}
 	}
 	return nil, errors.New("no such conversation")
+}
+
+// pageOfMessages answers a /message read as the pinned build does
+// (spike S-MP1): limit, order or cursor, and a next cursor even on the
+// last page. A body that is not a {data} envelope is answered whole.
+//
+// @decision(DL-069)
+func pageOfMessages(t testing.TB, body, rawQuery string) []byte {
+	var all struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal([]byte(body), &all) != nil || all.Data == nil {
+		return []byte(body)
+	}
+	q, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		t.Errorf("the message read's query: %v", err)
+	}
+	limit, order, from := 50, q.Get("order"), 0
+	if l := q.Get("limit"); l != "" {
+		if limit, err = strconv.Atoi(l); err != nil || limit < 1 || limit > 200 {
+			t.Errorf("limit %q is outside what OpenCode accepts", l)
+		}
+	}
+	if c := q.Get("cursor"); c != "" {
+		if order != "" {
+			t.Error("a cursor was combined with an order, which OpenCode refuses")
+		}
+		parts := strings.Split(c, ":")
+		n, err := 0, error(nil)
+		if len(parts) == 3 && parts[0] == "fake" {
+			n, err = strconv.Atoi(parts[2])
+		}
+		if len(parts) != 3 || parts[0] != "fake" || err != nil {
+			t.Errorf("a cursor the fake never issued: %q", c)
+		}
+		order, from = parts[len(parts)-2], n
+	}
+	if order == "" {
+		order = "desc"
+	}
+	items := slices.Clone(all.Data)
+	if order == "desc" {
+		slices.Reverse(items)
+	}
+	to := min(from+limit, len(items))
+	from = min(from, to)
+	next := fmt.Sprintf("fake:%s:%d", order, to)
+	out, _ := json.Marshal(map[string]any{"data": items[from:to], "cursor": map[string]any{"next": next, "previous": nil}})
+	return out
 }
 
 // counts is a snapshot for assertions.
@@ -239,6 +294,174 @@ func (f *recorderFixture) messages() []store.Message {
 		f.t.Fatal(err)
 	}
 	return msgs
+}
+
+// conversationOf is n messages in the measured shape, the oldest first,
+// numbered from first. Each one's time is its number in seconds, so a
+// store listing orders them as the sandbox does.
+func conversationOf(first, n int) []string {
+	var out []string
+	for i := first; i < first+n; i++ {
+		out = append(out, fmt.Sprintf(`{"id":"msg_%05d","time":{"created":%d},"type":"user","text":"m%d"}`, i, 1788266000000+int64(i)*1000, i))
+	}
+	return out
+}
+
+func messagesBody(msgs []string) string { return `{"data":[` + strings.Join(msgs, ",") + `]}` }
+
+// messageReadsOf counts the recorder's reads of one conversation's
+// messages, a page each.
+func (f *fakeSandbox) messageReadsOf(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for path, c := range f.reads {
+		if strings.HasPrefix(path, "/api/session/"+id+"/message") {
+			n += c
+		}
+	}
+	return n
+}
+
+// A conversation longer than one page is stored whole at attach, and a
+// turn end afterwards reads what is new and one page already stored,
+// not the whole conversation again.
+//
+// @decision(DL-069)
+func TestALongConversationIsReadPageByPage(t *testing.T) {
+	f := newRecorderFixture(t)
+	f.sb.listing = `{"data":[{"id":"ses_1"}]}`
+	msgs := conversationOf(0, 2*MessagePageSize+30)
+	f.sb.messages["ses_1"] = messagesBody(msgs)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.rec.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the catch-up", func() bool { return len(f.messages()) == len(msgs) })
+	if n := f.sb.messageReadsOf("ses_1"); n != 3 {
+		t.Errorf("the catch-up read %d pages, want 3", n)
+	}
+	if got := f.messages(); got[0].OpenCodeID != "msg_00000" || got[len(got)-1].OpenCodeID != "msg_00129" {
+		t.Errorf("stored from %s to %s", got[0].OpenCodeID, got[len(got)-1].OpenCodeID)
+	}
+
+	// Sixty new messages: two pages hold something new, the third holds
+	// nothing new and ends the read.
+	msgs = append(msgs, conversationOf(len(msgs), 60)...)
+	f.sb.messages["ses_1"] = messagesBody(msgs)
+	f.sb.stream <- durableFrameFor("session.execution.succeeded", "ses_1", 1, "")
+	waitFor(t, "the turn-end read", func() bool { return len(f.messages()) == len(msgs) })
+	waitFor(t, "the read to stop", func() bool { return f.sb.messageReadsOf("ses_1") == 6 })
+
+	// Two new messages: the first page, then one page with nothing new.
+	msgs = append(msgs, conversationOf(len(msgs), 2)...)
+	f.sb.messages["ses_1"] = messagesBody(msgs)
+	f.sb.stream <- durableFrameFor("session.execution.succeeded", "ses_1", 2, "")
+	waitFor(t, "the second turn-end read", func() bool { return len(f.messages()) == len(msgs) })
+	waitFor(t, "the read to stop", func() bool { return f.sb.messageReadsOf("ses_1") == 8 })
+	time.Sleep(20 * time.Millisecond)
+	if n := f.sb.messageReadsOf("ses_1"); n != 8 {
+		t.Errorf("after two turn ends the recorder read %d pages, want 8", n)
+	}
+
+	// A redial's catch-up finds the store holding everything: one page.
+	f.sb.breakStream()
+	waitFor(t, "the second catch-up", func() bool { _, _, s, _ := f.sb.counts(); return s == 2 })
+	waitFor(t, "its read", func() bool { return f.sb.messageReadsOf("ses_1") == 9 })
+	time.Sleep(20 * time.Millisecond)
+	if n := f.sb.messageReadsOf("ses_1"); n != 9 {
+		t.Errorf("a catch-up over a stored conversation read %d pages, want 1", n-8)
+	}
+
+	// The final read on a stop takes the same one page.
+	cancel()
+	f.rec.stopAll()
+	f.rec.Final(context.Background(), auth.Principal{UserID: "u1", OrgID: "org"}, f.sess)
+	if n := f.sb.messageReadsOf("ses_1"); n != 10 {
+		t.Errorf("the final read took %d pages, want 1", n-9)
+	}
+}
+
+// A page cut short at the read bound is not JSON. The read stops there
+// and says so, rather than losing the older pages in silence.
+//
+// @decision(DL-069)
+func TestAPageCutShortIsSaid(t *testing.T) {
+	f := newRecorderFixture(t)
+	f.sb.listing = `{"data":[{"id":"ses_1"}]}`
+	f.sb.messages["ses_1"] = `{"data":[{"id":"msg_1","type":"user","text":"cut`
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.rec.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the warning", func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.warns) == 1 && strings.Contains(f.warns[0], "is not JSON")
+	})
+}
+
+// A message stored early in a span and changed later, such as a reply
+// read while it was still being written, is stored again while it is
+// within one page of the newest message the span had stored. Here it
+// lies past the first page that holds a stored message, which a read
+// stopping there would miss.
+//
+// @decision(DL-069)
+func TestAMessageReadMidTurnIsReadAgainAtTheTurnEnd(t *testing.T) {
+	f := newRecorderFixture(t)
+	f.sb.listing = `{"data":[{"id":"ses_1"}]}`
+	msgs := conversationOf(0, 60)
+	f.sb.messages["ses_1"] = messagesBody(msgs)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.rec.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the catch-up", func() bool { return len(f.messages()) == 60 })
+
+	msgs[50] = strings.Replace(msgs[50], `"text":"m50"`, `"text":"m50, finished"`, 1)
+	msgs = append(msgs, conversationOf(60, MessagePageSize-5)...)
+	f.sb.messages["ses_1"] = messagesBody(msgs)
+	f.sb.stream <- durableFrameFor("session.execution.succeeded", "ses_1", 1, "")
+	waitFor(t, "the finished message", func() bool {
+		for _, m := range f.messages() {
+			if m.OpenCodeID == "msg_00050" {
+				return m.Text == "m50, finished"
+			}
+		}
+		return false
+	})
+}
+
+// A conversation past the page bound is read to it, newest first, and
+// said.
+//
+// @decision(DL-069)
+func TestAConversationPastThePageBoundIsSaid(t *testing.T) {
+	f := newRecorderFixture(t)
+	f.rec.maxPages = 3
+	f.sb.listing = `{"data":[{"id":"ses_1"}]}`
+	f.sb.messages["ses_1"] = messagesBody(conversationOf(0, 3*MessagePageSize+7))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := f.rec.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the warning", func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		return len(f.warns) == 1 && strings.Contains(f.warns[0], "bound of 3 pages")
+	})
+	if n := f.sb.messageReadsOf("ses_1"); n != 3 {
+		t.Errorf("read %d pages past a bound of 3", n)
+	}
+	got := f.messages()
+	if len(got) != 3*MessagePageSize || got[0].OpenCodeID != "msg_00007" {
+		t.Errorf("stored %d messages from %s, want the newest %d", len(got), got[0].OpenCodeID, 3*MessagePageSize)
+	}
 }
 
 // TestTheRecorderNeverReadsOnATimer drives one capture through attach, a
