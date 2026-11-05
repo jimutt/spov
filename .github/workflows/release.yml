@@ -1,0 +1,60 @@
+name: release
+
+# A tag makes a draft release: goreleaser's archives for Linux and macOS,
+# checksums.txt signed keylessly with cosign, a build provenance
+# attestation per archive, and the Homebrew cask when the tap's token is
+# set. A person publishes the draft.
+#
+# @decision(DL-079) @decision(DL-081)
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+env:
+  GO_VERSION: "1.26"
+  GORELEASER_VERSION: "v2.18.0"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install Bun
+        run: bash scripts/install-bun.sh >> "$GITHUB_PATH"
+      - uses: sigstore/cosign-installer@v3
+      - name: Install goreleaser
+        env:
+          CGO_ENABLED: "0"
+        run: go install "github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}"
+
+      # This platform's binary, built as the release builds it, must carry
+      # the web app and the proxy and report the tag's version, or nothing
+      # is released.
+      - name: Release check
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          goreleaser build --single-target --clean --id spov -o "$RUNNER_TEMP/spov"
+          bash scripts/release-check.sh "$RUNNER_TEMP/spov" "$GITHUB_REF_NAME"
+
+      - name: Release (a draft)
+        env:
+          CGO_ENABLED: "0"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: goreleaser release --clean
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*.tar.gz"

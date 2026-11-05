@@ -24,6 +24,7 @@ import (
 	"github.com/jimutt/spov/internal/server/client"
 	"github.com/jimutt/spov/internal/session"
 	"github.com/jimutt/spov/internal/version"
+	"github.com/jimutt/spov/internal/webui"
 )
 
 // Env carries the process-level dependencies every command needs, so that
@@ -434,7 +435,7 @@ func NewRoot(env Env) *cobra.Command {
 }
 
 func newVersionCmd(env *Env) *cobra.Command {
-	var short bool
+	var short, embedded bool
 	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the spov version",
@@ -445,12 +446,32 @@ func newVersionCmd(env *Env) *cobra.Command {
 				_, err := fmt.Fprintln(env.Out, info.Version)
 				return err
 			}
-			_, err := fmt.Fprintln(env.Out, info.String())
+			if _, err := fmt.Fprintln(env.Out, info.String()); err != nil || !embedded {
+				return err
+			}
+			_, err := fmt.Fprint(env.Out, embeddedReport(webui.Built(webui.Dist()), len(proxybin.Binary()) > 0))
 			return err
 		},
 	}
 	cmd.Flags().BoolVar(&short, "short", false, "print only the version number")
+	// @decision(DL-079)
+	cmd.Flags().BoolVar(&embedded, "embedded", false, "also say whether the web app and the credential proxy are built in")
 	return cmd
+}
+
+// embeddedReport says whether the binary carries the real web app and
+// proxy or their placeholders, one `name: built|placeholder` line each,
+// which the release check reads.
+//
+// @decision(DL-079)
+func embeddedReport(web, proxy bool) string {
+	state := func(built bool) string {
+		if built {
+			return "built"
+		}
+		return "placeholder"
+	}
+	return "web: " + state(web) + "\nproxy: " + state(proxy) + "\n"
 }
 
 // deferWarning holds a message until the launch view is gone. Without a

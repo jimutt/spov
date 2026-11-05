@@ -4,9 +4,9 @@
 |----|-------|--------|-----------|------|
 | DL-083 | A local server can use the gh CLI's own login, opted into once and read again at each launch, and never on a hosted server | proposed | cli | distribution, credentials, gh, local |
 | DL-082 | Each release publishes a signed multi-architecture server image to ghcr.io, and the deployment examples pin it by digest | proposed | server | distribution, deployment, image, supply-chain |
-| DL-081 | A Homebrew tap carries a cask that goreleaser writes on each published release | proposed | cli | distribution, homebrew |
+| DL-081 | A Homebrew tap carries a cask that goreleaser writes on each published release | accepted | cli | distribution, homebrew |
 | DL-080 | install.sh is the headline install: a release asset that verifies before it unpacks, installs to ~/.local/bin, and can fetch the pinned OpenCode | proposed | cli | distribution, install, security |
-| DL-079 | A release is built by goreleaser from a tag, its checksums signed keylessly and its archives attested, and it refuses a binary without the web app or the proxy | proposed | server | distribution, release, security, supply-chain |
+| DL-079 | A release is built by goreleaser from a tag, its checksums signed keylessly and its archives attested, and it refuses a binary without the web app or the proxy | accepted | server | distribution, release, security, supply-chain |
 | DL-071 | A long session costs no scan in the memory store, and its transcript and log are gzipped | accepted | server | server, store, performance, compression |
 | DL-070 | The transcript draws a window of its newest 200 blocks, and the tail latch releases only when the reader scrolls up | accepted | web | web, transcript, performance, tail |
 | DL-069 | The recorder reads a conversation's messages page by page, newest first, until a page changes nothing in the store | accepted | server | server, recorder |
