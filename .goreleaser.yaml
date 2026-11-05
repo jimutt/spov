@@ -85,3 +85,9 @@ changelog:
 
 release:
   draft: true
+  # The installer goes with the release it installs, so its stable URL is
+  # releases/latest/download/install.sh.
+  #
+  # @decision(DL-080)
+  extra_files:
+    - glob: ./scripts/install.sh

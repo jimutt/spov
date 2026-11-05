@@ -38,6 +38,22 @@ dashboard and jobs need, not a remote host.
 
 ## Install
 
+On Linux or macOS (Windows: inside WSL), from a published release:
+
+```sh
+curl -fsSLO https://github.com/jimutt/spov/releases/latest/download/install.sh
+less install.sh                  # read it first
+sh install.sh --with-opencode    # spov to ~/.local/bin, OpenCode at the pin
+```
+
+or, trusting it unread, `curl -fsSL https://github.com/jimutt/spov/releases/latest/download/install.sh | sh`.
+The script checks the archive against the release's `checksums.txt` before
+unpacking it, and the checksums' signature when `cosign` is installed.
+`SPOV_VERSION=0.1.0` pins a release, and running it again updates spov. With
+Homebrew: `brew install jimutt/tap/spov`.
+
+### From source
+
 spov needs Go 1.26 or newer. The dashboard is built with Bun:
 
 ```sh
