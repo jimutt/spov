@@ -265,6 +265,33 @@ func (s *Service) refuseRoutedNames(ctx context.Context, orgID, userID string, r
 	return nil
 }
 
+// ErrNoProxyForRoutes refuses a launch that would attach routed
+// credentials on a server without the credential proxy.
+//
+// @decision(DL-077)
+var ErrNoProxyForRoutes = errors.New("this server has no credential proxy, so it cannot hold routed credentials")
+
+// refuseRoutesWithoutProxy refuses, at create, a launch that would
+// attach any routed credential on a server without the proxy: the
+// secret has no place but the main container, where it is never put.
+//
+// @decision(DL-077)
+func (s *Service) refuseRoutesWithoutProxy(ctx context.Context, orgID, userID string, r store.RoutedRequest) error {
+	if s.deps.ProxyImage != nil {
+		return nil
+	}
+	cands, _, err := s.heldRoutes(ctx, orgID, userID)
+	if err != nil || len(cands) == 0 {
+		return err
+	}
+	attached, _, err := attachRoutes(cands, r)
+	if err != nil || len(attached) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w: %w (%s); launch with --no-credentials, or build the server with scripts/build-proxy.sh",
+		ErrInvalidRequest, ErrNoProxyForRoutes, routedNames(attached))
+}
+
 // recordedRoutes resolves a session's recorded routed credentials again,
 // for a recreated sidecar: each in its recorded tier and with its
 // recorded route. One removed since, or whose route has changed, is left

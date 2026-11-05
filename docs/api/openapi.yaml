@@ -1841,6 +1841,50 @@ components:
       required:
         - repos
       type: object
+    SessionRoutedCredentialView:
+      additionalProperties: false
+      properties:
+        header:
+          description: The header it is set in
+          type: string
+        hosts:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        name:
+          type: string
+        paths:
+          description: The path prefixes it is set on; every path when absent
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        preset:
+          type: string
+        scheme:
+          enum:
+            - bearer
+            - basic
+            - header
+          type: string
+        tier:
+          description: "Whose credential it is: the user's own, or the organisation's"
+          enum:
+            - user
+            - org
+          type: string
+        user:
+          description: The Basic username
+          type: string
+      required:
+        - name
+        - tier
+        - hosts
+        - scheme
+      type: object
     SessionSyncRequest:
       additionalProperties: false
       properties:
@@ -1960,6 +2004,13 @@ components:
         repos:
           items:
             $ref: "#/components/schemas/RepoRef"
+          type:
+            - array
+            - "null"
+        routed_credentials:
+          description: The routed credentials the proxy holds for this session, with their hosts
+          items:
+            $ref: "#/components/schemas/SessionRoutedCredentialView"
           type:
             - array
             - "null"

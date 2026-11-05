@@ -79,6 +79,11 @@ type SessionView struct {
 	//
 	// @decision(DL-043)
 	Credentials []SandboxCredentialView `json:"credentials,omitempty" doc:"What the sandbox holds for each platform"`
+	// RoutedCredentials names each routed credential the proxy holds,
+	// with its hosts; never a secret.
+	//
+	// @decision(DL-077)
+	RoutedCredentials []SessionRoutedCredentialView `json:"routed_credentials,omitempty" doc:"The routed credentials the proxy holds for this session, with their hosts"`
 	// GitAccess is what the launch asked for; each credential says what
 	// its platform got.
 	//
@@ -122,6 +127,21 @@ type SyncExportView struct {
 	Bundle      string   `json:"bundle,omitempty" doc:"Base64-encoded git bundle of commits between base_commit and head_commit"`
 	WorktreeTar string   `json:"worktree_tar,omitempty" doc:"Base64-encoded gzipped tar of modified, staged and untracked non-ignored files"`
 	Deleted     []string `json:"deleted,omitempty" doc:"Tracked repository-relative paths deleted in the working tree or index"`
+}
+
+// SessionRoutedCredentialView is one routed credential a session's proxy
+// holds: its name, whose it is and its route, never its secret.
+//
+// @decision(DL-077)
+type SessionRoutedCredentialView struct {
+	Name   string   `json:"name"`
+	Tier   string   `json:"tier" enum:"user,org" doc:"Whose credential it is: the user's own, or the organisation's"`
+	Hosts  []string `json:"hosts"`
+	Paths  []string `json:"paths,omitempty" doc:"The path prefixes it is set on; every path when absent"`
+	Scheme string   `json:"scheme" enum:"bearer,basic,header"`
+	User   string   `json:"user,omitempty" doc:"The Basic username"`
+	Header string   `json:"header,omitempty" doc:"The header it is set in"`
+	Preset string   `json:"preset,omitempty"`
 }
 
 // SandboxCredentialView is one platform's credential kind: `renewed` is a GitHub
@@ -310,8 +330,10 @@ func viewOf(s store.Session, now time.Time) SessionView {
 		BootedImage: s.Booted.Image, InstalledAddons: s.Booted.Addons,
 		CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt, StoppedAt: s.StoppedAt,
 		Credentials: credentialViews(s.Credentials),
-		GitAccess:   s.Request.GitAccess,
-		Sync:        syncView,
+		// @decision(DL-077)
+		RoutedCredentials: routedViews(s.RoutedCredentials),
+		GitAccess:         s.Request.GitAccess,
+		Sync:              syncView,
 		EstimatedCost: round2(sandbox.EstimatedCost(
 			s.Request.Sandbox.CPU, s.Request.Sandbox.MemoryMiB,
 			// The session's whole billable life: the same helper the
@@ -320,6 +342,20 @@ func viewOf(s store.Session, now time.Time) SessionView {
 			billableWithin(s, s.CreatedAt, now),
 		)),
 	}
+}
+
+// routedViews projects a session's recorded routed credentials.
+//
+// @decision(DL-077)
+func routedViews(rs []store.SessionRoutedCredential) []SessionRoutedCredentialView {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]SessionRoutedCredentialView, len(rs))
+	for i, r := range rs {
+		out[i] = SessionRoutedCredentialView(r)
+	}
+	return out
 }
 
 // credentialViews projects a session's stored credential kinds.

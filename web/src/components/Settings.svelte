@@ -31,6 +31,7 @@
     type Field,
   } from '../lib/settings';
   import Credentials from './Credentials.svelte';
+  import RoutedCredentials from './RoutedCredentials.svelte';
   import ModelPicker from './ModelPicker.svelte';
   import OpenCodeConnect from './OpenCodeConnect.svelte';
   import OrgSettings from './OrgSettings.svelte';
@@ -307,6 +308,8 @@
   <!-- Storing or removing a key changes which models can be picked
        above, and GET /api/v1/models has already answered. -->
   <Credentials onChanged={() => void models.refresh()} />
+  <!-- @decision(DL-077) -->
+  <RoutedCredentials />
 </section>
 
 <!-- Admin only; a server that keeps no App draws nothing.
