@@ -3,7 +3,7 @@
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
 | DL-069 | The recorder reads a conversation's messages page by page | proposed | server | server, recorder |
-| DL-068 | Where a user's extra egress domains are honoured | proposed | sandbox | sandbox, egress, config |
+| DL-068 | A launch carries the user's extra egress domains, bounded, beside the server's | accepted | sandbox | sandbox, egress, config |
 | DL-067 | A bad Modal environment on a by-name sandbox lookup is an error, not a missing sandbox | accepted | sandbox | sandbox, modal |
 | DL-066 | A synced launch whose checkout matches several platforms is an error | accepted | cli | cli, sync, platforms |
 | DL-065 | The connect-token mint limit is exact across replicas | accepted | server | server, connect, postgres |

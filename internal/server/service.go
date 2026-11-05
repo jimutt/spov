@@ -270,13 +270,16 @@ func (s *Service) pruneLogs(now time.Time) {
 // forges the session's selections use, and the server's extra domains.
 //
 // @decision(DL-031)
-func (s *Service) egressFor(preset string, selections []git.Selection) (sandbox.EgressPolicy, error) {
-	policy, err := sandbox.EgressPreset(preset)
+//
+// @decision(DL-068)
+func (s *Service) egressFor(req store.SessionRequest, selections []git.Selection) (sandbox.EgressPolicy, error) {
+	policy, err := sandbox.EgressPreset(req.Egress)
 	if err != nil {
 		return sandbox.EgressPolicy{}, err
 	}
 	policy = policy.WithForgeHosts(forgeHosts(selections)...)
 	policy = policy.WithDomains(s.deps.Defaults.EgressExtraDomains...)
+	policy = policy.WithDomains(req.EgressExtraDomains...)
 	if err := policy.Validate(); err != nil {
 		return sandbox.EgressPolicy{}, err
 	}
@@ -358,6 +361,12 @@ const maxPreferences = 32
 // work; the API maps it to 422.
 var ErrInvalidRequest = errors.New("server: invalid request")
 
+// MaxEgressExtraDomains bounds the domains a request adds to its egress
+// preset, beside the server's own.
+//
+// @decision(DL-068)
+const MaxEgressExtraDomains = 16
+
 // validateRequest refuses a request before anything is created,
 // synchronously, so a bad value answers 422 rather than surfacing later
 // as a failed launch.
@@ -396,12 +405,16 @@ func (s *Service) validateRequest(req store.SessionRequest) error {
 	if strings.ContainsAny(req.Name, " /\\") {
 		problems = append(problems, "name must not contain spaces or slashes")
 	}
-	if _, err := s.egressFor(req.Egress, nil); err != nil {
+	if _, err := s.egressFor(req, nil); err != nil {
 		problems = append(problems, err.Error())
 	}
 	// @decision(DL-043)
 	if _, err := store.ParseGitAccess(string(req.GitAccess)); err != nil {
 		problems = append(problems, err.Error())
+	}
+	// @decision(DL-068)
+	if len(req.EgressExtraDomains) > MaxEgressExtraDomains {
+		problems = append(problems, fmt.Sprintf("%d extra egress domains; the limit is %d", len(req.EgressExtraDomains), MaxEgressExtraDomains))
 	}
 	// @decision(DL-027)
 	if req.Sync != nil {
@@ -547,7 +560,7 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		}
 	}
 	sb := sess.Request.Sandbox
-	egress, err := s.egressFor(sess.Request.Egress, selections)
+	egress, err := s.egressFor(sess.Request, selections)
 	if err != nil {
 		fail(err)
 		return

@@ -328,6 +328,8 @@ func sessionRequest(cfg config.Config, opts flyOptions, name string, refs []serv
 		Addons: sb.Addons,
 		Apt:    sb.Apt,
 		Egress: sb.Egress,
+		// @decision(DL-068)
+		EgressExtraDomains: sb.EgressExtraDomains,
 		Sandbox: server.SandboxConfigView{
 			CPU: sb.CPU, CPULimit: sb.CPULimit, MemoryMiB: sb.MemoryMiB, MemoryLimitMiB: sb.MemoryLimitMiB,
 			TimeoutSecs: int(sb.Timeout / time.Second), IdleSecs: int(sb.IdleTimeout / time.Second),

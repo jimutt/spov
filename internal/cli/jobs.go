@@ -179,6 +179,8 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		Addons: sb.Addons,
 		Apt:    sb.Apt,
 		Egress: sb.Egress,
+		// @decision(DL-068)
+		EgressExtraDomains: sb.EgressExtraDomains,
 		// No timeout and no idle timeout: the server derives both from
 		// the job's wall clock and ignores the request's.
 		//

@@ -198,6 +198,8 @@ type SessionRequest struct {
 	Image   string            `json:"image,omitempty"`
 	Sandbox SandboxConfigView `json:"sandbox,omitempty"`
 	Egress  string            `json:"egress,omitempty" doc:"Egress preset name"`
+	// @decision(DL-068)
+	EgressExtraDomains []string `json:"egress_extra_domains,omitempty" maxItems:"16" doc:"Domains added to the egress preset (not with open), at most 16"`
 	// Model is OpenCode's own provider/model identifier. Omitted means
 	// whatever OpenCode resolves.
 	//
@@ -248,7 +250,8 @@ func (r SessionRequest) toStore() (store.SessionRequest, error) {
 	}
 	return store.SessionRequest{
 		Name: r.Name, Repos: repos, Landing: r.Landing, Image: r.Image, Egress: r.Egress,
-		Sandbox: r.Sandbox.toStore(), GitName: r.Git.Name, GitEmail: r.Git.Email,
+		EgressExtraDomains: r.EgressExtraDomains,
+		Sandbox:            r.Sandbox.toStore(), GitName: r.Git.Name, GitEmail: r.Git.Email,
 		Model:     r.Model,
 		GitAccess: r.GitAccess, GitAccessPreferred: r.GitAccessPreferred,
 		// @decision(DL-042)

@@ -176,7 +176,7 @@ func (s *Service) recreateSidecar(ctx context.Context, sess store.Session, h san
 	if err != nil {
 		return err
 	}
-	egress, err := s.egressFor(sess.Request.Egress, selections)
+	egress, err := s.egressFor(sess.Request, selections)
 	if err != nil {
 		return err
 	}

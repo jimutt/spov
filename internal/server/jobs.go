@@ -254,6 +254,8 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string) (store.Session
 		Landing: req.Landing,
 		Image:   req.Image,
 		Egress:  req.Egress,
+		// @decision(DL-068)
+		EgressExtraDomains: req.EgressExtraDomains,
 		// A job's timeout follows from its clock (jobClock), so the
 		// request's own is not validated against anything.
 		//
