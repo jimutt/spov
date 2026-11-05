@@ -101,6 +101,12 @@ type Options struct {
 	//
 	// @decision(DL-034)
 	ProviderAPIs map[string]credproxy.ProviderAPI
+	// Routes are the routed credentials the session holds. They need the
+	// proxy: the main container holds only a placeholder for each, and a
+	// launch without the proxy refuses them.
+	//
+	// @decision(DL-072) @decision(DL-077)
+	Routes []credproxy.Route
 	// Identity is the author commits made in the sandbox are attributed
 	// to. Either half may be empty.
 	//
@@ -310,6 +316,15 @@ const defaultHealthTimeout = 3 * time.Minute
 //
 // @decision(DL-029)
 func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err error) {
+	// A routed credential has no fallback into the main container, so
+	// a launcher without the proxy refuses it before anything is minted.
+	//
+	// @decision(DL-077)
+	if l.ProxyImage == nil && len(opts.Routes) > 0 {
+		return nil, ErrRoutesNeedTheProxy
+	}
+	// @decision(DL-072)
+	opts.Egress = opts.Egress.WithRouteHosts(routeHosts(opts.Routes)...)
 	password, err := l.newPassword()
 	if err != nil {
 		return nil, err
@@ -997,8 +1012,23 @@ func (l *Launcher) proxyFor(ctx context.Context, tokens []git.PlatformToken, opt
 		return nil, nil
 	}
 	return buildProxy(ctx, l.ProxyImage, tokens, opts.Selections, KeyProviders(opts.ProviderKeys, opts.ProviderAPIs),
-		opts.Egress, l.now(), nil)
+		opts.Routes, opts.Egress, l.now(), nil)
 }
+
+// routeHosts are every host of routes, in order.
+func routeHosts(routes []credproxy.Route) []string {
+	var out []string
+	for _, r := range routes {
+		out = append(out, r.Hosts...)
+	}
+	return out
+}
+
+// ErrRoutesNeedTheProxy refuses a launch holding routed credentials on a
+// launcher without the proxy.
+//
+// @decision(DL-077)
+var ErrRoutesNeedTheProxy = errors.New("session: routed credentials need the credential proxy, which this build lacks")
 
 // KeyProviders are the provider keys the proxy holds: each key whose
 // variable has an API, trimmed, in variable order. A key without one
@@ -1039,9 +1069,10 @@ type ProxySidecar struct {
 //
 // @decision(DL-034)
 func NewProxySidecar(ctx context.Context, image func(context.Context) (string, error), tokens []git.PlatformToken,
-	selections []git.Selection, providers []credproxy.Provider, egress sandbox.EgressPolicy, now time.Time, ca *ProxyCA,
+	selections []git.Selection, providers []credproxy.Provider, routes []credproxy.Route, egress sandbox.EgressPolicy,
+	now time.Time, ca *ProxyCA,
 ) (*ProxySidecar, error) {
-	p, err := buildProxy(ctx, image, tokens, selections, providers, egress, now, ca)
+	p, err := buildProxy(ctx, image, tokens, selections, providers, routes, egress, now, ca)
 	if err != nil || p == nil {
 		return nil, err
 	}
@@ -1054,7 +1085,8 @@ func NewProxySidecar(ctx context.Context, image func(context.Context) (string, e
 //
 // @decision(DL-034)
 func buildProxy(ctx context.Context, imageFor func(context.Context) (string, error), tokens []git.PlatformToken,
-	selections []git.Selection, providers []credproxy.Provider, egress sandbox.EgressPolicy, now time.Time, reuse *ProxyCA,
+	selections []git.Selection, providers []credproxy.Provider, routes []credproxy.Route, egress sandbox.EgressPolicy,
+	now time.Time, reuse *ProxyCA,
 ) (*credentialProxy, error) {
 	kinds := platformKinds(selections)
 	repos, bases := proxyRepos(selections)
@@ -1071,6 +1103,11 @@ func buildProxy(ctx context.Context, imageFor func(context.Context) (string, err
 			ids[sel.Platform.Name()] = git.ProjectIDs(ctx, sel)
 		}
 	}
+	// A recreated sidecar is given the egress without its routes' hosts,
+	// so they are added here as they are at launch.
+	//
+	// @decision(DL-072)
+	egress = egress.WithRouteHosts(routeHosts(routes)...)
 	cfg := credproxy.SidecarConfig{}
 	placeholders := make(map[string]string, len(tokens))
 	for _, t := range tokens {
@@ -1107,7 +1144,16 @@ func buildProxy(ctx context.Context, imageFor func(context.Context) (string, err
 		placeholders[p.Env] = ph
 		keys = append(keys, p.Env)
 	}
-	if len(cfg.Platforms) == 0 && len(cfg.Providers) == 0 {
+	// @decision(DL-072)
+	for _, r := range routes {
+		ph, err := credproxy.Placeholder(r.Secret)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Routes = append(cfg.Routes, r)
+		placeholders[credproxy.RouteEnvVar(r.Name)] = ph
+	}
+	if len(cfg.Platforms) == 0 && len(cfg.Providers) == 0 && len(cfg.Routes) == 0 {
 		return nil, nil
 	}
 	if err := cfg.Validate(); err != nil {
