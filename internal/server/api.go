@@ -403,7 +403,8 @@ func (s *Server) Handler() http.Handler {
 			s.web.ServeHTTP(w, r)
 			return
 		}
-		owned.ServeHTTP(w, r)
+		// @decision(DL-071)
+		withCompression(owned).ServeHTTP(w, r)
 	})
 }
 
