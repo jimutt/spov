@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -34,6 +33,14 @@ type Memory struct {
 	conversations map[string]Conversation
 	messages      map[string]Message
 	events        map[string]Event
+	// The indexes over messages and events, so a write or a read of a
+	// long session costs no scan of every row. They are derived, and
+	// shared with a transaction's view like the maps.
+	//
+	// @decision(DL-071)
+	eventsBySession map[string][]string // event IDs in Pos order
+	eventSeqs       map[convSeq]bool    // the OpenCode sequences stored
+	messageKeys     map[convMessage]string
 	// proxyCAs are the sealed proxy CAs, by session ID.
 	//
 	// @decision(DL-034)
@@ -46,6 +53,13 @@ type Memory struct {
 	// eventPos is the last Pos handed out; it only ever grows, which is
 	// what makes Pos a cursor.
 	eventPos int64
+	// undo is a transaction view's journal: one entry per write to the
+	// conversations, messages or events, run newest first on rollback.
+	// Those maps grow with a session, so they are journalled rather than
+	// copied at every transaction.
+	//
+	// @decision(DL-071)
+	undo *[]func()
 	// inTx marks a store handed to a Tx callback: it holds the lock
 	// already, so its methods must not take it again. done is set when
 	// the callback returns, so a retained view fails instead of racing.
@@ -56,21 +70,24 @@ type Memory struct {
 // NewMemory returns an empty memory store.
 func NewMemory() *Memory {
 	return &Memory{
-		sessions:       map[string]Session{},
-		proxyCAs:       map[string]proxyCA{},
-		mints:          map[string]Mint{},
-		users:          map[string]User{},
-		tokens:         map[string]APIToken{},
-		deviceCodes:    map[string]DeviceCode{},
-		credentials:    map[string]UserCredential{},
-		allowlist:      map[string]AllowlistEntry{},
-		orgCredentials: map[string]OrgCredential{},
-		conversations:  map[string]Conversation{},
-		messages:       map[string]Message{},
-		events:         map[string]Event{},
-		jobs:           map[string]Job{},
-		deliverables:   map[string]map[string]Deliverable{},
-		jobFiles:       map[string]map[string]JobFile{},
+		sessions:        map[string]Session{},
+		proxyCAs:        map[string]proxyCA{},
+		mints:           map[string]Mint{},
+		users:           map[string]User{},
+		tokens:          map[string]APIToken{},
+		deviceCodes:     map[string]DeviceCode{},
+		credentials:     map[string]UserCredential{},
+		allowlist:       map[string]AllowlistEntry{},
+		orgCredentials:  map[string]OrgCredential{},
+		conversations:   map[string]Conversation{},
+		messages:        map[string]Message{},
+		events:          map[string]Event{},
+		eventsBySession: map[string][]string{},
+		eventSeqs:       map[convSeq]bool{},
+		messageKeys:     map[convMessage]string{},
+		jobs:            map[string]Job{},
+		deliverables:    map[string]map[string]Deliverable{},
+		jobFiles:        map[string]map[string]JobFile{},
 	}
 }
 
@@ -162,15 +179,16 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	codes, creds := cloneMap(m.deviceCodes), cloneMap(m.credentials)
 	allowed := cloneMap(m.allowlist)
 	orgCreds, admin := cloneMap(m.orgCredentials), slices.Clone(m.adminEvents)
-	convs, msgs, evs := cloneMap(m.conversations), cloneMap(m.messages), cloneMap(m.events)
 	jobs := cloneMap(m.jobs)
+	var undo []func()
 	pos := m.eventPos
 	view := &Memory{Now: m.Now, sessions: m.sessions, mints: m.mints,
 		users: m.users, tokens: m.tokens, deviceCodes: m.deviceCodes,
 		credentials: m.credentials, allowlist: m.allowlist,
 		orgCredentials: m.orgCredentials, adminEvents: m.adminEvents,
 		conversations: m.conversations, messages: m.messages, events: m.events,
-		jobs: m.jobs, eventPos: m.eventPos, inTx: true}
+		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
+		jobs: m.jobs, eventPos: m.eventPos, undo: &undo, inTx: true}
 	committed := false
 	defer func() {
 		view.done = true
@@ -186,7 +204,9 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		m.deviceCodes, m.credentials = codes, creds
 		m.allowlist = allowed
 		m.orgCredentials, m.adminEvents = orgCreds, admin
-		m.conversations, m.messages, m.events = convs, msgs, evs
+		for i := len(undo) - 1; i >= 0; i-- {
+			undo[i]()
+		}
 		m.jobs = jobs
 		m.eventPos = pos
 	}()
@@ -195,6 +215,40 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	}
 	committed = true
 	return nil
+}
+
+// convSeq and convMessage are the keys of the memory store's indexes.
+type convSeq struct {
+	conversation string
+	seq          int64
+}
+
+type convMessage struct {
+	conversation, opencodeID string
+}
+
+// journal records how to undo a write, inside a transaction only.
+func (m *Memory) journal(undo func()) {
+	if m.undo != nil {
+		*m.undo = append(*m.undo, undo)
+	}
+}
+
+// indexEvent adds a stored event to the indexes. Events are stored in
+// Pos order, so appending keeps each session's list sorted.
+func (m *Memory) indexEvent(e Event) {
+	m.eventsBySession[e.SessionID] = append(m.eventsBySession[e.SessionID], e.ID)
+	if e.Source == SourceOpenCode {
+		m.eventSeqs[convSeq{e.ConversationID, e.Seq}] = true
+	}
+	m.journal(func() {
+		delete(m.events, e.ID)
+		ids := m.eventsBySession[e.SessionID]
+		m.eventsBySession[e.SessionID] = ids[:len(ids)-1]
+		if e.Source == SourceOpenCode {
+			delete(m.eventSeqs, convSeq{e.ConversationID, e.Seq})
+		}
+	})
 }
 
 func cloneMap[V any](in map[string]V) map[string]V {
@@ -1037,7 +1091,9 @@ func (s memConversations) UpsertConversation(_ context.Context, c Conversation) 
 			cur.Title = c.Title
 		}
 		cur.UpdatedAt = now
+		old := s.m.conversations[cur.ID]
 		s.m.conversations[cur.ID] = *cur
+		s.m.journal(func() { s.m.conversations[old.ID] = old })
 		return *cur, nil
 	}
 	if _, ok := s.m.conversations[c.ID]; ok {
@@ -1048,6 +1104,7 @@ func (s memConversations) UpsertConversation(_ context.Context, c Conversation) 
 	}
 	c.UpdatedAt = now
 	s.m.conversations[c.ID] = c
+	s.m.journal(func() { delete(s.m.conversations, c.ID) })
 	return c, nil
 }
 
@@ -1100,9 +1157,11 @@ func (s memConversations) PutMessages(_ context.Context, msgs []Message) (int, e
 				bytes.Equal(cur.Raw, msg.Raw) {
 				continue
 			}
+			old := *cur
 			cur.Role, cur.Text, cur.At = msg.Role, msg.Text, msg.At
 			cur.Raw = copyBytes(msg.Raw)
 			s.m.messages[cur.ID] = *cur
+			s.m.journal(func() { s.m.messages[old.ID] = old })
 			changed++
 			continue
 		}
@@ -1119,18 +1178,24 @@ func (s memConversations) PutMessages(_ context.Context, msgs []Message) (int, e
 		// the same empty value Postgres gives.
 		msg.Raw = copyBytes(msg.Raw)
 		s.m.messages[msg.ID] = msg
+		key := convMessage{msg.ConversationID, msg.OpenCodeID}
+		s.m.messageKeys[key] = msg.ID
+		s.m.journal(func() {
+			delete(s.m.messages, msg.ID)
+			delete(s.m.messageKeys, key)
+		})
 		changed++
 	}
 	return changed, nil
 }
 
 func (s memConversations) messageByKey(conversationID, opencodeID string) *Message {
-	for _, m := range s.m.messages {
-		if m.ConversationID == conversationID && m.OpenCodeID == opencodeID {
-			return &m
-		}
+	id, ok := s.m.messageKeys[convMessage{conversationID, opencodeID}]
+	if !ok {
+		return nil
 	}
-	return nil
+	m := s.m.messages[id]
+	return &m
 }
 
 func compareMessages(a, b Message) int {
@@ -1210,33 +1275,53 @@ func (s memConversations) PutEvents(_ context.Context, evs []Event) ([]Event, er
 		// empty value Postgres gives.
 		ev.Raw = copyBytes(ev.Raw)
 		s.m.events[ev.ID] = ev
+		s.m.indexEvent(ev)
 		out = append(out, copyEvent(ev))
 	}
 	return out, nil
 }
 
 func (s memConversations) eventStored(conversationID string, seq int64) bool {
-	for _, e := range s.m.events {
-		if e.Source == SourceOpenCode && e.ConversationID == conversationID && e.Seq == seq {
-			return true
-		}
-	}
-	return false
+	return s.m.eventSeqs[convSeq{conversationID, seq}]
+}
+
+// sessionEvents is a session's events in Pos order.
+func (s memConversations) sessionEvents(sessionID string) []string {
+	return s.m.eventsBySession[sessionID]
 }
 
 func (s memConversations) ListEvents(_ context.Context, orgID, sessionID string, after int64, limit int) ([]Event, error) {
 	defer s.m.lock()()
+	ids := s.sessionEvents(sessionID)
+	// The first event past after; comparing without after+1, which
+	// wraps at the largest cursor.
+	from, _ := slices.BinarySearchFunc(ids, after, func(id string, after int64) int {
+		if s.m.events[id].Pos <= after {
+			return -1
+		}
+		return 1
+	})
 	var out []Event
-	for _, e := range s.m.events {
-		if e.OrgID == orgID && e.SessionID == sessionID && e.Pos > after {
+	for _, id := range ids[from:] {
+		if limit > 0 && len(out) == limit {
+			break
+		}
+		if e := s.m.events[id]; e.OrgID == orgID {
 			out = append(out, copyEvent(e))
 		}
 	}
-	slices.SortFunc(out, func(a, b Event) int { return cmp.Compare(a.Pos, b.Pos) })
-	if limit > 0 && len(out) > limit {
-		out = out[:limit]
-	}
 	return out, nil
+}
+
+// lastEvent is a session's newest event that match accepts.
+func (s memConversations) lastEvent(orgID, sessionID string, match func(Event) bool) (Event, error) {
+	ids := s.sessionEvents(sessionID)
+	for i := len(ids) - 1; i >= 0; i-- {
+		if e := s.m.events[ids[i]]; e.OrgID == orgID && match(e) {
+			return copyEvent(e), nil
+		}
+	}
+	return Event{}, ErrNotFound
 }
 
 // LastEvent implements ConversationStore.
@@ -1244,20 +1329,7 @@ func (s memConversations) ListEvents(_ context.Context, orgID, sessionID string,
 // @decision(DL-018)
 func (s memConversations) LastEvent(_ context.Context, orgID, sessionID string) (Event, error) {
 	defer s.m.lock()()
-	var last Event
-	found := false
-	for _, e := range s.m.events {
-		if e.OrgID != orgID || e.SessionID != sessionID {
-			continue
-		}
-		if !found || e.Pos > last.Pos {
-			last, found = e, true
-		}
-	}
-	if !found {
-		return Event{}, ErrNotFound
-	}
-	return copyEvent(last), nil
+	return s.lastEvent(orgID, sessionID, func(Event) bool { return true })
 }
 
 // FindEvent implements ConversationStore.
@@ -1265,20 +1337,7 @@ func (s memConversations) LastEvent(_ context.Context, orgID, sessionID string) 
 // @decision(DL-052)
 func (s memConversations) FindEvent(_ context.Context, orgID, sessionID, name string, contains []byte) (Event, error) {
 	defer s.m.lock()()
-	var last Event
-	found := false
-	for _, e := range s.m.events {
-		if e.OrgID != orgID || e.SessionID != sessionID || e.Name != name || !bytes.Contains(e.Raw, contains) {
-			continue
-		}
-		if !found || e.Pos > last.Pos {
-			last, found = e, true
-		}
-	}
-	if !found {
-		return Event{}, ErrNotFound
-	}
-	return copyEvent(last), nil
+	return s.lastEvent(orgID, sessionID, func(e Event) bool { return e.Name == name && bytes.Contains(e.Raw, contains) })
 }
 
 // LastSeqs implements ConversationStore.
@@ -1287,8 +1346,9 @@ func (s memConversations) FindEvent(_ context.Context, orgID, sessionID, name st
 func (s memConversations) LastSeqs(_ context.Context, orgID, sessionID string) (map[string]int64, error) {
 	defer s.m.lock()()
 	out := map[string]int64{}
-	for _, e := range s.m.events {
-		if e.OrgID != orgID || e.SessionID != sessionID || e.Source != SourceOpenCode {
+	for _, id := range s.sessionEvents(sessionID) {
+		e := s.m.events[id]
+		if e.OrgID != orgID || e.Source != SourceOpenCode {
 			continue
 		}
 		if e.Seq > out[e.ConversationID] {
@@ -1303,20 +1363,7 @@ func (s memConversations) LastSeqs(_ context.Context, orgID, sessionID string) (
 // @decision(DL-021)
 func (s memConversations) LastEventExcept(_ context.Context, orgID, sessionID string, except []string) (Event, error) {
 	defer s.m.lock()()
-	var last Event
-	found := false
-	for _, e := range s.m.events {
-		if e.OrgID != orgID || e.SessionID != sessionID || slices.Contains(except, e.Name) {
-			continue
-		}
-		if !found || e.Pos > last.Pos {
-			last, found = e, true
-		}
-	}
-	if !found {
-		return Event{}, ErrNotFound
-	}
-	return copyEvent(last), nil
+	return s.lastEvent(orgID, sessionID, func(e Event) bool { return !slices.Contains(except, e.Name) })
 }
 
 func copyEvent(e Event) Event {

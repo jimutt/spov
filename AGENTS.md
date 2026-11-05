@@ -6,12 +6,12 @@ Go CLI that launches OpenCode 2 sessions in on-demand Modal sandboxes. `spov ser
 
 - `cmd/spov`: entrypoint. Keep it thin; logic lives in `internal/`.
 - `internal/cli`: cobra tree and TUI. Talks to the server over HTTP and never calls `session.Launcher` (DL-002). It imports `internal/session` only for the client proxy and step types.
-- `internal/server`: HTTP API (huma), middleware, `spov serve`, job creation and the job HTTP surface.
+- `internal/server`: HTTP API (huma), middleware, `spov serve`, job creation and the job HTTP surface. Only a session's transcript and log are gzipped (`compressedReads`). Their text is not redacted; they are safe from BREACH because they hold no spov credential and the browser guard refuses cross-site requests, so a read joins them only on the same terms. The stream's writer must flush the compressor (DL-071; `TestTheLogStreamsGzippedEventByEvent`).
 - `internal/jobs`: the supervisor. Run loop, job state machine, the three gates (DL-050), prep pass, River worker, sweeps. Job code is split by receiver: `*Service` stays in `server`, `*Supervisor` lives here (DL-046). It reaches the server only through `Supervisor`'s function seams. Importing `internal/server` from here is an import cycle.
 - `internal/prep`: the control plane's only outbound model call (DL-047).
 - `internal/redact`: the credential filter shared by `server` and `jobs` (DL-046).
 - `internal/auth`: principal and authenticators. `internal/credentials`: stored secrets.
-- `internal/store`: the `Store` interface, with memory (local) and Postgres (hosted) implementations (DL-003).
+- `internal/store`: the `Store` interface, with memory (local) and Postgres (hosted) implementations (DL-003). The memory store keeps indexes over its events and messages; a new read must use them and a new write must update them and journal its undo, or a long session turns it back into a scan (DL-071; `TestMemoryIndexesFollowARolledBackTransaction`).
 - `internal/session`, `sandbox`, `opencode`, `git`, `proxy`: the launch core, driven by the server.
 - `internal/config`: layered config from the user file, the project file and `SPOV_*` (DL-026). A project file may not set `server.url` or `platforms`, and `spov serve` reads none (`Env.ServerConfig`, `config.LoadUser`) (DL-026; `TestAProjectFileCannotRedirectCredentials`).
 - `internal/version`: build identity, stamped by goreleaser ldflags.
