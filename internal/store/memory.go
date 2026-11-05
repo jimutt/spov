@@ -555,6 +555,15 @@ func copySession(s Session) Session {
 		s.Request.Sync = &sync
 	}
 	s.Booted.Addons = slices.Clone(s.Booted.Addons)
+	// @decision(DL-075)
+	s.RoutedCredentials = slices.Clone(s.RoutedCredentials)
+	for i := range s.RoutedCredentials {
+		s.RoutedCredentials[i].Hosts = slices.Clone(s.RoutedCredentials[i].Hosts)
+		s.RoutedCredentials[i].Paths = slices.Clone(s.RoutedCredentials[i].Paths)
+	}
+	s.Request.Routed.Names = slices.Clone(s.Request.Routed.Names)
+	s.Request.Routed.Preferred = slices.Clone(s.Request.Routed.Preferred)
+	s.Request.Routed.Needs = slices.Clone(s.Request.Routed.Needs)
 	if s.StoppedAt != nil {
 		t := *s.StoppedAt
 		s.StoppedAt = &t

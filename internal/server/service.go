@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/auth"
+	"github.com/jimutt/spov/internal/credproxy"
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
@@ -151,6 +152,10 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	// @decision(DL-043)
 	req.GitAccess, req.GitAccessPreferred = resolveGitAccess(req.GitAccess, req.GitAccessPreferred, profile.DefaultGitAccess)
 	if err := s.refuseGitAccess(ctx, p.OrgID, p.UserID, req); err != nil {
+		return store.Session{}, err
+	}
+	// @decision(DL-075)
+	if err := s.refuseRoutedNames(ctx, p.OrgID, p.UserID, req.Routed); err != nil {
 		return store.Session{}, err
 	}
 	// The caller's own limits, checked before anything billable. The
@@ -590,6 +595,21 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		log.Note(consoleNote)
 	}
 	providerKeys = withConsoleKey(providerKeys, consoleToken)
+	// Read at launch, so a credential stored since needs no restart.
+	//
+	// @decision(DL-075) @decision(DL-073)
+	routed, routedNotes, err := s.routesFor(ctx, sess)
+	if err != nil {
+		fail(err)
+		return
+	}
+	for _, n := range routedNotes {
+		log.Note(n)
+	}
+	proxied := make([]credproxy.Route, len(routed))
+	for i, c := range routed {
+		proxied[i] = c.Proxied()
+	}
 	if len(providerKeys) == 0 {
 		log.Note("no model provider key is configured (ANTHROPIC_API_KEY and friends), so the agent cannot reach a model")
 	}
@@ -669,7 +689,9 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		ProviderKeys:   providerKeys,
 		// @decision(DL-034)
 		ProviderAPIs: prep.ProviderAPIs(),
-		Identity:     identity,
+		// @decision(DL-072) @decision(DL-075)
+		Routes:   proxied,
+		Identity: identity,
 	}
 	// @decision(DL-027)
 	if sess.Request.Sync != nil {
@@ -714,6 +736,14 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	sess.Landing = live.Landing
 	// @decision(DL-042)
 	sess.Credentials = withTiers(storedCredentials(live.Credentials, true), tiers)
+	// @decision(DL-075)
+	sess.RoutedCredentials = nil
+	for _, c := range routed {
+		sess.RoutedCredentials = append(sess.RoutedCredentials, c.record())
+	}
+	if len(routed) > 0 {
+		log.Note("the proxy holds routed credentials " + routedNames(routed))
+	}
 	// @decision(DL-033)
 	sess.Booted = store.BootedImage{Image: pick.image, Addons: toolchain.Installed(pick.addons)}
 	noteStoredTokens(log, live.Credentials)

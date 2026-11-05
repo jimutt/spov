@@ -969,6 +969,10 @@ export interface components {
             credential_preference?: {
                 [key: string]: string;
             };
+            /** @description Attach exactly these routed credentials, asked-only ones included */
+            credentials?: string[] | null;
+            /** @description The configuration's narrowing: keep only these of the default, or none for none; it never adds one */
+            credentials_preferred?: string[] | null;
             /** @description Egress preset name */
             egress?: string;
             /** @description Domains added to the egress preset (not with open), at most 16 */
@@ -997,6 +1001,10 @@ export interface components {
             max_duration_preferred?: boolean;
             /** @description Model to run on, as provider/model; OpenCode's default when empty */
             model?: string;
+            /** @description Hosts the project needs; the launch notes any no routed credential covers */
+            needs?: string[] | null;
+            /** @description Attach no routed credential */
+            no_credentials?: boolean;
             repos: components["schemas"]["RepoRef"][] | null;
             sandbox?: components["schemas"]["SandboxConfigView"];
         };
@@ -1517,6 +1525,10 @@ export interface components {
             credential_preference?: {
                 [key: string]: string;
             };
+            /** @description Attach exactly these routed credentials, asked-only ones included */
+            credentials?: string[] | null;
+            /** @description The configuration's narrowing: keep only these of the default, or none for none; it never adds one */
+            credentials_preferred?: string[] | null;
             /** @description Egress preset name */
             egress?: string;
             /** @description Domains added to the egress preset (not with open), at most 16 */
@@ -1536,6 +1548,10 @@ export interface components {
             model?: string;
             /** @description Session and sandbox name; generated when empty */
             name?: string;
+            /** @description Hosts the project needs; the launch notes any no routed credential covers */
+            needs?: string[] | null;
+            /** @description Attach no routed credential */
+            no_credentials?: boolean;
             repos: components["schemas"]["RepoRef"][] | null;
             sandbox?: components["schemas"]["SandboxConfigView"];
             /** @description Seed the repository from a local git branch and commit */

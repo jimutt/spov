@@ -627,6 +627,22 @@ components:
             type: string
           description: "Per configured platform, the credential tried first: user (your own, the default) or org (the organisation's)"
           type: object
+        credentials:
+          description: Attach exactly these routed credentials, asked-only ones included
+          items:
+            type: string
+          maxItems: 96
+          type:
+            - array
+            - "null"
+        credentials_preferred:
+          description: "The configuration's narrowing: keep only these of the default, or none for none; it never adds one"
+          items:
+            type: string
+          maxItems: 96
+          type:
+            - array
+            - "null"
         egress:
           description: Egress preset name
           type: string
@@ -673,6 +689,17 @@ components:
         model:
           description: Model to run on, as provider/model; OpenCode's default when empty
           type: string
+        needs:
+          description: Hosts the project needs; the launch notes any no routed credential covers
+          items:
+            type: string
+          maxItems: 16
+          type:
+            - array
+            - "null"
+        no_credentials:
+          description: Attach no routed credential
+          type: boolean
         repos:
           items:
             $ref: "#/components/schemas/RepoRef"
@@ -1738,6 +1765,22 @@ components:
             type: string
           description: "Per configured platform, the credential tried first: user (your own, the default) or org (the organisation's); the other is used only when that one is absent"
           type: object
+        credentials:
+          description: Attach exactly these routed credentials, asked-only ones included
+          items:
+            type: string
+          maxItems: 96
+          type:
+            - array
+            - "null"
+        credentials_preferred:
+          description: "The configuration's narrowing: keep only these of the default, or none for none; it never adds one"
+          items:
+            type: string
+          maxItems: 96
+          type:
+            - array
+            - "null"
         egress:
           description: Egress preset name
           type: string
@@ -1772,6 +1815,17 @@ components:
           description: Session and sandbox name; generated when empty
           maxLength: 63
           type: string
+        needs:
+          description: Hosts the project needs; the launch notes any no routed credential covers
+          items:
+            type: string
+          maxItems: 16
+          type:
+            - array
+            - "null"
+        no_credentials:
+          description: Attach no routed credential
+          type: boolean
         repos:
           items:
             $ref: "#/components/schemas/RepoRef"

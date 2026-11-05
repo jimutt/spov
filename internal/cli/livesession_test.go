@@ -273,3 +273,25 @@ func TestFlyRequestCarriesTheGitAccess(t *testing.T) {
 }
 
 func gitIdentityOf(name, email string) git.Identity { return git.Identity{Name: name, Email: email} }
+
+// TestFlyRequestCarriesTheRoutedChoice: --credentials and --no-credentials
+// are the launch's own list, sandbox.credentials goes as the narrowing
+// beside it, and sandbox.needs as the hosts.
+//
+// @decision(DL-075)
+func TestFlyRequestCarriesTheRoutedChoice(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.Sandbox.Credentials = []string{"acme-npm"}
+	cfg.Sandbox.JobCredentials = []string{"none"}
+	cfg.Sandbox.Needs = []string{"npm.acme.com"}
+	refs := []server.RepoRef{{Platform: "p", Owner: "o", Name: "r"}}
+	req := sessionRequest(cfg, flyOptions{Routed: routedFlags{Names: []string{"acme-asked"}}}, "n", refs, gitIdentityOf("", ""))
+	if !slices.Equal(req.Credentials, []string{"acme-asked"}) || !slices.Equal(req.CredentialsPreferred, []string{"acme-npm"}) ||
+		!slices.Equal(req.Needs, []string{"npm.acme.com"}) || req.NoCredentials {
+		b, _ := json.Marshal(req)
+		t.Errorf("request = %s", b)
+	}
+	if req := sessionRequest(cfg, flyOptions{Routed: routedFlags{None: true}}, "n", refs, gitIdentityOf("", "")); !req.NoCredentials {
+		t.Error("--no-credentials did not reach the request")
+	}
+}

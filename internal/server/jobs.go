@@ -92,6 +92,10 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	if err := s.refuseGitAccess(ctx, p.OrgID, p.UserID, sreq); err != nil {
 		return store.Job{}, err
 	}
+	// @decision(DL-075)
+	if err := s.refuseRoutedNames(ctx, p.OrgID, p.UserID, sreq.Routed); err != nil {
+		return store.Job{}, err
+	}
 	// The caller's own limits, checked before anything billable. The
 	// size limits refuse here; the concurrency limit is counted inside
 	// the insert's transaction, since two creates on different replicas
@@ -274,6 +278,8 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string) (store.Session
 		GitAccessPreferred: req.GitAccessPreferred,
 		// @decision(DL-042)
 		CredentialPreference: req.CredentialPreference,
+		// @decision(DL-075)
+		Routed: routedRequest(req.Credentials, req.NoCredentials, req.CredentialsPreferred, req.Needs),
 		// @decision(DL-033)
 		Addons: req.Addons,
 		Apt:    req.Apt,

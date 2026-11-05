@@ -39,6 +39,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 		gitAccess            string
 		sync                 bool
 		noSync               bool
+		routed               routedFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "fly",
@@ -55,6 +56,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 				Repos:                repos,
 				Identity:             git.Identity{Name: gitName, Email: gitEmail},
 				GitAccess:            gitAccess,
+				Routed:               routed,
 				Sync:                 sync,
 				NoSync:               noSync,
 			})
@@ -78,6 +80,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 	cmd.Flags().StringVar(&gitAccess, "git-access", "",
 		"how far the sandbox's git credentials reach: repos (this session's) or all (every repository they can);"+
 			" sandbox.git_access, then your account default, when unset")
+	addRoutedFlags(cmd, &routed, "sandbox.credentials")
 	// @decision(DL-027)
 	cmd.Flags().BoolVar(&sync, "sync", false,
 		"seed the sandbox from the current clean local git branch and sync repository changes back when the session closes")
@@ -90,6 +93,8 @@ func newFlyCmd(env *Env) *cobra.Command {
 }
 
 type flyOptions struct {
+	// @decision(DL-075)
+	Routed               routedFlags
 	Keep                 bool
 	Name                 string
 	AllowVersionMismatch bool
@@ -341,6 +346,9 @@ func sessionRequest(cfg config.Config, opts flyOptions, name string, refs []serv
 		GitAccess: store.GitAccess(firstNonEmpty(opts.GitAccess, sb.GitAccess)), GitAccessPreferred: opts.GitAccess == "" && sb.GitAccess != "",
 		// @decision(DL-042)
 		CredentialPreference: credentialPreference(cfg),
+		// @decision(DL-075)
+		Credentials: opts.Routed.Names, NoCredentials: opts.Routed.None,
+		CredentialsPreferred: sb.Credentials, Needs: sb.Needs,
 	}
 }
 

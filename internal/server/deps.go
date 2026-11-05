@@ -202,6 +202,12 @@ type Deps struct {
 	//
 	// @decision(DL-073)
 	RoutedCredentials RoutedCredentialSource
+	// OrgRoutedCredentials keeps the organisation's routed credentials,
+	// which an admin defines. Nil means the deployment has none: a local
+	// server, or a hosted one without a credential key.
+	//
+	// @decision(DL-074)
+	OrgRoutedCredentials OrgRoutedCredentialSource
 	// Verifier checks a credential against its platform before it is
 	// stored. Nil stores whatever is given, unverified.
 	//

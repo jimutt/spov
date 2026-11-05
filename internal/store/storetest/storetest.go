@@ -211,6 +211,10 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		// @decision(DL-033)
 		stale.Booted = store.BootedImage{Image: "spov-base-x", Addons: []string{"node@22.23.3"}}
+		// @decision(DL-075)
+		stale.RoutedCredentials = []store.SessionRoutedCredential{{Name: "acme-npm", Tier: "user",
+			Hosts: []string{"npm.acme.com"}, Paths: []string{"/npm/"}, Scheme: "bearer"}}
+		stale.Request.Routed = store.RoutedRequest{Names: []string{"acme-npm"}, Needs: []string{"npm.acme.com"}}
 		if err := s.Sessions().Update(ctx, stale); err != nil {
 			t.Fatal(err)
 		}
@@ -223,6 +227,9 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if got.Booted.Image != "spov-base-x" || len(got.Booted.Addons) != 1 || got.Booted.Addons[0] != "node@22.23.3" {
 			t.Errorf("booted = %+v", got.Booted)
+		}
+		if !reflect.DeepEqual(got.RoutedCredentials, stale.RoutedCredentials) || !reflect.DeepEqual(got.Request.Routed, stale.Request.Routed) {
+			t.Errorf("routed = %+v, request %+v", got.RoutedCredentials, got.Request.Routed)
 		}
 		if got.GitTokenMintedAt == nil || !got.GitTokenMintedAt.Equal(minted) ||
 			got.GitTokenExpiresAt == nil || !got.GitTokenExpiresAt.Equal(expires) {

@@ -112,6 +112,10 @@ func addRoutedCredential(ctx context.Context, env *Env, arg string, opts routeOp
 	if !credproxy.ValidRouteName(name) {
 		return fmt.Errorf("%q cannot name a routed credential: use lowercase letters, digits and -, starting with a letter, at most %d characters", name, credproxy.MaxRouteName)
 	}
+	// @decision(DL-075)
+	if name == server.NoCredentials {
+		return fmt.Errorf("%q is reserved: `credentials: [none]` in config attaches no routed credential", name)
+	}
 	if shadowsAPlatform(env, name) {
 		return fmt.Errorf("%q already names a platform; give the routed credential another name", name)
 	}
@@ -326,4 +330,23 @@ func routeLine(r routedcred.Route) string {
 		line += "  only when asked"
 	}
 	return line
+}
+
+// routedFlags are a launch's own choice of routed credentials.
+//
+// @decision(DL-075)
+type routedFlags struct {
+	Names []string
+	None  bool
+}
+
+// addRoutedFlags adds --credentials and --no-credentials to a launch
+// command; key is the configuration key they override.
+//
+// @decision(DL-075)
+func addRoutedFlags(cmd *cobra.Command, r *routedFlags, key string) {
+	cmd.Flags().StringSliceVar(&r.Names, "credentials", nil,
+		"attach exactly these routed credentials, asked-only ones included; "+key+", then all you hold, when unset")
+	cmd.Flags().BoolVar(&r.None, "no-credentials", false, "attach no routed credential")
+	cmd.MarkFlagsMutuallyExclusive("credentials", "no-credentials")
 }

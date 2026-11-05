@@ -217,16 +217,26 @@ func (s *Service) recreateSidecar(ctx context.Context, sess store.Session, h san
 	if err != nil {
 		return err
 	}
+	// The recorded routed credentials, each in its recorded tier.
+	//
+	// @decision(DL-075)
+	routes, routeNotes, err := s.recordedRoutes(ctx, sess)
+	if err != nil {
+		return err
+	}
+	for _, n := range routeNotes {
+		s.noteRoutedLeftOut(ctx, sess, n)
+	}
 	// The sandbox's own CA, which every process in it already trusts.
 	//
 	// @decision(DL-034)
 	ps, err := session.NewProxySidecar(ctx, func(context.Context) (string, error) { return image, nil },
-		tokens, selections, session.KeyProviders(keys, prep.ProviderAPIs()), nil, egress, s.deps.Now(), s.proxyCAFor(ctx, sess))
+		tokens, selections, session.KeyProviders(keys, prep.ProviderAPIs()), routes, egress, s.deps.Now(), s.proxyCAFor(ctx, sess))
 	if err != nil {
 		return err
 	}
 	if ps == nil {
-		return errors.New("there is no forge token or provider key to give it")
+		return errors.New("there is no forge token, provider key or routed credential to give it")
 	}
 	// Tagged once the credentials are in hand, so the attempt that counts
 	// is one that reaches the sandbox, and a failure from here on still
