@@ -92,7 +92,7 @@ func newRelease(t *testing.T) *release {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		_, _ = fmt.Fprintf(w, `{"name":"@opencode/cli-linux-x64-baseline","version":%q,"dist":{"integrity":%q,"tarball":"%s/npm/cli.tgz"}}`,
-			strings.TrimPrefix(req.URL.Path[strings.LastIndex(req.URL.Path, "/"):], "/"), r.integrity, r.URL)
+			strings.TrimPrefix(req.URL.Path[strings.LastIndex(req.URL.Path, "/"):], "/"), r.integrity, "http://"+req.Host)
 	})
 	r.Server = httptest.NewServer(mux)
 	t.Cleanup(r.Close)
