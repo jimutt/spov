@@ -407,6 +407,10 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		return nil, err
 	}
 	entrypoint.Proxied = cred != nil
+	// @decision(DL-078)
+	if cred != nil {
+		opts.Egress = opts.Egress.WithRouteHosts(cred.packageHosts...)
+	}
 	// @decision(DL-076)
 	if cred != nil {
 		entrypoint.Files = routedcred.PresetFiles(opts.Presets, func(name string) string {
@@ -974,6 +978,11 @@ type credentialProxy struct {
 	caKey        string
 	placeholders map[string]string
 	keys         []string
+	// packageHosts are the forges' package hosts a token is set on,
+	// which the main container's egress must allow too.
+	//
+	// @decision(DL-078)
+	packageHosts []string
 	// reused is set when the CA is one given to buildProxy.
 	reused bool
 }
@@ -1165,6 +1174,12 @@ func buildProxy(ctx context.Context, imageFor func(context.Context) (string, err
 		cfg.Routes = append(cfg.Routes, r)
 		placeholders[credproxy.RouteEnvVar(r.Name)] = ph
 	}
+	// @decision(DL-078)
+	var packageHosts []string
+	for _, p := range cfg.Platforms {
+		packageHosts = append(packageHosts, p.PackageHosts()...)
+	}
+	egress = egress.WithRouteHosts(packageHosts...)
 	if len(cfg.Platforms) == 0 && len(cfg.Providers) == 0 && len(cfg.Routes) == 0 {
 		return nil, nil
 	}
@@ -1200,6 +1215,7 @@ func buildProxy(ctx context.Context, imageFor func(context.Context) (string, err
 		caKey:        string(caKey),
 		placeholders: placeholders,
 		keys:         keys,
+		packageHosts: packageHosts,
 		reused:       reused,
 	}, nil
 }
