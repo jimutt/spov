@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,19 @@ const RecorderBufferBytes = 64 << 20
 //
 // @decision(DL-018) @decision(DL-017)
 const MaxConversations = 32
+
+// MessagePageSize is how many messages one request for a conversation
+// asks for: the pinned build's own default page, so no page is larger
+// than the single unparameterised read was. OpenCode refuses over 200.
+//
+// @decision(DL-069)
+const MessagePageSize = 50
+
+// MaxMessagePages bounds the pages one read of a conversation follows.
+// The count comes from the sandbox.
+//
+// @decision(DL-069)
+const MaxMessagePages = 200
 
 // FinalReadTimeout bounds the read Delete makes before it terminates a
 // sandbox. A delete should not wait long on a sandbox that is about to
@@ -83,6 +97,8 @@ type Recorder struct {
 	// interval is the sync cadence; ReconcileInterval unless a test
 	// shortens it.
 	interval time.Duration
+	// maxPages is MaxMessagePages unless a test lowers it.
+	maxPages int
 
 	// The three seams to a sandbox. connect obtains the credential
 	// pair, events opens the volatile stream over it, and fetch reads
@@ -130,7 +146,7 @@ func NewRecorder(svc *Service, st store.Store, now func() time.Time, warn func(s
 		metrics = svc.deps.Metrics
 	}
 	return &Recorder{
-		store: st, now: now, warn: warn, interval: ReconcileInterval, metrics: metrics,
+		store: st, now: now, warn: warn, interval: ReconcileInterval, metrics: metrics, maxPages: MaxMessagePages,
 		// A span is a server-side act, so it reuses a cached connection
 		// and a redial usually costs no mint.
 		//
@@ -623,34 +639,76 @@ func (r *Recorder) conversation(ctx context.Context, c *capture, opencodeID, tit
 	return conv, nil
 }
 
-// readMessages reads one conversation's messages and upserts them. A
-// read that fails is a warning: the next turn end reads again.
+// readMessages reads one conversation's messages newest first, a page
+// at a time, and upserts each page. It stops at a short page, or after
+// a page that changed nothing in the store, so a conversation never
+// recorded is read back to its start and any later read takes what is
+// new plus one page the store already holds. A read that fails is a
+// warning: the next turn end reads again.
 //
-// @decision(DL-017)
+// @decision(DL-017) @decision(DL-069)
 func (r *Recorder) readMessages(ctx context.Context, c *capture, conv store.Conversation) error {
-	body, err := r.fetch(ctx, c.conn, "/api/session/"+url.PathEscape(conv.OpenCodeID)+"/message")
-	if err != nil {
-		r.warn(fmt.Sprintf("recorder %s: read %s: %s", c.sess.ID, conv.OpenCodeID, redact.Error(err)))
-		return nil
-	}
-	var msgs []store.Message
-	for _, m := range parseMessages(body) {
-		if m.ID == "" {
-			continue
+	path := "/api/session/" + url.PathEscape(conv.OpenCodeID) + "/message?"
+	query := url.Values{"limit": {strconv.Itoa(MessagePageSize)}, "order": {"desc"}}
+	for page := 0; ; page++ {
+		if page == r.maxPages {
+			r.warn(fmt.Sprintf("recorder %s: read %s to its bound of %d pages, the newest %d messages; any older are not stored", c.sess.ID, conv.OpenCodeID, r.maxPages, r.maxPages*MessagePageSize))
+			return nil
 		}
-		msg := store.Message{
-			ID: store.NewID(r.now()), OrgID: c.sess.OrgID, SessionID: c.sess.ID, ConversationID: conv.ID,
-			OpenCodeID: m.ID, Role: m.Role, Text: m.Text, Raw: m.Raw,
+		body, err := r.fetch(ctx, c.conn, path+query.Encode())
+		if err != nil {
+			r.warn(fmt.Sprintf("recorder %s: read %s: %s", c.sess.ID, conv.OpenCodeID, redact.Error(err)))
+			return nil
 		}
-		if m.At != nil {
-			msg.At = *m.At
+		// A page past MaxSandboxReadBytes arrives cut short, and older
+		// pages would be lost without a word.
+		if !json.Valid(body) {
+			r.warn(fmt.Sprintf("recorder %s: a page of %s's messages is not JSON (%d bytes); older messages are not read", c.sess.ID, conv.OpenCodeID, len(body)))
+			return nil
 		}
-		msgs = append(msgs, msg)
+		var msgs []store.Message
+		for _, m := range parseMessages(body) {
+			if m.ID == "" {
+				continue
+			}
+			msg := store.Message{
+				ID: store.NewID(r.now()), OrgID: c.sess.OrgID, SessionID: c.sess.ID, ConversationID: conv.ID,
+				OpenCodeID: m.ID, Role: m.Role, Text: m.Text, Raw: m.Raw,
+			}
+			if m.At != nil {
+				msg.At = *m.At
+			}
+			msgs = append(msgs, msg)
+		}
+		changed, err := r.store.Conversations().PutMessages(ctx, msgs)
+		if err != nil {
+			return fmt.Errorf("write the store: %w", err)
+		}
+		n, next := messagePage(body)
+		if n < MessagePageSize || next == "" || changed == 0 {
+			return nil
+		}
+		// A cursor keeps the first page's order and refuses an order
+		// beside it.
+		query = url.Values{"limit": {strconv.Itoa(MessagePageSize)}, "cursor": {next}}
 	}
-	if _, err := r.store.Conversations().PutMessages(ctx, msgs); err != nil {
-		return fmt.Errorf("write the store: %w", err)
+}
+
+// messagePage is how many messages a /message page holds and its next
+// cursor. The last page still carries one, so a short page is the end.
+//
+// @decision(DL-069)
+func messagePage(body []byte) (int, string) {
+	var page struct {
+		Data   []json.RawMessage `json:"data"`
+		Cursor struct {
+			Next *string `json:"next"`
+		} `json:"cursor"`
 	}
-	return nil
+	if json.Unmarshal(body, &page) != nil || page.Cursor.Next == nil {
+		return len(page.Data), ""
+	}
+	return len(page.Data), *page.Cursor.Next
 }
 
 // turnEnded reports whether an event closes a turn, which is when the
