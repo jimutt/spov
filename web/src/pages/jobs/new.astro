@@ -1,0 +1,12 @@
+---
+// The job-creation form: a route, not a detail one. Redirects to the
+// session page per DL-057/DL-061.
+//
+// @decision(DL-061)
+import Base from '../../layouts/Base.astro';
+import NewJob from '../../components/NewJob.svelte';
+---
+
+<Base title="New job — spov">
+  <NewJob client:load />
+</Base>

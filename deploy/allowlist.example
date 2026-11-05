@@ -1,0 +1,27 @@
+# Seeds who may log in, on a *new* deployment only.
+#
+# The allowlist lives in the database. This file is imported once, at
+# startup, when the org has no administrator; after that it is ignored
+# and the server says so. Manage the allowlist through the API:
+#
+#   GET    /api/v1/allowlist
+#   PUT    /api/v1/allowlist/{email}   {"admin": true|false}
+#   DELETE /api/v1/allowlist/{email}
+#
+# This file is the template and is what compose mounts by default. Its
+# one entry is a placeholder nobody owns, so a default `docker compose
+# up` grants access to no real person. To let yourself in:
+#
+#   cp deploy/allowlist.example deploy/allowlist
+#   $EDITOR deploy/allowlist            # deploy/allowlist is gitignored
+#   SPOV_ALLOWLIST_SOURCE=./allowlist docker compose -f deploy/compose.yaml up
+#
+# One entry per line: an address, optionally followed by "admin".
+# "#" starts a comment, and matching is case-insensitive. Only a GitHub
+# address that is both primary and verified is ever accepted.
+#
+# SIGHUP no longer reloads it — editing this file on a deployment that
+# already has an administrator does nothing.
+#
+# @decision(DL-007)
+you@example.com admin

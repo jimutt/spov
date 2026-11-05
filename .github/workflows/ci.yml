@@ -1,0 +1,331 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  GO_VERSION: "1.26"
+  COVERAGE_MIN: "87"
+  GOLANGCI_LINT_VERSION: "v2.13.2"
+  GORELEASER_VERSION: "v2.18.0"
+  SQLC_VERSION: "v1.31.1"
+  BUN_VERSION: "1.4.0"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # The runner image ships gcc without libc headers, so anything that
+      # builds runtime/cgo fails. `go test -race` requires cgo, so install
+      # the headers rather than setting CGO_ENABLED=0.
+      - name: Install libc headers
+        run: |
+          set -eu
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then
+            command -v sudo >/dev/null || { echo "not root and no sudo available" >&2; exit 1; }
+            SUDO="sudo"
+          fi
+          if command -v apt-get >/dev/null; then
+            $SUDO apt-get update -qq
+            $SUDO apt-get install -y --no-install-recommends libc6-dev
+          elif command -v apk >/dev/null; then
+            $SUDO apk add --no-cache musl-dev
+          else
+            echo "No known package manager for installing libc headers." >&2
+            exit 1
+          fi
+          # Fail loudly here rather than deep inside `go test -race`.
+          printf '#include <stdlib.h>\nint main(void){return 0;}\n' > /tmp/cgocheck.c
+          cc /tmp/cgocheck.c -o /tmp/cgocheck
+          echo "libc headers OK"
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Comment blocks
+        run: python3 scripts/comment-blocks.py
+
+      - name: Test with race detector and coverage
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Coverage gate
+        run: bash scripts/coverage-gate.sh coverage.out "$COVERAGE_MIN"
+
+      # Integration tests are excluded from the default run, so nothing
+      # else compiles them, and a fake they build against can go stale
+      # unseen. Typecheck only — these tests are never run here.
+      - name: Typecheck the integration build
+        run: go test -tags integration -run '^$' ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Nothing here needs cgo, and the runner has no libc headers.
+      - name: golangci-lint
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
+          golangci-lint run ./...
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # goreleaser's before hook builds the web app into the binary, so
+      # this job needs Bun too. Without it a release would silently ship
+      # the placeholder page.
+      #
+      # @decision(DL-055)
+      - name: Install Bun
+        run: bash scripts/install-bun.sh >> "$GITHUB_PATH"
+
+      # spov itself builds with CGO_ENABLED=0 (see .goreleaser.yaml), and the
+      # runner image has no libc headers, so keep cgo off for the tool build too.
+      - name: Cross-compile snapshot
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go install "github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}"
+          goreleaser build --snapshot --clean
+
+  # The Postgres store's acceptance test is the storetest contract against
+  # a real server: the distro package, started by hand. The runner is
+  # not root, so the setup goes through sudo.
+  store-postgres:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Postgres and libc headers
+        run: |
+          set -eu
+          export DEBIAN_FRONTEND=noninteractive
+          sudo -E apt-get update -qq
+          sudo -E apt-get install -y --no-install-recommends libc6-dev postgresql postgresql-contrib
+
+      - name: Start the cluster
+        run: |
+          set -eu
+          VER=$(ls /etc/postgresql | sort -n | tail -1)
+          sudo pg_ctlcluster "$VER" main start
+          for i in $(seq 1 30); do
+            sudo -u postgres pg_isready >/dev/null 2>&1 && break
+            sleep 1
+          done
+          sudo -u postgres psql -c "create user spov with password 'spov' superuser;"
+          sudo -u postgres psql -c 'create database spov_test owner spov;'
+
+      - name: Store contract against Postgres
+        env:
+          SPOV_TEST_DATABASE_URL: postgres://spov:spov@127.0.0.1:5432/spov_test?sslmode=disable
+        run: go test -tags integration -race ./internal/store/... -v
+
+      # Scenario 4's forges: a real Forgejo (Codefloe's version) and Gitea,
+      # the pinned release binaries checked against committed sums
+      # (DL-041).
+      - name: Start a Forgejo and a Gitea
+        env:
+          # The runner has Docker, which the script would otherwise pick.
+          FORGE_RUNTIME: binary
+        run: |
+          set -eu
+          bash scripts/forge-test-server.sh start forgejo "$RUNNER_TEMP/forgejo"
+          bash scripts/forge-test-server.sh start gitea "$RUNNER_TEMP/gitea"
+
+      # The combined scenarios' control-plane layer (1, 2, 4, 5, 6 and 7):
+      # a server wired as `spov serve` wires it, on its own database,
+      # against a fake GitHub, the real Forgejo and Gitea above and a fake
+      # sandbox (DL-022, DL-041). No Modal,
+      # no GitHub.
+      - name: Combined scenarios 1, 2, 4, 5, 6 and 7 against Postgres
+        env:
+          SPOV_TEST_DATABASE_URL: postgres://spov:spov@127.0.0.1:5432/spov_test?sslmode=disable
+        run: |
+          export SPOV_TEST_FORGEJO_ENV="$RUNNER_TEMP/forgejo/env" SPOV_TEST_GITEA_ENV="$RUNNER_TEMP/gitea/env"
+          go test -tags integration -race ./internal/cli/ -run '^TestScenario[124567]$' -v
+
+      # Generated code is committed, so a drifted query file is a failure
+      # rather than a surprise at the next generate.
+      - name: sqlc diff
+        run: |
+          set -eu
+          go install github.com/sqlc-dev/sqlc/cmd/sqlc@${SQLC_VERSION}
+          "$(go env GOPATH)/bin/sqlc" diff
+
+  # The web app. It needs no Postgres, no Modal credential and no
+  # Docker; and it is not gated on the Go coverage threshold, which is
+  # Go's own concern.
+  #
+  # @decision(DL-055)
+  web:
+    runs-on: ubuntu-latest
+    # The runner image ships gcc without libc headers, so anything that
+    # builds runtime/cgo fails — and with cgo on, `net` alone is enough
+    # to pull it in. The `test` job installs the headers because it needs
+    # the race detector; nothing here does, so this job takes the same
+    # way out as `lint` and `build`.
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install Bun
+        run: bash scripts/install-bun.sh >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      # The document and the client are committed, so an API change
+      # that skipped the regeneration shows up here rather than as a
+      # web app calling an endpoint that no longer has that shape.
+      #
+      # @decision(DL-005)
+      - name: The generated client is up to date
+        run: |
+          set -eu
+          bash scripts/gen-api-client.sh
+          if ! git diff --exit-code -- docs/api/openapi.yaml web/src/lib/api/types.ts; then
+            echo "::error::run scripts/gen-api-client.sh and commit the result"
+            exit 1
+          fi
+
+      - name: Typecheck
+        working-directory: web
+        # `astro check` needs a TypeScript that still exposes the
+        # programmatic API; the pin is in web/package.json.
+        run: bunx astro check
+
+      - name: Test
+        working-directory: web
+        # `bun run test`, never `bun test`: the latter runs Bun's own
+        # runner, which has no Vite pipeline and never compiles a
+        # .svelte file.
+        run: bun run test
+
+      # The whole point of embedding is that the app and the API ship
+      # from one commit, so the build has to work from a clean checkout.
+      - name: Build into the Go binary
+        run: |
+          set -eu
+          bash scripts/build-web.sh
+          test -f internal/webui/dist/index.html
+          go build -o /tmp/spov ./cmd/spov
+
+      # The `test` job runs before any web build and so only ever sees
+      # the placeholder; this is the one place the handler is exercised
+      # against the artifact that actually ships.
+      - name: The handler serves a real build
+        run: go test ./internal/webui/
+
+  # The deploy artifacts are only as good as their last build. The
+  # runner has no container runtime, so this checks what it can without
+  # one: the binary the image ships, built the same
+  # way, and that it starts with HOME pointing at a path that does not
+  # exist — which is what distroless nonroot looks like.
+  deploy-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build the binary the image ships
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -eu
+          go build -trimpath -ldflags "-s -w" -o /tmp/spov ./cmd/spov
+          test -x /tmp/spov
+
+      - name: It runs with no home directory to read
+        run: |
+          set -eu
+          # HOME pointing at a path that does not exist is what the
+          # image does, and it must work: a missing config file is
+          # treated as empty.
+          env HOME=/nonexistent /tmp/spov version
+
+          # And without HOME at all it must fail, which is why the image
+          # sets it. Printed rather than only tested, so a change in the
+          # SDK's behaviour is visible instead of just red.
+          set +e
+          out=$(env -u HOME SPOV_SERVER_TOKEN=probe /tmp/spov serve --listen 127.0.0.1:0 2>&1)
+          set -e
+          echo "without HOME, spov serve said:"
+          echo "$out"
+          case "$out" in
+            *"HOME is not defined"*)
+              echo "confirmed: HOME is required, and the image sets it" ;;
+            *)
+              echo "the HOME requirement changed; revisit ENV HOME in deploy/Dockerfile" >&2
+              exit 1 ;;
+          esac
+
+      - name: The pre-deploy hook is executable
+        run: |
+          set -eu
+          mode=$(git ls-files -s deploy/kamal/.kamal/hooks/pre-deploy | cut -d' ' -f1)
+          if [ "$mode" != "100755" ]; then
+            echo "pre-deploy is mode $mode, not 100755" >&2
+            echo "run: git update-index --chmod=+x deploy/kamal/.kamal/hooks/pre-deploy" >&2
+            exit 1
+          fi
+          bash -n deploy/kamal/.kamal/hooks/pre-deploy
+
+      - name: The smoke script is executable and parses
+        run: |
+          set -eu
+          mode=$(git ls-files -s deploy/smoke.sh | cut -d' ' -f1)
+          if [ "$mode" != "100755" ]; then
+            echo "smoke.sh is mode $mode, not 100755" >&2
+            echo "run: git update-index --chmod=+x deploy/smoke.sh" >&2
+            exit 1
+          fi
+          bash -n deploy/smoke.sh
+          # It must run far enough to report its own usage without a
+          # server, a database or any credential.
+          bash deploy/smoke.sh --help >/dev/null

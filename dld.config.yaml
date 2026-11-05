@@ -1,0 +1,11 @@
+decisions_dir: decisions
+mode: namespaced
+namespaces:
+  - cli
+  - sandbox
+  - opencode
+  - git
+  - server
+  - jobs
+  - web
+annotation_prefix: '@decision'

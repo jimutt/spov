@@ -1,0 +1,317 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/jimutt/spov/internal/addonindex"
+	"github.com/jimutt/spov/internal/sandbox"
+	"github.com/jimutt/spov/internal/store"
+	"github.com/jimutt/spov/internal/toolchain"
+)
+
+// variantOf is the recipe of the image a request with add-ons or extra
+// packages boots: the deployment's pinned base plus what it asks for.
+// ok is false for a request that asks for neither, or whose add-ons do
+// not parse.
+//
+// @decision(DL-033)
+func (s *Service) variantOf(req store.SessionRequest) (sandbox.ImageSpec, bool) {
+	sel, err := toolchain.Parse(req.Addons)
+	apt := sandbox.ExtraPackages(req.Apt)
+	if err != nil || (len(sel) == 0 && len(apt) == 0) {
+		return sandbox.ImageSpec{}, false
+	}
+	return sandbox.ImageSpec{
+		OpenCodeVersion: s.deps.Defaults.OpenCodeVersion,
+		ExtraPackages:   apt,
+		Addons:          sel,
+	}, true
+}
+
+// baseImage is the name of the current pin's base image.
+func (s *Service) baseImage() string {
+	return sandbox.ImageSpec{OpenCodeVersion: s.deps.Defaults.OpenCodeVersion}.Name()
+}
+
+// variantProblems refuses add-ons or extra packages that cannot be built:
+// an unknown add-on or version, a bad package name, or an image spov did
+// not build, whether the request named it or the deployment boots one.
+//
+// @decision(DL-033)
+func (s *Service) variantProblems(req store.SessionRequest) []string {
+	if len(req.Addons) == 0 && len(req.Apt) == 0 {
+		return nil
+	}
+	var problems []string
+	if _, err := toolchain.Parse(req.Addons); err != nil {
+		problems = append(problems, err.Error())
+	}
+	d := s.deps.Defaults
+	if err := sandbox.ValidatePackages(req.Apt); err != nil {
+		problems = append(problems, err.Error())
+	}
+	if len(problems) > 0 {
+		return problems
+	}
+	spec, ok := s.variantOf(req)
+	if !ok {
+		// Only packages the base already has: the base image.
+		return nil
+	}
+	if d.Image != s.baseImage() {
+		return []string{"this deployment boots its own image (sandbox.image), which takes no add-ons or apt packages"}
+	}
+	if req.Image != spec.Name() {
+		return []string{fmt.Sprintf("image %q names an image spov did not build, so it cannot take add-ons or apt packages", req.Image)}
+	}
+	return nil
+}
+
+// variantPick is the image a launch boots and what it installs.
+//
+// @decision(DL-016)
+type variantPick struct {
+	image string
+	// addons are the image's add-ons at the versions it installs.
+	addons []toolchain.Selection
+	// build is the recipe to build on the launch path when the image is
+	// not published (DL-016), and rebuild says its name still resolves
+	// although the registry says it was deleted (DL-016).
+	build   *sandbox.ImageSpec
+	rebuild bool
+}
+
+// imageUseInterval is how often a launch writes an image's last use.
+//
+// @decision(DL-016)
+const imageUseInterval = time.Hour
+
+// pickVariant decides which image a launch with add-ons or extra
+// packages boots: the exact build of its resolved versions when it is
+// published, else the newest build of the same request while the exact
+// one builds in the background, else the exact build on the launch path.
+// Without a registry it is the variant the request names.
+//
+// @decision(DL-033) @decision(DL-016)
+func (s *Service) pickVariant(ctx context.Context, requested sandbox.ImageSpec, note func(string)) variantPick {
+	key := requested.Name()
+	exact := requested
+	if s.deps.Resolver != nil {
+		exact.Addons = s.deps.Resolver.Resolve(ctx, requested.Addons)
+	}
+	name := exact.Name()
+	onLaunchPath := variantPick{image: name, addons: exact.Addons, build: &exact}
+	reg := s.deps.Images
+	if reg == nil {
+		return onLaunchPath
+	}
+	entry, known := s.imageEntry(ctx, name)
+	switch {
+	case known && entry.DeletedAt == nil:
+		s.useImage(ctx, VariantImage(exact))
+		return variantPick{image: name, addons: exact.Addons}
+	case known:
+		onLaunchPath.rebuild = true
+	case s.published(ctx, name):
+		s.RecordVariant(ctx, exact)
+		return variantPick{image: name, addons: exact.Addons}
+	}
+	older, ok := s.olderBuild(ctx, requested, key, name)
+	if !ok {
+		return onLaunchPath
+	}
+	sel, err := toolchain.ResolveTo(requested.Addons, older.Versions)
+	if err != nil {
+		s.deps.Warn(fmt.Sprintf("the recorded build %s does not match its request: %v", older.Name, err))
+		return onLaunchPath
+	}
+	s.useImage(ctx, older)
+	if s.deps.Defaults.BuildOnDemand && s.deps.Variants != nil && worthBuilding(exact.Addons, sel) {
+		if s.deps.Variants.Start(ctx, exact, onLaunchPath.rebuild) {
+			note(fmt.Sprintf("using the image built with %s; %s is building for later launches",
+				strings.Join(older.Versions, ", "), strings.Join(toolchain.Installed(exact.Addons), ", ")))
+		}
+	}
+	return variantPick{image: older.Name, addons: sel}
+}
+
+// worthBuilding reports whether the exact build should replace the older
+// one in the background: every partial version resolved, since an
+// unresolved one would build the request as written, and none resolved
+// to a release older than the older build has, as a replica whose cached
+// answer lags would.
+//
+// @decision(DL-016)
+func worthBuilding(exact, older []toolchain.Selection) bool {
+	have := map[string]string{}
+	for _, o := range older {
+		have[o.Name] = o.Exact()
+	}
+	for _, e := range exact {
+		if _, partial := e.Index(); partial && e.Resolved == "" {
+			return false
+		}
+		if v, ok := have[e.Name]; ok && v != e.Exact() && addonindex.Newer(v, e.Exact()) {
+			return false
+		}
+	}
+	return true
+}
+
+// olderBuild is the newest recorded build of the request, or the image
+// named by the request as written when nothing is recorded and it is
+// published: an image built before versions were resolved, entered now
+// with its versions as written.
+//
+// @decision(DL-016)
+func (s *Service) olderBuild(ctx context.Context, requested sandbox.ImageSpec, key, name string) (store.Image, bool) {
+	newest, err := s.deps.Images.Newest(ctx, key)
+	if err == nil && newest.Name != name {
+		return newest, true
+	}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.deps.Warn(fmt.Sprintf("read the image registry: %v", err))
+	}
+	if key == name {
+		return store.Image{}, false
+	}
+	if _, known := s.imageEntry(ctx, key); known || !s.published(ctx, key) {
+		return store.Image{}, false
+	}
+	legacy := VariantImage(requested)
+	s.useImage(ctx, legacy)
+	return legacy, true
+}
+
+// imageEntry is the registry's entry for name. A failed read is treated
+// as no entry, so the launch falls back to asking Modal.
+func (s *Service) imageEntry(ctx context.Context, name string) (store.Image, bool) {
+	img, err := s.deps.Images.Get(ctx, name)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.deps.Warn(fmt.Sprintf("read the image registry: %v", err))
+	}
+	return img, err == nil
+}
+
+// published asks Modal whether name is published, for a name the
+// registry does not know.
+func (s *Service) published(ctx context.Context, name string) bool {
+	if s.deps.Builder == nil {
+		return false
+	}
+	ok, err := s.deps.Builder.HasImage(ctx, name)
+	if err != nil {
+		s.deps.Warn(fmt.Sprintf("look up image %s: %v", name, err))
+	}
+	return ok
+}
+
+// VariantImage is spec's registry entry, without its ID or times.
+//
+// @decision(DL-016)
+func VariantImage(spec sandbox.ImageSpec) store.Image {
+	return store.Image{
+		Name: spec.Name(), Kind: store.ImageVariant,
+		RequestKey: spec.Requested().Name(), Versions: toolchain.Installed(spec.Addons),
+	}
+}
+
+// RecordVariant enters spec's image as published now, the newest build
+// of its request. The launcher's VariantBuilder calls it after every
+// build.
+//
+// @decision(DL-016)
+func (s *Service) RecordVariant(ctx context.Context, spec sandbox.ImageSpec) {
+	s.RecordImage(ctx, VariantImage(spec))
+}
+
+// RecordImage enters img as published now, with its Modal ID.
+//
+// @decision(DL-016)
+func (s *Service) RecordImage(ctx context.Context, img store.Image) {
+	if s.deps.Images == nil {
+		return
+	}
+	if s.deps.Builder != nil && img.ID == "" {
+		if id, err := s.deps.Builder.ImageID(ctx, img.Name); err == nil {
+			img.ID = id
+		}
+	}
+	img.PublishedAt = s.deps.Now()
+	if err := s.deps.Images.Record(ctx, img); err != nil {
+		s.deps.Warn(fmt.Sprintf("record image %s: %v", img.Name, err))
+	}
+	s.mu.Lock()
+	s.imageUses[img.Name] = img.PublishedAt
+	s.mu.Unlock()
+}
+
+// UseImage records that a launch used img, at most once an hour per
+// image in this process.
+//
+// @decision(DL-016)
+func (s *Service) UseImage(ctx context.Context, img store.Image) {
+	s.useImage(ctx, img)
+}
+
+func (s *Service) useImage(ctx context.Context, img store.Image) {
+	if s.deps.Images == nil || img.Name == "" {
+		return
+	}
+	now := s.deps.Now()
+	s.mu.Lock()
+	last, ok := s.imageUses[img.Name]
+	s.mu.Unlock()
+	if ok && now.Sub(last) < imageUseInterval {
+		return
+	}
+	if err := s.deps.Images.Use(ctx, img, now); err != nil {
+		s.deps.Warn(fmt.Sprintf("record the use of image %s: %v", img.Name, err))
+		return
+	}
+	s.mu.Lock()
+	s.imageUses[img.Name] = now
+	s.mu.Unlock()
+}
+
+// ImageDeleted reports whether the registry says pruning deleted name.
+//
+// @decision(DL-016)
+func (s *Service) ImageDeleted(ctx context.Context, name string) bool {
+	if s.deps.Images == nil {
+		return false
+	}
+	img, known := s.imageEntry(ctx, name)
+	return known && img.DeletedAt != nil
+}
+
+// imageGone marks a launch's image deleted when the sandbox could not be
+// created because the image no longer exists, though the registry said
+// it did: another deployment on the same Modal environment pruned it, or
+// a prune's mark was lost. The next launch then builds the variant again,
+// or names the command that rebuilds a base. err is returned with what
+// happens next.
+//
+// @decision(DL-016)
+func (s *Service) imageGone(ctx context.Context, pick variantPick, err error) error {
+	var nf *sandbox.ImageNotFoundError
+	if s.deps.Images == nil || !errors.As(err, &nf) || nf.Name != pick.image {
+		return err
+	}
+	img, known := s.imageEntry(ctx, pick.image)
+	if !known || img.DeletedAt != nil {
+		return err
+	}
+	if merr := s.deps.Images.MarkDeleted(ctx, pick.image, s.deps.Now()); merr != nil {
+		s.deps.Warn(fmt.Sprintf("mark image %s deleted: %v", pick.image, merr))
+		return err
+	}
+	if img.Kind == store.ImageBase {
+		return fmt.Errorf("%w; the image no longer exists, and an operator rebuilds it with `spov serve image build`", err)
+	}
+	return fmt.Errorf("%w; the image no longer exists, so the next launch builds it again", err)
+}

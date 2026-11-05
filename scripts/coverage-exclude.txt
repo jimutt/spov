@@ -1,0 +1,75 @@
+# Files excluded from the coverage gate.
+#
+# Only thin adapters over an external SDK belong here: code whose behaviour
+# is verified by integration tests behind the `integration` build tag, which
+# `go test ./...` does not run. Anything with logic of its own must be unit
+# tested and must not be listed.
+#
+# Verify these with:
+#   go test -tags integration ./internal/sandbox/ -run Integration
+
+internal/sandbox/modal.go
+
+# EnsureImage's Modal calls: building and publishing an image needs a real
+# Modal workspace. The naming, validation and Dockerfile rendering it
+# depends on live in image.go and remain under the gate.
+internal/sandbox/image_build.go
+
+# The Postgres store's query layer: sqlc-generated code, which is never
+# hand-edited, and the pgx calls around it. Their behaviour is the
+# storetest contract run against a real server. The logic they depend on — row conversion, JSON
+# encoding, error translation, leader defaults, job row conversion — is
+# in convert.go and leader.go and stays under the gate.
+#
+# Verify these with:
+#   SPOV_TEST_DATABASE_URL=postgres://... go test -tags integration ./internal/store/postgres/
+internal/store/postgres/sqlcgen/db.go
+internal/store/postgres/sqlcgen/queries.sql.go
+internal/store/postgres/postgres.go
+internal/store/postgres/sessions.go
+internal/store/postgres/accounts.go
+internal/store/postgres/allowlist.go
+internal/store/postgres/conversations.go
+internal/store/postgres/jobs.go
+internal/store/postgres/migrate.go
+internal/store/postgres/leader_run.go
+
+# River's client and migrator: a thin adapter over the queue library's
+# SDK, whose behaviour is only meaningful against a real Postgres. The
+# configuration it passes is NOT here — internal/jobs/supervisor_config.go
+# holds those values and is tested, because they are the part that is
+# spov's own judgement rather than the library's API. The supervision
+# logic is in internal/jobs and stays under the gate.
+#
+# Verify these with:
+#   SPOV_TEST_DATABASE_URL=postgres://... go test -tags integration ./internal/jobs/ -run River
+internal/jobs/supervisor_river.go
+
+# The CLI's half of the same thing: migrating River's tables and
+# starting its client at boot. It is only reachable with a database
+# behind it, so a unit test cannot enter it at all. What decides
+# WHETHER a supervisor exists (newSupervisor) stays in serve.go and
+# under the gate, as do the timeouts and the retry budget in
+# internal/jobs/supervisor_config.go.
+internal/cli/serve_river.go
+
+# Test-support code, which is a different reason from everything above:
+# these files exist only to serve tests, so measuring them tells you
+# which scaffolding a test happened to touch, not whether spov's
+# behaviour is covered. They are not thin SDK adapters and they are not
+# integration-tested — they are the tests' own furniture.
+#
+# storetest is the contract suite every Store implementation runs; it
+# reads as 0% because `go test ./...` attributes coverage to the package
+# under test, never to the helper package it called. The fakes are the
+# hand-written doubles at internal/<pkg>/fake.go,
+# and a fake's uncovered methods are simply the ones no test has needed
+# yet.
+#
+# Nothing here may be reached from non-test code. If it ever is, it has
+# stopped being test support and belongs back under the gate.
+internal/store/storetest/storetest.go
+internal/sandbox/fake.go
+internal/git/fake.go
+internal/jobs/jobstest/jobstest.go
+internal/telemetry/telemetrytest/telemetrytest.go

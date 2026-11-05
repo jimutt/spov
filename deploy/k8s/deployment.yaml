@@ -1,0 +1,72 @@
+# Plain YAML, kept minimal. Helm is not adopted until someone needs it.
+#
+# @decision(DL-010)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spov
+  labels: { app: spov }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: spov }
+  template:
+    metadata:
+      labels: { app: spov }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: spov
+          image: ghcr.io/example/spov:latest # pin by digest
+          args: ["serve"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPOV_LISTEN
+              value: ":8080"
+            - name: SPOV_PUBLIC_URL
+              value: "https://spov.example.com"
+            - name: MODAL_ENVIRONMENT
+              value: "spov-hosted"
+            - name: SPOV_ALLOWLIST_FILE
+              value: "/etc/spov/allowlist"
+          envFrom:
+            - secretRef: { name: spov-secrets }
+          volumeMounts:
+            - name: allowlist
+              mountPath: /etc/spov
+              readOnly: true
+          # Liveness never touches Postgres: a database blip would
+          # otherwise restart every replica at once.
+          livenessProbe:
+            httpGet: { path: /livez, port: 8080 }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8080 }
+            periodSeconds: 5
+          # Startup gets the longer budget, so a cold database does not
+          # look like a failed container.
+          startupProbe:
+            httpGet: { path: /startupz, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      # Above the server's own 20s drain budget, so the process
+      # finishes rather than being killed mid-shutdown.
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: allowlist
+          configMap: { name: spov-allowlist }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spov
+spec:
+  selector: { app: spov }
+  ports:
+    - port: 80
+      targetPort: 8080

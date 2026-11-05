@@ -1,0 +1,120 @@
+# Development and evaluation, not production: SPOV_MIGRATE_ON_START is
+# convenient here and wrong for a real deployment, where migrations run
+# in a step that can fail the deploy before any new container serves.
+#
+# @decision(DL-010)
+name: spov
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: spov
+      POSTGRES_PASSWORD: spov
+      POSTGRES_DB: spov
+    volumes:
+      # 18+ stores data in a version-named subdirectory, so the mount
+      # goes at /var/lib/postgresql, not .../data. Mounting the old
+      # path makes the image refuse to start.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spov"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPOV_LISTEN: ":8080"
+      # The origin a browser reaches. Change with the published port.
+      SPOV_PUBLIC_URL: "http://localhost:8080"
+      SPOV_DATABASE_URL: "postgres://spov:spov@postgres:5432/spov?sslmode=disable"
+      SPOV_MIGRATE_ON_START: "true"
+      # The message must not contain $ or parens: Compose interpolates
+      # it, and an unescaped $( ends the expression early.
+      SPOV_SERVER_TOKEN: "${SPOV_SERVER_TOKEN:?is not set. Generate one with openssl rand -hex 32}"
+      # The deployment's own Modal token, in its own environment.
+      MODAL_TOKEN_ID: "${MODAL_TOKEN_ID:?}"
+      MODAL_TOKEN_SECRET: "${MODAL_TOKEN_SECRET:?}"
+      MODAL_ENVIRONMENT: "${MODAL_ENVIRONMENT:-spov-hosted}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      # Browser login (DL-007). Unset, the server runs on its bearer
+      # token alone and never mounts an allowlist; set both to enable
+      # it, and the allowlist file below becomes required — as the
+      # seed for a new deployment (DL-007), not as live configuration.
+      SPOV_GITHUB_OAUTH_CLIENT_ID: "${SPOV_GITHUB_OAUTH_CLIENT_ID:-}"
+      SPOV_GITHUB_OAUTH_CLIENT_SECRET: "${SPOV_GITHUB_OAUTH_CLIENT_SECRET:-}"
+      SPOV_ALLOWLIST_FILE: "/etc/spov/allowlist"
+      # Seals each user's own platform credentials at rest (DL-008).
+      # Unset, the server stores none and every session uses the
+      # deployment's credentials below. Generate one with:
+      #
+      #   openssl rand -base64 32
+      #
+      # Losing it makes stored user credentials unrecoverable; users
+      # re-enter them. To rotate, set the new key here and move the
+      # previous one to SPOV_CREDENTIAL_KEY_OLD; rows are rewritten
+      # under the new key as they are written, so leave the old one set
+      # until nothing needs it. Each key's version comes from the key,
+      # so the order the two are set in does not matter.
+      #
+      # @decision(DL-008)
+      SPOV_CREDENTIAL_KEY: "${SPOV_CREDENTIAL_KEY:-}"
+      SPOV_CREDENTIAL_KEY_OLD: "${SPOV_CREDENTIAL_KEY_OLD:-}"
+      # The deployment's own git credentials, used by any user who has
+      # not stored their own. The GitHub App is one credential for the
+      # whole org; a Forgejo bot token is named after its platform.
+      #
+      # @decision(DL-042)
+      SPOV_GITHUB_APP_ID: "${SPOV_GITHUB_APP_ID:-}"
+      SPOV_GITHUB_APP_PRIVATE_KEY: "${SPOV_GITHUB_APP_PRIVATE_KEY:-}"
+      SPOV_PLATFORM_TOKEN_CODEFLOE: "${SPOV_PLATFORM_TOKEN_CODEFLOE:-}"
+      # Per-user limits, checked before anything billable. Unset uses
+      # the built-in defaults (3 sessions, 8h, 4 CPU, 16 GiB) rather
+      # than no limit — an unbounded default is how a hosted server
+      # gets a surprise bill. Admins raise or lower them per user
+      # through PATCH /api/v1/users/{id}.
+      #
+      # @decision(DL-009)
+      SPOV_QUOTAS_MAX_CONCURRENT_SESSIONS: "${SPOV_QUOTAS_MAX_CONCURRENT_SESSIONS:-}"
+      SPOV_QUOTAS_MAX_TIMEOUT: "${SPOV_QUOTAS_MAX_TIMEOUT:-}"
+      SPOV_QUOTAS_MAX_CPU: "${SPOV_QUOTAS_MAX_CPU:-}"
+      SPOV_QUOTAS_MAX_MEMORY_MIB: "${SPOV_QUOTAS_MAX_MEMORY_MIB:-}"
+    volumes:
+      # Who may log in, read only when login is configured above.
+      #
+      # The source must exist, or Docker creates a *directory* there
+      # and the server refuses to start. So it defaults to the committed
+      # example, whose only entry is a placeholder nobody owns: copy it
+      # to deploy/allowlist (gitignored), put your own address in, and
+      # point SPOV_ALLOWLIST_SOURCE at it.
+      #
+      #   cp deploy/allowlist.example deploy/allowlist && $EDITOR deploy/allowlist
+      #   SPOV_ALLOWLIST_SOURCE=./allowlist docker compose ... up
+      #
+      # If a run ever left a *directory* at deploy/allowlist — which
+      # happens when SPOV_ALLOWLIST_SOURCE names a path that does not
+      # exist — `rm -rf` it before copying, since `cp` into a directory
+      # puts the file inside it and the mount stays broken.
+      #
+      # It seeds a new deployment's allowlist only; after the first boot
+      # the allowlist lives in the database and the file is ignored.
+      #
+      # @decision(DL-007)
+      - "${SPOV_ALLOWLIST_SOURCE:-./allowlist.example}:/etc/spov/allowlist:ro"
+    # No healthcheck: the image is distroless, so it has no shell, no
+    # curl and no wget, and the binary has no self-probe subcommand. A
+    # `/spov version` check would prove only that the file is
+    # executable. Use /readyz from outside the container — that is what
+    # Kamal's proxy and the Kubernetes probes below do.
+
+volumes:
+  pgdata:

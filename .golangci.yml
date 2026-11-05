@@ -1,0 +1,131 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - errorlint
+    - bodyclose
+    - misspell
+    - depguard
+  settings:
+    # Architecture rules. Go's own import cycle check enforces the
+    # layering that is acyclic; these are the walls it cannot see,
+    # because nothing about them would be a cycle.
+    #
+    # Each rule enforces a package boundary a decision states, so it is
+    # checked rather than remembered.
+    depguard:
+      rules:
+        # The Modal SDK is pre-1.0 and ships breaking minor releases.
+        # Containing it to one package is what makes a version bump a
+        # change to internal/sandbox rather than to the whole tree.
+        modal-sdk-behind-internal-sandbox:
+          list-mode: lax
+          files:
+            - "!**/internal/sandbox/**"
+          deny:
+            - pkg: github.com/modal-labs/modal-client/go
+              desc: keep Modal SDK types behind internal/sandbox (DL-029)
+        # Metrics are recorded through internal/telemetry's typed
+        # methods, which keep every label to a closed set (DL-011), so
+        # the SDK and the exporters stay inside it.
+        #
+        # @decision(DL-011)
+        otel-behind-internal-telemetry:
+          list-mode: lax
+          files:
+            - "!**/internal/telemetry/**"
+          deny:
+            - pkg: go.opentelemetry.io/otel
+              desc: record metrics through internal/telemetry (DL-011)
+            - pkg: github.com/prometheus/client_golang
+              desc: the Prometheus exporter is internal/telemetry's (DL-011)
+        # internal/prep is the control plane's own outbound model call,
+        # and the only one. Everywhere else a provider key is a value
+        # spov carries into a sandbox and never uses.
+        model-calls-only-from-internal-prep:
+          list-mode: lax
+          files:
+            - "!**/internal/prep/**"
+          deny:
+            - pkg: github.com/openai/openai-go
+              desc: internal/prep is spov's only outbound model call (DL-047)
+        # The launch core is called by the server, never the other way
+        # round, and nothing below the CLI may reach up into it.
+        launch-core-below-the-server:
+          list-mode: lax
+          files:
+            - "**/internal/session/**"
+            - "**/internal/sandbox/**"
+            - "**/internal/opencode/**"
+            - "**/internal/git/**"
+            - "**/internal/store/**"
+            - "**/internal/auth/**"
+            - "**/internal/config/**"
+            - "**/internal/credentials/**"
+            - "**/internal/prep/**"
+            - "**/internal/proxy/**"
+            - "**/internal/credproxy/**"
+            - "**/internal/console/**"
+          deny:
+            - pkg: github.com/jimutt/spov/internal/server
+              desc: the launch core is called by the server, not the reverse
+            - pkg: github.com/jimutt/spov/internal/jobs
+              desc: the launch core is called by the supervisor, not the reverse
+            - pkg: github.com/jimutt/spov/internal/cli
+              desc: nothing below the CLI may import it
+        # internal/jobs sits below both the server and the CLI, and for
+        # both the COMPILER is the wall: each imports internal/jobs, so
+        # either reverse is an import cycle that never builds (DL-046) —
+        # verified by planting one. That is why no rule for those two is
+        # listed here; a depguard entry would read as the protection
+        # while the real guarantee lived elsewhere.
+        #
+        # What is left is the direction the compiler cannot see: the
+        # supervisor holds no HTTP surface of its own. It reaches the
+        # world through the function seams DL-045 gave it, and a router
+        # imported here would be a second way in.
+        supervisor-holds-no-http-surface:
+          list-mode: lax
+          files:
+            - "**/internal/jobs/**"
+          deny:
+            - pkg: github.com/danielgtaylor/huma/v2
+              desc: the API surface is internal/server's (DL-046)
+            - pkg: net/http
+              desc: the supervisor reaches a sandbox through its seams, never directly (DL-018, DL-046)
+        # The contract package embeds the pinned build's whole OpenAPI
+        # document and imports testing. Only tests check against it.
+        opencode-contract-only-in-tests:
+          list-mode: lax
+          files:
+            - "$all"
+            - "!$test"
+          deny:
+            - pkg: github.com/jimutt/spov/internal/opencode/contract
+              desc: the OpenCode contract is for tests only (DL-035)
+        # The cobra tree and the Charm TUI are the CLI's own surface.
+        # internal/server is a library the CLI drives; a terminal
+        # dependency there would make it unservable.
+        terminal-surface-stays-in-internal-cli:
+          list-mode: lax
+          files:
+            - "!**/internal/cli/**"
+            - "!**/cmd/**"
+          deny:
+            - pkg: github.com/spf13/cobra
+              desc: the command tree is internal/cli's
+            - pkg: charm.land/huh/v2
+              desc: the TUI is internal/cli's
+            - pkg: charm.land/bubbles/v2
+              desc: the TUI is internal/cli's
+            - pkg: charm.land/lipgloss/v2
+              desc: the TUI is internal/cli's
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck]
+
+formatters:
+  enable:
+    - gofmt

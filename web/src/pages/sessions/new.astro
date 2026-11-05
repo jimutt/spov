@@ -1,0 +1,12 @@
+---
+// The session-launch form: a repository picker and the account's
+// defaults. Redirects to the session page, as /jobs/new does.
+//
+// @decision(DL-061)
+import Base from '../../layouts/Base.astro';
+import NewSession from '../../components/NewSession.svelte';
+---
+
+<Base title="New session — spov">
+  <NewSession client:load />
+</Base>

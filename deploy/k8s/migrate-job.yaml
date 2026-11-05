@@ -1,0 +1,21 @@
+# Migrations run as a Job before the Deployment is updated, so a bad
+# migration fails visibly rather than crash-looping replicas.
+#
+# @decision(DL-010)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spov-migrate
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: migrate
+          image: ghcr.io/example/spov:latest # the same digest as the Deployment
+          args: ["serve", "migrate", "up"] # ENTRYPOINT is the binary alone
+          envFrom:
+            - secretRef: { name: spov-secrets }

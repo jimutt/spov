@@ -1,0 +1,150 @@
+package opencode
+
+import (
+	"fmt"
+	"path"
+	"strings"
+)
+
+// AgentsFile is where the generated workspace guidance is written.
+// OpenCode discovers AGENTS.md by walking up from its working directory,
+// so a file at the workspace root is visible from every cloned repo.
+//
+// @decision(DL-037)
+const AgentsFile = WorkspaceRoot + "/AGENTS.md"
+
+// ForgeCLI identifies the CLI that talks to a repository's platform.
+type ForgeCLI string
+
+const (
+	// CLITea is the Forgejo/Gitea CLI.
+	CLITea ForgeCLI = "tea"
+	// CLIGh is the GitHub CLI.
+	CLIGh ForgeCLI = "gh"
+	// CLIGlab is the GitLab CLI.
+	//
+	// @decision(DL-032)
+	CLIGlab ForgeCLI = "glab"
+	// CLINone means spov knows of no CLI for the platform.
+	CLINone ForgeCLI = ""
+)
+
+// WorkspaceRepo describes one cloned repository for the generated
+// guidance.
+type WorkspaceRepo struct {
+	// Slug is "owner/name". It must not contain a credential.
+	Slug string
+	// Dir is the directory under the workspace root.
+	Dir string
+	// Platform is the configured platform name.
+	Platform string
+	// Host is the platform's hostname.
+	Host string
+	// CLI is the tool that talks to this platform.
+	CLI ForgeCLI
+}
+
+// AgentsMarkdown renders the workspace guidance. It lists what was
+// actually cloned, so it cannot describe repositories that are not there.
+// jobKind is the job's kind, or empty for an interactive session.
+//
+// @decision(DL-037)
+func AgentsMarkdown(repos []WorkspaceRepo, jobKind string) string {
+	var b strings.Builder
+	b.WriteString("# Workspace\n\n")
+	b.WriteString("This sandbox was prepared by spov. The repositories below are already\n")
+	b.WriteString("cloned and their git credentials are configured.\n\n")
+
+	if len(repos) == 0 {
+		b.WriteString("No repositories were bootstrapped into this workspace.\n")
+		writeScratchSection(&b, jobKind)
+		return b.String()
+	}
+
+	b.WriteString("| Directory | Repository | Host | CLI |\n")
+	b.WriteString("|---|---|---|---|\n")
+	for _, r := range repos {
+		cli := string(r.CLI)
+		if cli == "" {
+			cli = "(none available)"
+		}
+		fmt.Fprintf(&b, "| `%s` | %s | %s | `%s` |\n",
+			path.Join(WorkspaceRoot, r.Dir), r.Slug, r.Host, cli)
+	}
+
+	b.WriteString("\n## Read each repository's own instructions\n\n")
+	b.WriteString("You are working from the workspace root, not from inside a repository, so\n")
+	b.WriteString("no repository's own instruction files have been loaded for you. Before you\n")
+	b.WriteString("change anything in one of the directories above, read its `AGENTS.md` and\n")
+	b.WriteString("`CLAUDE.md` if they exist. They carry the conventions your work is judged\n")
+	b.WriteString("against, and nothing else will tell you what they say.\n")
+
+	b.WriteString("\n## Opening pull requests\n\n")
+	b.WriteString("Use the CLI named for the repository you are working in; they are not\n")
+	b.WriteString("interchangeable, and are already authenticated:\n\n")
+
+	if usesCLI(repos, CLITea) {
+		b.WriteString("- **`tea`** for Forgejo and Gitea hosts: `tea pr create --title '...' --description '...'`.\n")
+		b.WriteString("  Run it from inside the repository directory.\n")
+	}
+	if usesCLI(repos, CLIGh) {
+		b.WriteString("- **`gh`** for GitHub: `gh pr create --title '...' --body '...'`.\n")
+	}
+	// @decision(DL-032)
+	if usesCLI(repos, CLIGlab) {
+		b.WriteString("- **`glab`** for GitLab, where a pull request is a merge request:\n")
+		b.WriteString("  `glab mr create --title '...' --description '...' --yes`. Run it from inside\n")
+		b.WriteString("  the repository directory.\n")
+	}
+	if usesCLI(repos, CLINone) {
+		b.WriteString("- Some repositories have no CLI configured; push a branch and open the\n")
+		b.WriteString("  pull request in the web UI.\n")
+	}
+
+	b.WriteString("\nThe token each CLI holds may be scoped to a subset of repositories, so a\n")
+	b.WriteString("command can fail on permissions even though the clone worked.\n")
+	writeScratchSection(&b, jobKind)
+	return b.String()
+}
+
+// writeScratchSection names the scratchpad. A report job is also told
+// that its deliverable does not go there.
+//
+// @decision(DL-037) @decision(DL-051)
+func writeScratchSection(b *strings.Builder, jobKind string) {
+	b.WriteString("\n## Scratchpad\n\n")
+	fmt.Fprintf(b, "`%s` is yours for anything that is not the work itself: temporary\n", ScratchDir)
+	b.WriteString("files, one-off scripts, downloads, notes and intermediate results. Put them\n")
+	b.WriteString("there, not in a repository and not in `/tmp`. Nothing in it is collected,\n")
+	b.WriteString("delivered or committed, and it goes when the sandbox does.\n")
+	if jobKind == "report" {
+		fmt.Fprintf(b, "\nThis is a report job: its reports go in `%s`, one Markdown file each, not in the scratchpad.\n",
+			OutDir)
+	}
+}
+
+// usesCLI reports whether any repository uses the given CLI.
+func usesCLI(repos []WorkspaceRepo, cli ForgeCLI) bool {
+	for _, r := range repos {
+		if r.CLI == cli {
+			return true
+		}
+	}
+	return false
+}
+
+// CLIForKind maps a platform kind to the CLI that talks to it.
+//
+// @decision(DL-037) @decision(DL-041) @decision(DL-032)
+func CLIForKind(kind string) ForgeCLI {
+	switch kind {
+	case "forgejo", "gitea":
+		return CLITea
+	case "github":
+		return CLIGh
+	case "gitlab":
+		return CLIGlab
+	default:
+		return CLINone
+	}
+}

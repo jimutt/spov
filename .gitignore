@@ -1,0 +1,30 @@
+# Go
+/bin/
+/dist/
+# `go build ./cmd/spov` from the repo root lands here.
+/spov
+
+
+# coverage
+/coverage.out
+
+# The real allowlist for a local compose run; deploy/allowlist.example
+# is the template. Not secret, but it names real people.
+/deploy/allowlist
+# Kamal's secrets, read through deploy.yml's secrets_path.
+/deploy/kamal/.kamal/secrets*
+
+# The built web app, copied in by scripts/build-web.sh. Only the marker
+# that keeps the go:embed directory alive is tracked.
+#
+# @decision(DL-055)
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
+/internal/proxybin/dist/*
+!/internal/proxybin/dist/.gitkeep
+
+# Playwright MCP console logs and snapshots; a scenario run can capture a session cookie.
+.playwright-mcp/
+
+# dld-kit: one developer's DLD settings for this checkout
+/dld.local.yaml

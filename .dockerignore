@@ -1,0 +1,24 @@
+# These entries are correctness-critical, not just speed. `COPY` merges
+# into an existing directory rather than replacing it, so without them a
+# host node_modules would be merged over the container's by `COPY web/`,
+# and a stale local web build would survive into the image underneath
+# whatever the web stage produces.
+#
+# @decision(DL-055)
+web/node_modules/
+web/dist/
+web/.astro/
+internal/webui/dist/
+# A local proxy build is never copied in; the build stage makes its own.
+internal/proxybin/dist/
+# The marker is kept so `//go:embed all:dist` still has a directory even
+# if the copy from the web stage is ever removed.
+!internal/webui/dist/.gitkeep
+!internal/proxybin/dist/.gitkeep
+
+.git/
+# Kamal's secrets sit in the build context's tree; never copy them in.
+deploy/kamal/.kamal/secrets*
+bin/
+dist/
+coverage.out

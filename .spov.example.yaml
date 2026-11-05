@@ -1,0 +1,50 @@
+# Project-level spov configuration. Copy to .spov.yaml.
+# Safe to commit: it contains no secrets.
+version: 1
+
+# Git platforms are usually declared once in ~/.config/spov/config.yaml.
+# Credentials are resolved by platform name from the credential store.
+#
+# NOTE: lists are REPLACED by a later layer, not merged. Declaring
+# `platforms:` here replaces the whole list from the user config, so repeat
+# every platform this project's repos reference. Lists cannot be set through
+# SPOV_* environment variables; only scalar keys can.
+platforms:
+  - name: codefloe
+    kind: forgejo
+    base_url: https://codefloe.com
+    account: alice
+  - name: github
+    kind: github
+    account: alice
+
+# Repositories cloned into the sandbox workspace before OpenCode starts.
+repos:
+  - platform: codefloe
+    owner: alice
+    name: widgets
+  - platform: github
+    owner: acme
+    name: gadgets
+    dir: tools
+
+# The repo directory the OpenCode server starts in.
+landing: widgets
+
+sandbox:
+  cpu: 0.5
+  memory_mib: 2048
+  timeout: 4h        # hard cap is 12h
+  idle_timeout: 30m
+  # Curated add-ons beyond the default toolchain, as name or name@version:
+  # dotnet, java, php, playwright, postgres, redis, ruby, rust.
+  # addons: [rust, postgres]
+  # apt: [libvips-dev]
+
+opencode:
+  version: 2.0.22
+  port: 4096
+
+modal:
+  app: spov
+  # environment: dev

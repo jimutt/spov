@@ -1,0 +1,53 @@
+version: 2
+
+project_name: spov
+
+before:
+  hooks:
+    - go mod tidy
+    # Released binaries carry the dashboard; without this they would
+    # embed the placeholder and every install would serve it.
+    #
+    # @decision(DL-055)
+    - bash scripts/build-web.sh
+    # Released binaries carry the sidecar proxy; without it a server
+    # launches sandboxes with their tokens in the main container.
+    #
+    # @decision(DL-034)
+    - bash scripts/build-proxy.sh
+
+builds:
+  - id: spov
+    main: ./cmd/spov
+    binary: spov
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/jimutt/spov/internal/version.version={{.Version}}
+      - -X github.com/jimutt/spov/internal/version.commit={{.FullCommit}}
+      - -X github.com/jimutt/spov/internal/version.date={{.Date}}
+
+archives:
+  - id: spov
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: true

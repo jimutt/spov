@@ -1,0 +1,430 @@
+# spov
+
+Go CLI that launches OpenCode 2 sessions in on-demand Modal sandboxes. `spov serve` is the control plane; the CLI and the web app are both HTTP clients of it (DL-001, DL-002).
+
+## Layout
+
+- `cmd/spov`: entrypoint. Keep it thin; logic lives in `internal/`.
+- `internal/cli`: cobra tree and TUI. Talks to the server over HTTP and never calls `session.Launcher` (DL-002). It imports `internal/session` only for the client proxy and step types.
+- `internal/server`: HTTP API (huma), middleware, `spov serve`, job creation and the job HTTP surface.
+- `internal/jobs`: the supervisor. Run loop, job state machine, the three gates (DL-050), prep pass, River worker, sweeps. Job code is split by receiver: `*Service` stays in `server`, `*Supervisor` lives here (DL-046). It reaches the server only through `Supervisor`'s function seams. Importing `internal/server` from here is an import cycle.
+- `internal/prep`: the control plane's only outbound model call (DL-047).
+- `internal/redact`: the credential filter shared by `server` and `jobs` (DL-046).
+- `internal/auth`: principal and authenticators. `internal/credentials`: stored secrets.
+- `internal/store`: the `Store` interface, with memory (local) and Postgres (hosted) implementations (DL-003).
+- `internal/session`, `sandbox`, `opencode`, `git`, `proxy`: the launch core, driven by the server.
+- `internal/config`: layered config from the user file, the project file and `SPOV_*` (DL-026). A project file may not set `server.url` or `platforms`, and `spov serve` reads none (`Env.ServerConfig`, `config.LoadUser`) (DL-026; `TestAProjectFileCannotRedirectCredentials`).
+- `internal/version`: build identity, stamped by goreleaser ldflags.
+- `internal/telemetry`: control-plane metrics, the only package that imports the OpenTelemetry SDK, its exporters or the Prometheus client (a depguard rule). Everything else records through `*telemetry.Metrics`, which is nil-safe, with labels from closed sets (DL-011). A new metric needs a row in `docs/metrics.md` (`TestEveryMetricIsDocumented`). The dashboard may query only documented metrics (`TestTheDashboardQueriesDocumentedMetrics`). Shared-state gauges come only from the reconciler lock holder's snapshot (`Service.RunMetricsSnapshot`), and an ending is recorded only where this process wrote it (DL-011).
+- `internal/webui`: the embedded, built web app. `web/`: its Astro + Svelte 5 + Tailwind source, built with Bun (DL-055).
+- `docs/api/openapi.yaml` and `web/src/lib/api/types.ts` are generated, committed and drift-gated in CI (DL-005).
+- `decisions/`: DLD records (see the DLD rule in this file); DL-001 is the control plane's shape behind `server`, `jobs` and `web`.
+- The package walls are depguard rules in `.golangci.yml`: the Modal SDK only in `internal/sandbox`, `openai-go` only in `internal/prep`, no `net/http` or huma in `internal/jobs`, cobra and Charm only in `internal/cli`.
+
+## Decisions and code comments
+
+Decision records hold the why. Read one with `/dld-lookup DL-NNN`, or open `decisions/records/<namespace>/DL-NNN.md`; `decisions/INDEX.md` lists them all.
+
+A code comment says what the code does, plus anything local and non-obvious, then `@decision(DL-NNN)`. Do not restate a record's rationale, measurements or history in a comment or in this file. If a comment needs a paragraph of why, the record is missing it, so add it there. `scripts/comment-blocks.py` (run by `check.sh`) fails on a comment block over 20 lines; mark a block that must stay long with `comment-block: allow`. This file is a map: it names the decision and the guard test to read before touching an area.
+
+## Command names
+
+- The command tree and its naming rules are DL-023: session verbs at the top (`fly`, `attach`, `ls`, `stop`) and a `jobs` group. `stop` ends a session, `interrupt` stops a turn and `cancel` ends a job; no command uses one of those words for anything else.
+- `login`/`logout` sign in to accounts (the server, `opencode`); tokens and keys are `spov credentials add|list|remove <name>`. Where a credential goes is decided by `Env.hostedServer` (a configured server URL means hosted), never by a flag. A local listing can only probe known names, because `credentials.Store` cannot enumerate (DL-008; `TestLocalCredentialsTakeTheServersNames`).
+- `--json` on `ls`, `jobs` (`list`, `show`, `create`), `credentials` and `whoami` prints the API view the command decoded and nothing else on stdout; hints go to stderr. Tables may change freely (DL-023; `TestTheReadAndCreateCommandsTakeJSON`).
+- `ls` and `jobs` page: the newest `-n` (default 5) of every state, then on the first page any live session or unfinished job older than those, and a footer naming the next `--page`. `pageThrough` in `listpage.go` follows the server's cursor; there is no `--all`. `stop --all` and session completion read live sessions with the listing's `state` filter, never a page of everything (DL-012; `TestLsShowsTheNewestFiveAndKeepsLiveOnes`).
+- `spov attach` waits until a session can be joined (`attachwait.go`): an interactive one when `running`, a job's when the job is `running`, `blocked` or `steered` and a conversation is recorded. It polls `GET /sessions/{ref}`, which carries the session's job, and the conversation listing, both store reads. Ctrl-C ends only the wait, never the job (DL-025; `TestAttachWaitsForAQueuedJob`, `TestInterruptingTheWaitLeavesTheJobAlone`).
+- Completion of session names, job IDs and credential names (`completion.go`) asks only a server that is already up, through `Env.existingClient`, never `Env.client`, which can spawn a local server or stop one of another build. Any failure or the one-second timeout offers nothing (DL-023; `TestCompletionNeverStartsOrStopsAServer`).
+- A test that reaches the real `Env.spawn` execs the test binary as `serve --local`; `TestMain` in `fixture_test.go` makes that child exit, or it reruns the suite and spawns again. Set `Env.Spawn` or `Env.Client` in a fixture rather than relying on that guard.
+- Every `spov <command>` written in a Go string literal or in the web source must exist, with its flags (DL-023; `TestEveryNamedCommandExists`). A sentence that starts "spov <verb>…" fails it until its word is added to `proseWords` in `internal/cli/hints_test.go`.
+
+## Import paths that are easy to get wrong
+
+<!-- @decision(DL-001) -->
+
+| Library | Correct import | Wrong, but widely published |
+|---|---|---|
+| Modal SDK | `github.com/modal-labs/modal-client/go` | `github.com/modal-labs/libmodal/modal-go` (deprecated) |
+| Charm TUI | `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2` | `github.com/charmbracelet/*` (pkg.go.dev serves stale v2 betas) |
+| koanf | `github.com/knadh/koanf/v2` and `github.com/knadh/koanf/providers/env/v2` | v1 paths without the `/v2` suffix |
+
+The Modal SDK is pre-1.0 and ships breaking minor releases. Keep its exact pin in `go.mod` and keep its types behind `internal/sandbox` (DL-029).
+
+## The web app
+
+<!-- @decision(DL-055) -->
+
+- A plain `go build` embeds a placeholder page, and `spov serve` warns about it at startup. To build the real dashboard: `scripts/install-bun.sh` (if bun is missing), then `scripts/build-web.sh`, then `go build ./cmd/spov`. Everything in `internal/webui/dist/` except `.gitkeep` is gitignored.
+- For frontend dev, run `bun run dev` in `web/` against a separate `spov serve`. The Vite proxy in `web/astro.config.mjs` must rewrite both `Host` and `Origin`. If either is dropped, the browser guard answers 403, which looks like an auth bug.
+- `typescript` is pinned to exactly 5.9.3: TS 7 breaks `astro check` and `openapi-typescript`, and TS 6 is outside `openapi-typescript`'s peer range (DL-055, DL-005). Do not "upgrade TypeScript".
+- `bun` is pinned to 1.4.0 in three places: `packageManager` in `web/package.json`, `BUN_VERSION` in `.github/workflows/ci.yml`, and `VERSION` plus the checksums in `scripts/install-bun.sh`. A bump must change all three.
+- Most web logic lives in plain `.ts` under `web/src/lib/`, where vitest reaches it. Mount a component only when the reactivity or the markup is what can break (`vitest.config.ts` sets `resolve.conditions: ['browser']` for `mount`). In a mounted test:
+  - install the fetch stub in `vi.hoisted`, because openapi-fetch captures `globalThis.fetch` when `client.ts` is imported;
+  - dispatch `submit` on the form to test a handler's own guard, because clicking a disabled button does nothing;
+  - stub `Element.prototype.scrollTo` for anything that scrolls. jsdom lacks it and the `TypeError` fires inside `requestAnimationFrame`, so every test passes, vitest prints an unhandled error and exits 1 (DL-062, DL-059).
+
+## The generated API client
+
+<!-- @decision(DL-005) -->
+
+- After changing a Go type under `internal/server`, run `scripts/gen-api-client.sh` (needs bun). It rewrites `docs/api/openapi.yaml` and `web/src/lib/api/types.ts`; CI reruns it and fails on `git diff --exit-code` (DL-005).
+- Never hand-edit those two files. `client.ts` and `sse.ts` in `web/src/lib/api/` are hand-written and are the ones to edit.
+- `info.version` is the fixed `server.APIVersion` (`v1`), never the build version, or the drift gate fails on every commit (DL-005; `TestTheDocumentIsDeterministic`).
+- `sse.ts` uses `fetch`, not `EventSource`, and mirrors `internal/server/client/follow.go`: one reopen from the start (`onRestart`), a non-200 is final (DL-005).
+
+## Toolchain and checks
+
+- `go.mod` declares `go 1.26.0` because River v0.47 requires it; CI builds on 1.26. The directive follows dependency floors, so raise it for spov's own code only when a language feature needs it (DL-001).
+- `./scripts/check.sh` is the commit gate and runs the same steps as `.github/workflows/ci.yml`: gofmt, vet, the comment-block limit, the integration typecheck, the client-drift gate, the web checks, golangci-lint, `go test -race` and the coverage gate. It fails if golangci-lint is missing (`SKIP_LINT=1` skips it) or bun is missing (`SKIP_WEB=1`). CI pins its tools in `ci.yml`'s `env` (golangci-lint `v2.13.2`); install the same versions, since `check.sh` does not check which one you have.
+- CI may not run (a forge's plan limit, say). Check a PR's commit status on the forge rather than assuming either way; when CI is not running, `check.sh` is the only gate. `git config core.hooksPath .githooks` makes `.githooks/pre-push` run it before every push; it refuses a dirty tree or a push of anything but HEAD, since `check.sh` checks the working tree. `git push --no-verify` skips it.
+- The integration typecheck is `go test -tags integration -run '^$' ./...`. Nothing else compiles those files, so a fake that implements a changed interface goes stale silently. `-run '^$'` is deliberate: those tests create billable sandboxes.
+- The web step is `astro check`, `bun run test` and `bun run build`. `astro check` does not compile Svelte templates, so only the build catches a template error. Green check and test are not enough.
+- Coverage minimum is 87% (`COVERAGE_MIN` in ci.yml). It is enforced on Linux only, and a run as root reads about 0.4% lower, because privilege-guarded tests such as `TestLoadReportsUnreadableFile` skip there. Leave a margin, and judge a change by comparing before/after profiles.
+- `scripts/coverage-exclude.txt` is for thin SDK adapters covered by integration tests, plus test furniture (fakes, `storetest`, `jobstest`); its header gives the rule. Anything with logic of its own stays under the gate. A path that no longer exists excludes nothing and looks like a working entry (DL-046).
+- On a checkout on a Windows-mounted drive (WSL's `/mnt/c`, say) `chmod +x` does not reach git. After adding a script, run `git update-index --chmod=+x scripts/x.sh` and check `git ls-files -s scripts/`. Workflows call scripts as `bash scripts/x.sh`.
+
+### Running tests while you work
+
+- Run `check.sh` once before committing, not after every edit. While implementing, run the package you changed (`go test ./internal/server/`, add `-run`) and use `SKIP_WEB=1` for Go-only changes; the web step is about a minute.
+- A cached `ok` from `go test` is usually correct; use `-count=1` when a result looks stale.
+- A slow test is usually waiting on a production constant, not working. Add a seam instead of shortening the constant: `Deps.StorePoll` (fixture `testStorePoll`, 5 ms) and `Supervisor.MaxVerdictEvents` are the examples. To list tests over 1 s: `go test ./internal/server/ -count=1 -v 2>&1 | grep -E "^--- PASS.*\([0-9]+\.[0-9]+s\)" | awk '{gsub(/[()s]/,"",$4); if ($4+0>=1.0) print $4, $3}' | sort -rn`.
+- The real `x/oauth2` device-flow client waits at least 1 s before its first poll. Server tests exchange the grant directly (`deviceFixture.accessToken`, `poll`); only `TestDeviceFlowIssuesAWorkingToken` and `internal/cli`'s login tests keep the real client (DL-006).
+
+### Integration tests
+
+- Behind the `integration` tag. CI only typechecks them, except the `store-postgres` job, which runs `./internal/store/...` against real Postgres.
+- Modal ones (`go test -tags integration ./internal/sandbox/ -run Integration -v`) need `~/.modal.toml` or `MODAL_TOKEN_*` and create billable sandboxes. Every one terminates what it creates in `t.Cleanup` using `context.WithoutCancel`.
+- Postgres ones need only a database:
+  ```sh
+  export SPOV_TEST_DATABASE_URL=postgres://<user>:<password>@127.0.0.1:5433/spov?sslmode=disable
+  go test -tags integration ./internal/server/ ./internal/jobs/ ./internal/store/postgres/
+  ```
+  `-run JobLifecycle` (internal/server) is a whole job through the real queue and state machine with a fake sandbox. `-run River` lives in `internal/jobs` since DL-046; naming only `./internal/server/` skips it silently. `-run Quota` is the two concurrency limits.
+- The `internal/server` job-lifecycle tests use the database as they find it and do not migrate. A stale schema fails as a missing column (`column "cursor" does not exist` and the like), which looks like a code bug. Migrate first; the command is `spov serve migrate`, not `spov migrate`:
+  ```sh
+  SPOV_DATABASE_URL=$SPOV_TEST_DATABASE_URL go run ./cmd/spov serve migrate up
+  ```
+
+## Web app areas
+
+### A job is shown on its session's page
+
+- There is no job detail route or view: a job's state, gates and result render in the session page's sidebar. `/jobs/new` is a creation route and does not break this (DL-057, DL-061).
+- The gates reach the client as `JobView.Gates`, parsed back out of the verdict text by `jobs.ParseGatesNote`, which sits beside `gatesNote`. Change the two together (DL-057; `TestTheGatesSurviveTheRoundTrip`).
+- A job's deliverables reach the client as `JobView.deliverables`: pull requests (repository, branch, number, URL) or reports (path, title, size), each with a status. No job view carries a report's body. The page fetches it from `GET /api/v1/jobs/{id}/file?path=` only when a preview opens (`web/src/lib/deliverables.ts`). Choose the rendering by kind, never by sniffing the text (DL-057, DL-051).
+- The session page's job resource stops polling on a terminal job or a 501 from a supervisor-less server, and treats an unknown state as still running (DL-057).
+- The transcript draws work, not plumbing (`condense` in `web/src/lib/timeline.ts`). `Plumbing` is a list of OpenCode event names to drop, never to keep, so a new event still shows; re-check it on an OpenCode bump. A tool call is one line joined by the stream's `call` field, which `storedToolCall` re-derives from the stored frame; the tool's name is only on `tool.input.started`. `spov.job.evidence` and `spov.job.outcome` are not drawn, `collected` and `bounded` are quiet notes, and every other spov row stays a seam. Each of these is asked only of rows whose `source` is spov (DL-058; `TestAToolEventNamesItsCall`).
+- The sidebar shows facts and keeps explanations behind `InfoToggle.svelte`: a credential's kind (plus "every repository" or "inside the sandbox" when either applies, `credentialTag`), the cost figure, and a goal folded by `clip`. The verdict is a `details` headed by `verdictSummary`, opened by itself on a failed gate or a partial deliverable (DL-057).
+- The transcript is one column with no gutter: your messages are right-aligned bubbles, the agent's text is unlabelled, and spov's lines carry a "spov" tag so they never read as the agent's. Who and when sit under each message, shown on hover, focus within or tap (`toggleDetails`), and `timeDividers` in `timeline.ts` draws a quiet time at the start and after a pause over `TimeGap` (DL-058).
+- The transcript follows the tail as a latch in `web/src/lib/tail.ts`. It must not re-anchor on `live.ts`'s five-minute `end` reopen (DL-057, DL-058).
+- The sticky sidebar's offset is `--header-h` + `--main-pad-y`. `--header-h` is measured at runtime in `Base.astro`, so do not hardcode it. A wrong value looks like a z-index bug (DL-057).
+- Both listings are newest first and paged by an ID cursor (`limit`, `before`; the response's `next` and `total`), default 50 and at most 200 (`server.pageSize`, `pageOf`). The session-state stream sends the newest `limit` sessions plus every live one (`Service.StreamList`), which is what keeps the limit meter exact; older pages are read once through "Show older" (`web/src/lib/paging.ts`) and are not live (DL-012, DL-060).
+- Session-list job badges: `SessionView.job` carries id, kind, state and `partial`, never a report's body. `partial` comes from `partialOf`, which `JobView.Partial` uses too, and `decorationStamp` hashes exactly what the badge carries (`sessionJobView`) (DL-060). A partial success is `succeeded` drawn with the `part` mark and "Succeeded, partly" (`jobMark`, `jobWord`), never a state of its own.
+
+### Starting a job from the browser (`/jobs/new`)
+
+- `/jobs/new` POSTs `/api/v1/jobs`, the same endpoint `spov jobs create` uses. CSRF protection is `BrowserGuard` alone and no token is added (DL-061), so relaxing the guard affects this form.
+- The form's logic is in `web/src/lib/jobform.ts` (`createAndGo`, `toJobRequest`, `draftProblems`, `keyNote`, `canLaunchOn`). `NewJob.svelte` holds only markup. On success the browser goes to `/session/?id=<session_id>` (DL-061). If the live view is then empty, check the recorder's `Recorder.Wake` nudge (below) before the redirect.
+- Guards against spending money twice or by accident (DL-061): Enter never submits (`suppressImplicitSubmit`), a `Committed` error never re-enables the submit button (`POST /api/v1/jobs` has no idempotency key), and the default kind is `report`.
+- An empty model or check is left out of the job request. The Settings page sends empty values on purpose (DL-061, DL-062). Do not make the two pages consistent.
+- The first model option sends `""` and takes its label from `defaultOptionLabel` (DL-061). No test checks that `NewJob.svelte` uses that label, so a hardcoded "OpenCode's default" passes every check. Code review is the only guard.
+- `everyKindIsOffered` makes `astro check` fail when the API has a job kind the form does not offer (DL-061).
+- `/sessions/new` sends `{repos}` alone and leaves the rest to the server's defaults and the profile, with the same Enter and `Committed` guards (`web/src/lib/sessionform.ts`). Both forms draw the picker with `RepoPicker.svelte` (DL-061).
+
+### Cancelling, ending, and the jobs page
+
+- Cancel job and End session live on the session page only, behind `ConfirmAct.svelte`'s second press; list rows stay read-only. Which states offer them is `cancellable` and `endable` in `web/src/lib/jobcontrols.ts`. The browser's cancel rule is narrower than the server's (no cancel while `delivering`). A job's session never offers End session; the server's session delete on it cancels the job anyway (`DeleteSession`) (DL-057).
+- The failure of either act is held by `SessionDetail`, not by the control: a refusal re-reads the page, which can withdraw the control (DL-057).
+- Both concurrency limits are shown: the sessions page's summary line and the jobs page's heading, from `/me`'s `quota` (`LimitMeter.svelte`). `limitUse` counts as the server does: a job while it is in `UNFINISHED` (queued included), a live session only when it belongs to no such job. `UNFINISHED` is the complement of `GROUP`'s finished group and must stay `store.JobState.Counts` (DL-060).
+- `/jobs/` groups states in `GROUP` in `web/src/lib/joblist.ts`, a `Record` over every job state, so a new state fails `astro check` until it is placed (DL-060).
+- Every job endpoint returns the same view, with the inventory and never a body (DL-051; `TestJobViewsCarryTheInventoryAndNoBody`). The file endpoint serves the type stored at collection with `nosniff` and a `sandbox` CSP, and a report that links collected images downloads as a streamed zip (`Service.WriteReportBundle`, DL-051).
+
+### The account's settings page
+
+- `/settings` is the account's page; `/credentials` is not a route and 404s with no redirect stub. `webui_test.go` keeps both paths on purpose (DL-062; `TestOwnsPath`).
+- Storing or deleting a credential refreshes the model list through `Credentials.svelte`'s `onChanged`. In local mode `have_key` cannot change until `spov serve` restarts (DL-062, DL-013).
+- The seeding logic for all three fields is `seedField` in `web/src/lib/settings.ts`. It must return its argument unchanged when nothing changed, or the `$effect` loops until `effect_update_depth_exceeded` (DL-062; `settings.svelte.test.ts`).
+- An empty value is sent, never omitted. This is the opposite of the job form's rule, and it is how a setting gets cleared (DL-062).
+- One `pending` flag disables both profile Save buttons and is checked in both handlers (DL-062; `components/settings.svelte.test.ts`).
+
+### Rendering Markdown an agent wrote
+
+- `web/src/lib/markdown.ts` is the only place the page bypasses Svelte's escaping. There are exactly two `{@html}` sites (a transcript message and the report preview in `SessionDetail.svelte`), and both render agent-controlled text. Any widening of its DOMPurify allowlist is a security change (DL-063; `markdown.test.ts`).
+- Silent traps in that config (DL-063): `KEEP_CONTENT: false` empties every document; `class` is admitted only so a hook can narrow it to `language-*` on `code`, because any Tailwind utility is otherwise reachable; `ALLOW_DATA_ATTR`/`ALLOW_ARIA_ATTR` default to true and bypass `ALLOWED_ATTR`; the guard is `DOMPurify.isSupported`, since unsupported `sanitize` returns its input unchanged.
+- Only a report's preview passes `render` an image source (`imageSource` in `deliverables.ts`). With one, `img` is admitted, and a link resolving inside the out directory becomes an absolute URL on the job's file endpoint. A hook removes any `img` whose `src` lacks that prefix, raw HTML included. Without one, every image is alt text, as in a transcript message. `outRelative` mirrors `jobs.OutRelative`, and the same cases test both (DL-063).
+- `render()` returns null when it cannot sanitise (including Astro's build-time render), and callers must fall back to plain text. `hasMarkup` must stay linear (DL-063).
+
+## Steering a running session
+
+The composer (`web/src/components/Composer.svelte`, logic in `web/src/lib/steer.ts`) POSTs `/api/v1/sessions/{ref}/messages` (DL-019); Interrupt is `/sessions/{ref}/interrupt` (DL-053), also called by `spov jobs interrupt` (DL-023), and Resume is `/jobs/{id}/resume` (DL-054). The browser never talks to a sandbox. The UI rules are DL-059; what a message means on a job is DL-052.
+
+A message's `delivery` is `steer` (the default, and the browser's: read at the agent's next step, once the running step or tool call has finished, without stopping it) or `queue` (API only: read when the whole turn ends, which on a job can be very late). On a job it also carries `after` (`continue` by default, or `handover`) in the prompt's `metadata.spov.after`, never in its text. The measured inbox behaviour is spike S-Q1 in DL-019; re-run `SPOV_PROBE=1 go test -tags integration ./internal/server/ -run SQ1 -v` (local, no Modal, no key) on an OpenCode bump (DL-019, DL-052).
+
+Server side:
+
+- The relay is `internal/server/steer.go`, not `sandboxio.go` (DL-019). Only `steer.go` may address the sandbox's prompt route (DL-052; `TestOnlyAHumansOwnWordsReachThePromptEndpoint`).
+- A new job state must be decided in `jobRefusesAMessage` or it becomes steerable (`TestEveryJobStateIsDecided`).
+- Interrupt (`interrupt.go`) sends `resume=true` explicitly, because an absent value means false, so a message the person sent is read at once (DL-053, DL-035, DL-053). On a job the plugin also holds its loop on `session.execution.interrupted` with `reason: "user"`, so the execution answering that message sends no continuation before the supervisor's pass (`TestAUserInterruptHoldsTheLoop`). OpenCode ignores an unknown query parameter, so only the contract check (DL-035) catches a rename. Code that reads `session.execution.interrupted` must filter on `reason: "user"`: a human's tool-call reject raises the same event with `shutdown`.
+- CSRF for these writes is `BrowserGuard`'s. Do not add a token scheme (DL-061, DL-059).
+- A session's first message creates its conversation in the landing (`firstConversation`, serialised per session by `firstSends`), as `jobConversation` does a job's. `ErrNoConversation` is left only to a cancel (DL-019).
+- Answering the agent's asks is `asks.go`: `POST /sessions/{ref}/permissions/{id}` (`once` or `reject`; `always` is refused) and `POST`/`DELETE /sessions/{ref}/forms/{id}`. The id must be a stored ephemeral `permission.asked` or `form.created` of the session, and the conversation is that row's. Each act writes an audit marker without the reader's words. On a job a permission answer also writes `jobs.MarkerAnswered`, which the supervisor reads as a release of a blocked job once `unansweredAsks` finds nothing else pending, and the release also frees the plugin's loop (`releaseLoop`) as Resume does (DL-020, DL-054, DL-050; `TestOnlyAStoredAskCanBeAnswered`, `TestAnotherUnansweredRequestKeepsTheJobBlocked`, `TestAnAnswerThatReleasesAJobReleasesItsLoop`). A job's plugin never asks at the pin (DL-040), so `blocked` is reached only when its permission hook failed to install (DL-045).
+
+Browser side:
+
+- `sessiondetail.svelte.test.ts` mounts the page only to test the wiring (composer rendered, echo reaches `buildTimeline`, job state passed through). Put behaviour in `steer.ts` or `composer.svelte.test.ts` (DL-059).
+- The `msg_` prefix is written in Go and TS. Drift makes every send a 422 (`TestTheMessageIDPrefixMatchesTheBrowser`).
+- If human messages render twice, check that the inbox id and the stored message id still match (S-LS1's `steerMessageIDFor`) before touching the page (DL-059).
+- Echoes are reconciled by filtering on every render, on the id only. Never prune the echo list from an `$effect`: that loops forever, as in DL-062 (DL-059).
+- A pending echo is its bubble faded, with its note for a screen reader only. The echo and the transcript's copy share `messageKey(id)`, so the bubble fades in place; a key that differs between them makes it jump (DL-059).
+- Nothing in `internal/server` names `session.execution.started`. `TestTheTurnStartedFrameReachesTheStore` is the only guard that keeps Interrupt drawable. `TestTheTurnEventNamesAgreeWithTheBrowser` covers the three turn-ending events (DL-059).
+- `sendability` mirrors `jobRefusesAMessage` and `canStop` mirrors `jobRefusesAnInterrupt`. An unknown state can send. `everyJobStateIsKnown` makes an unconsidered state fail `astro check`. Keep Interrupt and Resume outside the composer form (DL-059; `TestTheTwoRefusalsCoverTheSameStates`).
+- A pending ask is read from the log, never the sandbox: the pin's `GET /permission` answers 400 (spike S-F1, `-run SF1Asks`, DL-020). The recorder keeps the five ask frames by name (`ephemeralNames`), the log carries them as `LogEvent.ask` (`storedAsk`), and `askStates` in `web/src/lib/asks.ts` derives each one's status. An interrupt drops a pending permission with no reply, so a turn of its conversation ending settles it, on the page and in `unansweredAsks`. An ask is its own block in `blocksOf`, drawn by `AskCard.svelte`; its settling frames are not drawn (DL-020).
+- Cancelling a queued message is `DELETE /api/v1/sessions/{ref}/messages/{id}` (`cancelmessage.go`), relaying OpenCode's inbox DELETE. OpenCode answers 204 either way, so whether it was still waiting is read from the stored `session.inbox.cancelled` or `delivered`. A message's status (waiting, processed, cancelled, not processed; `queued` in code) is `messageStatuses` in `timeline.ts`, from the log's `message`, `delivery` and `after` fields (`storedMessage`, `storedInbox`); a queued one is drawn below the log until it is read (DL-019).
+- Audit markers (`spov.session.steered`, `spov.session.message.cancelled`, `spov.job.interrupted`, `spov.job.resumed`) are hidden through `AuditMarkers` in `timeline.ts`. `isSeam` stays keyed on `source`, never on the name prefix (DL-059, DL-058).
+- The copy may say a message is read once the agent's current step finishes, that a job carries on after a `continue` message and that it pauses for the reader after a handover. It never says a turn stops, and names Interrupt only while Interrupt is drawn (DL-052, DL-059). The after choice is offered on a `running` job only (`offersAfter`) and resets to `continue` after each send. The state and every control share one status bar above the box (`composerStatus`), with explanations behind an (i) (`controlsNote`, and `deliveryNote` under Send's `SendShort`) (DL-059).
+
+## Reading a sandbox without paying for it
+
+<!-- @decision(DL-018) -->
+
+Any plain HTTP request to a sandbox resets Modal's idle clock; a held-open stream does not (DL-018, spike S-A in `internal/sandbox/phase3_integration_test.go`). Anything that polls a sandbox keeps it billing to the 24 h cap.
+
+- The one sandbox write on a timer is the git-token renewal; see "Git credentials inside a sandbox" (DL-021).
+- Only the recorder reads a sandbox on a path a browser or listing can reach. Every read path answers from the store, and `sandboxio.go` and `frames.go` are the recorder's alone (DL-018; `TestNoReadPathTouchesTheSandbox`, `TestTheRecorderNeverReadsOnATimer`). The one exception is the job-end visit that reads the reports, the evidence and the outcome file (DL-045, DL-051). Steering is a separate, per-act category (DL-019, above). If a guard fails, reconsider the new read, not the test.
+- The server's own sandbox calls go through `connectReusing` and `withConnection` (DL-030). `/connect` neither reads nor fills that cache (`TestTheConnectEndpointIsOutsideTheCache`). `withConnection` re-runs its whole closure after a 401 or 403, so anything wrapped in it must be safe to repeat.
+- A live view that stays empty until reload means the recorder attached late. Check the `Recorder.Wake` nudges (DL-017) and never weaken the 30 s poll. `TestServeWiresTheRecorderToTheService` fails when a `Service.On*` seam is not set in `serve.go`.
+- `live.ts` treats `end` and a dropped connection differently (only a drop calls `onGap`), and `logStream` resumes with `?after=<pos>`. Removing either turns reopens into a poll or a duplicated log (DL-018, DL-058; "an orderly close reopens without reporting a gap" in `live.test.ts`).
+- The live role is derived in `storedRole` through `jobs.InboxItemType`. It is never set in `projectFrame`, whose output is stored and never sent, and never found with `roleKeys`, which returns the event name (DL-058; `TestTheLogSaysWhoSpoke`).
+- An event is spov's by `source == "spov"`, never by a `spov.` name prefix (DL-058).
+- `frames.go` reads partly inferred OpenCode shapes. Treat a projection that returns nothing as a wrong shape before blaming the sandbox; the `durable` object was one such case (DL-018; `TestProjectionAgainstRealSandboxFrames`). The `/message` shape `parseMessages` reads is still inferred.
+- The gap marker is decided from the sandbox's durable sequence, against where the store's recording of each conversation stopped (`LastSeqs`, read at every attach), and stamped with the attach time through `markAt`, not `mark`. A restart that missed nothing marks nothing (DL-017; `TestTheGapMarkerIsStampedAtTheAttachTime`, `TestASpanThatContinuesTheStoredLogMarksNoGap`). Recorder tests about stored frames count `openCodeEvents()`, not every row.
+
+## Whose GitHub credential, and the organisation's App
+
+`docs/github-access.md` is the reader's account; this is the map (DL-042).
+
+- A platform resolves through a `TierPolicy`: a launch prefers per its request (`credential_preference`, from the CLI config's `platforms[].prefer`; the browser sends none, which is personal-first) and records the tier on each `store.SessionCredential` (`withTiers`). Every later step resolves `policyOf(sess)`, the recorded tier only: renewal, sidecar recreation, adoption after a restart, the git-access check and gate 2 (`jobs.ForgeFor` takes the session). A gone tier fails the step; it never switches. An unreadable credential in a tier ends resolution, never falls through (`tierToken`) (DL-042; `TestARecordedTierIsTheOnlyOne`, `TestALaunchRecordsItsTierAndGateTwoFollowsIt`).
+- The organisation's App is the environment's (`SPOV_GITHUB_APP_*`, `SPOV_PLATFORM_TOKEN_<NAME>`), else one an admin stored: `org_credentials`, sealed under `auth.OrgCredentialAAD` (never a user's AAD), read through `server.OrgApps` with a 30 s cache the writer drops. The admin routes (`orggithub.go`, `/api/v1/org/github`) check an App with `git.GitHub.Check` before storing it, write the row and an `admin_events` row in one transaction after `requireLiveAdmin`, refuse while the environment sets one, and answer 501 on a local server (DL-042; `TestAnAdminStoresACheckedApp`, `TestAStoredAppOpensOnlyWhereItWasSealed`).
+- The repository listing reads each tier through its own credential (`Deps.UserRepos`, `reposByTier`) and marks repositories with `via`; the browser disables what its tier cannot reach (`repoUnreachable`) and the CLI's picker drops it with a note on which `prefer` reaches it (`reachableFromHere`) (DL-042).
+- A fine-grained token lists every public repository its account can read, and GitHub's `permissions` are the account's role, not the token's grant. Such a public repository is listed with `maybe_read_only` and a hedged note (`repoReadNote`, `repoDetail`), never hidden, and the mark is dropped for a launch through the organisation's credential (DL-042; `TestAFineGrainedTokensPublicRepositoriesAreMarked`).
+
+## Forge kinds and repository paths
+
+- A platform's kind is `github`, `forgejo`, `gitea` or `gitlab` (`git.Kinds`), the same string in config, `git.Platform.Kind()`, the proxy, `opencode.CLIForKind` and the API. Forgejo and Gitea share `git.Forgejo` and one proxy policy; GitLab is `git.GitLab` on `net/http`. Every switch on a kind answers for each one and gives an unknown kind nothing, never GitHub's behaviour; `credproxy` keeps its own constants because it cannot import `git` (DL-041; `TestEveryKindIsDecidedWhereTheCLIBranchesOnIt`, `TestGiteaSharesForgejosPolicyAndAnUnknownKindGetsNothing`).
+- Hosted credential keys are `github` and `<kind>:<host>` (`server.HostPlatform`, `PlatformHost`, `HostKinds`) (DL-041).
+- A repository is `{Owner, Name}` where `Owner` is the whole namespace; only GitLab may nest it (`group/sub`). Paths split at the last slash (`git.SplitPath`) and every segment passes `git.CheckRepoPath`. Never cut at the first slash (DL-041; `TestARecordedRequestInASubgroupKeepsItsWholePath`).
+- A GitLab token gets DL-034's endpoint policy in `credproxy/gitlab.go`: the project by its whole path with only `%2F` escapes, or by a numeric ID the launch looked up (`git.ProjectIDs`); escapes and dots elsewhere only in the one name segment after `repository/files`, `branches` or `tags` (GitLab routes `merge.json` as `merge`); writes on a merge request or issue only to create, edit, or its notes and discussions; GraphQL allowed, as for a GitHub PAT. Bearer on the API, Basic `oauth2` for git. The section list was measured against the pinned glab by spike S-GL1 (`go test -tags integration ./internal/credproxy/ -run SGL1 -v` with `SPOV_TEST_GLAB` and a gitlab.com test token), which an update of glab re-runs (DL-034; `TestAGitLabTokenIsUsedOnlyOnTheSessionsProjects`).
+- glab joins tea and gh in the image; every forge CLI is pinned with a sha256 per architecture (`cliSHA256` in `internal/sandbox/image.go`), and a bump changes both, re-checked with `SPOV_CLI_INSTALL=1 go test -tags integration ./internal/sandbox/ -run ForgeCLIsInstall` (local Docker, no Modal). glab is configured from `~/.config/glab-cli/config.yml`, written whole for every GitLab host (`writeGlabConfig`), holding the placeholder; never set `GITLAB_TOKEN` or glab's other env overrides, and keep the image free of glab's own default config (`GLAB_CONFIG_DIR` in the version check). The directory is on the plugin's deny list (DL-032).
+- A session's egress under `install` or `agent` includes its own forges' hosts (`WithForgeHosts`), keeping the preset's name (DL-031).
+- A `pr` job on GitLab opens a merge request. A deliverable carries its forge's kind (`job_deliverables.forge`, recorded from the session's credentials), and wording comes from `git.ChangeNoun`/`ChangeRef` and their web mirrors `changeNoun`/`changeRef` in `deliverables.ts`; change them together. `docs/forges.md` is the reader's page and keeps the tested matrix honest (DL-051, DL-041).
+- A launch with a stored token (not a GitHub App's) first asks the forge whether it can see each repository (`git.RepoChecker`, from `Bootstrap`) and refuses on a not-found, before any sandbox exists; any other answer lets it go on (DL-043; `TestALaunchRefusesARepositoryItsTokenCannotSee`).
+- A session holds one credential per forge host: `git.Bootstrap` refuses two platforms on one host before minting, and the proxy's config validation again (DL-034; `TestASessionHoldsOneCredentialPerHost`).
+- A credential check reads the token's own user, and on GitLab its scopes and expiry, before listing repositories (`git.Inspect`), and tells a bad token (401), a missing permission (403) and an unsupported server (404) apart. The facts are stored with the credential and listed; spov never renews a stored token (DL-041).
+
+## The combined scenarios
+
+The combined scenarios test the product end to end, and each criterion is carried by one of three layers (DL-022): an automated suite, the browser journey run with Playwright, and a short real-GitHub check on a dedicated test account. `scripts/scenarios/` holds the operator's tools.
+
+- `TestScenario5` (`internal/cli/scenario5_integration_test.go`, run in CI's Postgres job) builds the server with `serverDeps`, `wireLogin` and `wireCredentials` on a fresh database, against `scenarioGitHub`, which checks App JWTs against live keys and answers a repository only to a credential that reaches it. It calls the renewal and sidecar passes directly. Its clock starts hours behind the real one, because the store stamps an event's `created_at` with its own clock and `inUse` compares that with mint times, so it cannot catch an idle-renewal regression. Wiring added to `spov serve` belongs in those functions (or `newReconciler`), or the suite stops testing it; gate 2 is the one call it rebuilds, guarded by `TestGateTwoIsWiredToTheJobOwnersForge`. A tier rule that falls through must fail its step 5.19 (DL-022).
+- Seeded sign-in (`TestIntegrationScenarioSeedUsers`, run by `hosted-local.sh seed`) and the sidecar killer (`TestIntegrationScenarioKillSidecar`) are tools behind opt-in variables, not tests. The product gains no way to do either (DL-022).
+- `sandbox.Fake.Reattach` models a new process's handles after a restart; the old server's `Close` detaches them.
+- `TestScenario2` and `TestScenario6` drive jobs on the same harness: `boot` calls `wireJobs`, the supervisor wiring `runServe` uses, with a queue that only records, and a suite calls `Supervisor.Run` per pass. `jobOpenCode` (`scenariojobs_integration_test.go`) is the job sandbox's OpenCode, checked against the pinned contract; it serves `/workspace/out` and the plugin's files from what a step put there. Frames are written to the store as the recorder would. `withJobs` sets the Postgres store's clock to the scenario's, because the wall-clock ledger is stamped with the store's clock and judged on the supervisor's (DL-022).
+- `TestScenario1` runs `pr` jobs on it against `scenarioGitHub`'s pull requests (`openPull`, `closePull`, `installRepo`); a recorded pull request is an evidence line named `opencode.DeliverableEvent` (DL-022).
+- `TestScenario4` runs against a real Forgejo and Gitea from `scripts/forge-test-server.sh` (`SPOV_TEST_FORGEJO_ENV`, `SPOV_TEST_GITEA_ENV`; skipped without them). `newScenarioServer`'s extra arguments add platforms to its config, and the forge's certificate joins the roots `scenarioGitHub` installs. A launch clones only over https, so the forge must serve TLS (DL-041).
+- `TestScenario7` restarts that harness mid-job: `restart` stops the server, `Reattach`es the fake's handles, boots a new one on the same database and runs one reconciler pass, after which `withJobs` must be called again for the new store's clock. `boot` starts the Prometheus listener as `spov serve` does (`s.metrics`, read by `scrape`), so each process counts its own endings. `jobOpenCode.hold` makes a read wait, which is how a delivery is cut off partway (DL-022).
+
+## Git credentials inside a sandbox
+
+- A GitHub App token lasts an hour. `Service.RenewGitTokens` (`internal/server/renew.go`, run once a minute where the reconciler runs) mints a new one when the session's `GitTokenExpiresAt` is within `RenewWithin` and the session is in use. `writeToken` gives it to the proxy sidecar (`credproxy.SetTokenCommand`); a sandbox without the sidecar gets `opencode.RefreshArgs` in the main container instead. The token goes on stdin, never in argv (DL-021, DL-034).
+- An exec resets Modal's idle clock (spike S-R1), so `inUse` gates every re-mint. It checks for an unfinished job, a stored event that is not a recorder marker (`LastEventExcept`), or a mint by anyone but `auth.RecorderID`, each newer than both the last mint and the last attempt. Loosening it keeps abandoned sessions billing (DL-021; `TestAnIdleSessionIsNeverReminted`, `TestAFailedRefreshWaitsForNewActivityAndHoldsItsToken`).
+- A re-minted token is revoked only once a later one for its platform is known to be written in, since a failed exec may still have written it (`Service.hold`) (DL-021).
+- A failed renewal writes `MarkerRenewalFailed` into the session's log once per run of failures, which the page draws as a quiet note (`NoteMarkers`). `inUse` skips it, so a failure never causes the next attempt (DL-021; `TestAFailedRenewalIsNotedOnceAndIsNotActivity`).
+- gh reads `~/.config/gh/hosts.yml`, assembled from per-host fragments under `hosts.d`, never `GH_TOKEN`. `GH_TOKEN` overrides the file, and the older single-account format makes gh call GitHub to migrate it. Re-run `go test -tags integration ./internal/sandbox/ -run 'GhReadsItsConfigFile|RefreshThroughExecInput'` on a gh or image bump (DL-021, spike S-R2).
+- `GitTokenMintedAt`/`GitTokenExpiresAt` are written only by `SessionStore.SetGitToken`; `Update` keeps the stored values (DL-021).
+- A renewable platform is one `git.Renewable` says so for (a GitHub App). `Kind()` cannot tell an App from a PAT (DL-021).
+- `SessionView.credentials` names each platform's credential kind (`renewed` or `stored`), where it is held (`proxy`, `sandbox`, or absent when unknown), the forge and its git access, never anything about the secret. The session page words it with `credentialLine` in `web/src/lib/format.ts` (DL-043, DL-034, DL-043).
+
+## The credential proxy sidecar
+
+The forge tokens and the model provider keys live in a sidecar container named `proxy`, never in the sandbox's main container, whose CLIs and OpenCode hold placeholders (DL-034). `OPENCODE_PASSWORD` stays in the main container. The proxy is `internal/credproxy`, run by `cmd/spov-proxy`.
+
+- `session.Launcher.ProxyImage` switches it on. `spov serve` sets it only when `internal/proxybin` embeds a real binary, which `scripts/build-proxy.sh` builds in; a plain `go build` has none. Without it a local server warns and launches with the tokens in the sandbox, and a hosted one refuses to start unless `SPOV_TOKENS_IN_SANDBOX=1` (DL-034; `TestAHostedServerRefusesToRunWithoutTheProxy`). When rebuilding a local `spov`, run both build scripts.
+- The sidecar starts inside `ModalProvider.Create`, before the readiness wait, because the entrypoint waits for `proxy:3128` before cloning (exit 97 if it never answers). Its egress is the session's preset, fixed at creation.
+- The main container keeps its own egress: `credproxy.MainEnv` points proxy-aware clients at the sidecar, and a client that ignores it reaches the forge without a credential. Do not close the main container's egress to force traffic through the proxy; that breaks MCP servers, SDKs and ssh (DL-034). OpenCode's model calls are proxy-aware too, so they depend on the sidecar and cannot reach a private address.
+- Where a re-mint goes is decided by the sandbox's `proxy` tag, never by whether the sidecar answers: Modal reports an exited sidecar as not found, and falling back would write the token into the main container (DL-034; `TestADeadProxyNeverSendsTheTokenToTheMainContainer`).
+- A provider key is set in its provider's own header (`x-api-key`, `x-goog-api-key` or a bearer) on the API host its catalogue entry names, on any path (`credproxy.Provider`). A provider's `text/event-stream` passes through unread, as git packs and `application/octet-stream` do for any host; everything else is scrubbed, up to `MaxScrubbed`. `go test -tags integration ./internal/sandbox/ -run 'SKModelCallsThroughTheProxy|SKARunningOpenCode'` (spikes S-K1 and S-K2, no key needed; `SPOV_SK2_PROVIDER=openrouter` for that provider) re-checks every provider's route, and that a running OpenCode keeps working when its sidecar restarts with the same CA, on an OpenCode bump or a catalogue change. A recreated sidecar gets the keys as they resolve then (DL-034).
+- Only the forge and provider hosts are decrypted, with a per-sandbox CA whose name constraints permit only them (`credproxy.NewCA`). The client's own credential headers are always removed before the policy adds one (`credentialHeaders`).
+- A stored token (Forgejo, GitHub PAT) is added only to allowed endpoints of the session's repositories (`credproxy.Platform.allows`, an allowlist by absence); a PAT also gets `POST /graphql`. A GitHub App token (`Scoped`) is added on any path, because GitHub narrows it and a sandbox's App token asks only for `git.SandboxPermissions`. A new gh or tea feature that stops working inside a sandbox is most likely an endpoint missing from `repoSections` (DL-034; `policy_test.go`). Every response to a credentialed request is scrubbed of the token (`scrubResponse`), because Forgejo's LFS batch API echoes it; do not pass one through unread unless it is a git pack or binary object (`TestAnEchoedCredentialNeverReachesTheClient`).
+- Git access is `repos` (default) or `all`, per launch (`--git-access`, the job form), then the CLI's `sandbox.git_access`/`sandbox.job_git_access` sent as a preference (`git_access_preferred`), then the profile's `default_git_access`/`default_job_git_access`; a job never takes the interactive default. `all` adds every platform the caller holds a credential for (`Forge.Platforms`), mints with `git.IssueFor` (`IssueWideToken`) and sets `credproxy.Platform.AllRepos`, which lifts only the repository rule. On the deployment's own credential it needs `git.allow_all`/`SPOV_GIT_ALLOW_ALL` (`Service.mayReachAll`): a launch that named it is refused, a preference falls back to repos and says so. Re-mints and recreated sidecars follow `store.SessionCredential.Access` through `recordedSelections`, which checks the tier again (DL-043; `gitaccess_test.go`).
+- A sidecar that has exited is recreated once by `Service.CheckSidecars` (the reconciler's replica, once a minute); the sandbox is tagged `proxy-recreated=1` first, and a second death ends it (a job through `jobs.MarkerProxyFailed`). It reuses the CA the launch made, which the server keeps sealed in `session_proxy_cas` (`keepProxyCA`, `proxyCAFor`), because a running OpenCode never trusts a new one; only when none is kept, or it does not cover a host (`credproxy.CACovers`), is a new CA made and installed (DL-034; `TestAKeptCASurvivesARestartSealed`, `TestARecreationWithNoKeptCAInstallsANewOne`). Tag with `Handle.AddTags`, never Modal's `SetTags`, which replaces every tag (DL-034, spike S-I4; `TestADeadSidecarIsRecreatedOnceThenTheSessionEnds`).
+- A sidecar that does not start fails `Create`, and the launcher re-bakes the image and creates once more, at most once per server process (`proxyImages.rebake`). It never retries when the failed sandbox could not be terminated (`sandbox.ErrStillRunning`) (DL-034; `TestASidecarThatWillNotStartIsRebakedOnce`).
+- The image is `spov-proxy-<hash of binary and base>`, baked on first use by `EnsureProxyImage` through a snapshot. `go test -tags integration ./internal/session/ -run CredentialProxy` runs a real launch through it; `./internal/sandbox/ -run 'CredentialProxyThroughASidecar|SidecarAndIdleTimeout'` re-measures S-I3 on an SDK or image bump.
+
+## How a job ends, and where it works
+
+- A run ends on a signal the plugin sends, never on silence. The backstop keys on the session no longer being live, not on elapsed time (DL-048; `TestSilenceIsNotCompletion`, `TestTheBackstopLeavesALiveSandboxAlone`).
+- The stop marker's text is at `data.item.payload.text` in the event frame (`TestTheStopMarkerIsFoundInARealFrameShape`) and at the top level of a stored synthetic message (DL-048; `TestTheStopMarkerIsFoundInARealMessageShape`).
+- A running job whose stop marker reached `messages` but not `events` is recovered by `loopStoppedInMessages`, gated on `running` and not on a gap (DL-048; `TestTheTranscriptRecoveryIsBoundedByStateNotByAGap`, `TestTheGapRecoveryCannotBeForged`).
+- The completion tool must declare `options: {codemode: false}` and return `{content}` with no `output` schema, or the job runs to its limit or is judged blocked (DL-048; `TestTheCompletionToolIsADirectCallNotCodemodeOnly`, `TestTheCompletionToolReturnsWhatTheDispatcherAccepts`). Never add it to `PermissionsForKind` (`TestTheCompletionToolIsNotInAnyAllowlist`).
+- While a person's message is enqueued and not yet delivered or cancelled, the tool records `completion.deferred` (never `completion.declared`), announces nothing and tells the agent to read the message first (`inbox.pending` in the plugin; DL-048; `TestCompletionWaitsForAQueuedMessage`). A message the run never reached is drawn as not processed.
+- A failed turn (`session.execution.failed`: a provider's quota, an outage) is continued after 10 s and 30 s, and a third failure in a row ends the run with reason `turn-failed` and the error, which the verdict quotes redacted. A held loop is left alone (DL-048; `TestFailedTurnsAreRetriedThenEndTheRun`).
+- Calling the tool starts delivery, so the sandbox can be terminated mid-turn; the tool description says it must be the last action (DL-048; `TestTheCompletionToolSaysItMustBeTheLastAction`). The `loop.announced` guard in `announceStop` stops a second declaration from redelivering the job.
+- Every session lands at `/workspace`. `sessionDir` reads `store.Session.Landing`, never `Sandbox.Workdir` (DL-037).
+- A report job's reports are every Markdown file directly in `/workspace/out` (`opencode.OutDir`), which never follows the landing and which the entrypoint creates at start. Delivery lists it with `/api/fs/list` and collects each report whole, up to 10 MiB each and 100 MiB and 1,000 files per job, then the PNG, JPEG, GIF or WebP images a report links, typed by their bytes (`internal/jobs/deliverables.go`). A listing that fails, or a sandbox that has gone, is a failed collection, never an empty directory (DL-037, DL-051, DL-063; `TestTheReportsNeverLandInARepository`, `TestTheReportsAreCollectedFromTheWorkspaceNotTheLanding`, `TestEveryReportAndItsImagesAreCollected`). `go test -tags integration ./internal/sandbox/ -run SD1` re-measures both routes on an OpenCode bump.
+- A `pr` job records each pull request with `spov_pull_request {repository, branch}` as it opens it. Only a repository selected at launch counts: the plugin refuses others, and `recordedPullRequests` drops them again, since the evidence file is the agent's. Each member is asked about on its own platform (DL-051; `TestThePullRequestToolRecordsASelectedRepository`, `TestTheRecordedPullRequestsReachTheJob`).
+- Gate 2 asks each forge for the branch's pull requests in every state and takes the best: open or merged is verified, closed without merging is missing (`git.PullRequest.Open`/`Merged`; a `git.Fake` pull request with no state is open). A record line with `withdrawn: true` makes its member `withdrawn`, left out of the set, only when a `user` inbox item was enqueued after the branch was first recorded (`withdrawalHonoured`); otherwise it is judged as recorded and gate 2 says so (DL-051; `TestAWithdrawalNeedsAPersonsMessageAfterTheRecord`, `TestGateTwoLeavesAWithdrawnPullRequestOut`).
+- Deliverables live in `job_deliverables` and collected files in `job_files`. A write never makes a verified member worse, and a file is stored once. Collection is gated by its own marker (`MarkerCollected`), not the evidence one, so a pass that broke off collects again and collects only what it lacks (DL-051; `TestAPassThatBrokeOffCollectsAgain`).
+- The lines that decide an outcome (recorded pull requests, the completion, the check, the loop's stop) are copied to `/tmp/spov-outcome.jsonl` (`OUTCOME_EVENTS` in the plugin, `opencode.PluginOutcomePath`) and stored as `MarkerOutcome`. The evidence file's 256 KiB bound would otherwise drop them on a long run. Readers take a line from either marker (`isRecordMarker`). A sandbox already gone is `jobs.ErrSandboxGone`, which gate 2 reads as unverified (DL-051; `TestTheOutcomeFileOutlivesTheEvidenceBound`, `TestTheOutcomeLinesAreKeptApart`).
+- A repository's own `AGENTS.md` and `opencode.json` are not auto-injected; the generated `/workspace/AGENTS.md` tells the agent to read them (DL-037).
+- Every sandbox has a scratchpad at `/workspace/.scratch` (`opencode.ScratchDir`), named in the generated AGENTS.md. No clone takes `out` or `.scratch`: `git.ReservedDirs` and the entrypoint's `reservedDirs` must agree (DL-037; `TestTheReservedDirectoriesAgree`).
+- The orientation and the `pr` branch note ride on the re-asserted goal. They are guidance, not containment, and must carry no credential (DL-039).
+- `/api/fs/read` answers an error for an absolute path and for a missing file, so `readEvidence` splits the path and a missing file maps to `ErrNoFile` (DL-045). Re-run `go test -tags integration ./internal/sandbox/ -run S7FsReadShape` on an OpenCode bump (one sandbox, no agent turn, no model key).
+
+## How a job is judged
+
+`internal/jobs/verdict.go` judges a finished job on three gates: the check (1), the deliverable (2) and conduct (3). The turn's outcome and the CLI's exit code are never evidence (DL-050). Gates 1 and 2 are guardrails on an honest run, not protection against a dishonest agent (DL-050).
+
+- Gate 3 vetoes only when no tool call ran. That is decided from the tool parts, never from the other gates. An unanswered permission always vetoes (DL-050; `TestARefusedRunIsNotASuccessHoweverWellItFinished`). A request pairs as the supervisor pairs it: asked at `data.id` (`PermissionID`), answered by `permission.replied`'s `requestID` or spov's `MarkerAnswered`; a turn ending does not settle it at gate 3. Build test frames in the measured shape, or the gate passes a test that real frames fail (DL-050; `TestGateThreePairsPermissionsByRequestID`).
+- A report that lost any linked image stays `verified` with `ImagesLost` set, and gate 2 reads it as partial (DL-051).
+- A refused part is `status: "error"` with a non-empty `error.type`, excluding `tool.execution`. `executed` is OpenCode's `providerExecuted` and tells you nothing, so never remove the type check as redundant (DL-050; `TestARuntimeToolErrorIsNotARefusal`).
+- The evidence line in `/tmp/spov-goal.jsonl` is flat (`{event, at, ...data}`). A reader that expects nested `data` silently leaves gate 1 unverified on every job (DL-050; `TestGateOneReadsTheLineShapeThePluginWrites`).
+- A check command runs in `/workspace`, so write `./<repo>/scripts/check.sh` or pass `--landing <repo>`; there is no `check_dir`. If a check the caller set exits 126/127, the job cannot succeed. A check spov proposed does not block success this way (DL-037, DL-050; `TestTheCheckRunsInTheSessionsDirectory`, `TestAProposedCheckThatCouldNotRunDoesNotVeto`).
+- When spov itself fails (a report read or a forge query breaks), the gate is `unverified`, never `failed`. Delivery is idempotent, so a `failed` here would be permanent (DL-050).
+- Gate 2 judges the whole set: `passed`, `partial` (something verified, but a member is missing, unverified or over the limit, `unfinished` was declared, or the run ended at its wall clock), `unverified` or `failed`. Only gate 2 passed or partial carries a success, so a passing check with nothing verified fails. A partial success stays `succeeded`, with `JobView.partial` (DL-050; `TestTheDeliverableGateOverTheSet`, `TestAPassingCheckWithNothingVerifiedIsNotASuccess`).
+- Gate 2 asks the forge with the job owner's credential (`svc.JobOwnerForge`). If the agent says it opened a PR and the verdict says spov could not ask the forge, check this wiring before blaming the agent (DL-050; `TestGateTwoIsWiredToTheJobOwnersForge`).
+- A timed-out check kills the process group (`detached: true` plus `process.kill(-pid)`), or the orphan keeps the sandbox open (DL-050; `TestATimedOutCheckStopsWhatItStarted`).
+- The verdict's event bound trims the oldest events (the head) and never the newest (the tail), because gate 1's evidence is the last event of a job (DL-050).
+
+## The plugin inside a job's sandbox
+
+<!-- @decision(DL-039) @decision(DL-040) -->
+
+`internal/opencode/plugin/spov-goal.js` is embedded in the binary and written by the entrypoint (DL-039). Its behaviour is tested by running its real `setup()` under bun or node (`internal/opencode/plugincompletionrun_test.go`), not by matching source text.
+
+- These names are written in both Go and the plugin, and drift fails silently:
+
+  | Go | Plugin | Guard |
+  |---|---|---|
+  | `opencode.LoopStoppedMarker` | `STOP_MARKER` | `TestTheStopMarkerMatchesThePlugin` (DL-048) |
+  | `opencode.CompletionTool` | `CONFIG.completionTool` | `TestCallingTheCompletionToolEndsTheRun` (DL-048) |
+  | `opencode.CheckEvent` | `CONFIG.checkEvent` | `TestTheCheckEventMatchesThePlugin` (DL-050) |
+  | `declaredCompletionName` | completion event literal | `TestTheCompletionEventMatchesThePlugin` (DL-048, DL-050) |
+  | `opencode.PullRequestTool`, `DeliverableEvent` | `CONFIG.pullRequestTool`, `CONFIG.deliverableEvent` | `TestThePullRequestToolMatchesThePlugin` (DL-051) |
+  | `takesOver`, `InboxID` | `takesOver`, `inboxIDOf` (and `findKey`) | `TestThePluginAgreesOnWhatTakesOver` (DL-052) |
+
+- It imports no OpenCode package; `node:` built-ins are fine (DL-039; `TestPluginImportsNoOpenCodePackage`).
+- Continue with `ctx.session.synthetic({resume: true, delivery: "queue"})`, never `ctx.session.prompt`, or the job enters `steered` on its own turn. Queued, so a continuation never goes ahead of a person's queued message, after an interrupt included (DL-039, DL-052; `TestPluginContinuesWithSyntheticAndNeverPrompt`, `TestTheLoopsOwnItemsDoNotHoldIt`).
+- A `user` inbox item takes the job over unless its `metadata.spov.after` is `continue`; an item with no metadata (the attached TUI) hands over. The takeover happens on the item's `session.inbox.delivered`, which comes before its execution's `succeeded`: the plugin holds the loop silently then, and the supervisor steers on reading the delivery, joined to its stored enqueue through `ConversationStore.FindEvent` (`takeoverDelivered`). Resume clears the hold (DL-052; `TestAHumanMessageHoldsTheLoopAtOnce`, `TestFollowSteersOnTheDeliveryOfATakeoverItem`; at the pin, `-run SQ1PluginHold`). Anything spov sends into a job's session must stay `synthetic`, or it holds the job's own loop. `go test -tags integration ./internal/sandbox/ -run PluginSeesTheHumanInbox` re-measures the event shape on an OpenCode bump.
+- The policy is an allowlist and an unknown kind denies everything (DL-040; `TestPermissionsForAnUnknownKindDenyEverything`). A job's config carries no `permission`, `permissions` or `tools` key, because a config deny skips the hook (DL-038; `TestJobSessionLosesTheExternalDirectoryGrant`).
+- Action names come from the binary: the shell action is `shell`, not `bash`, and `edit` is the only write gate. An allowlist naming `bash` denies all shell and the job still finishes. Run `go test -tags integration ./internal/sandbox/ -run ActionVocabulary` on every OpenCode bump (DL-040).
+- `external_directory` stays in the job allowlist. A session landed in a repository asserts it for `/workspace/out/*` before writing a report (spike S-W1), so removing it breaks a landed report job (DL-037, DL-040; `TestEveryJobKindCanReadItsOwnWorkspace`).
+- A report job may `edit` only where every resource resolves inside `/workspace/out` or the scratchpad (`WriteRoots`). A resource inside the session's directory arrives relative to it, and one outside it absolute, so `writesInsideRoots` resolves against `CONFIG.dir`. Never compare the raw string (DL-040; `TestAReportJobMayEditOnlyUnderItsWriteRoots`). `go test -tags integration ./internal/sandbox/ -run SWEditResourceShapes` re-measures the shapes on an OpenCode bump.
+- The same denied call repeated `DenialNoteAt` times with no allow between gets one note (an allowed `external_directory` is not a break, and a paused loop is left alone); at `DenialStopAt` the plugin ends the run with reason `denied`, and the verdict quotes the call, redacted (DL-040; `TestARepeatedDenialIsNotedOnceThenEndsTheRun`, `TestTheVerdictNamesTheRepeatedlyDeniedCall`). The note relies on a mid-turn synthetic reaching the model at its next step (spike S-W2, `-run SWSyntheticMidTurn`).
+- The goal handler is registered for both `context` and `compaction`: GA fires `context` for primary requests only, so the compaction summariser needs its own hook (DL-039; `TestTheGoalReachesCompactionAsWellAsEveryRequest`, spike `PluginSurvivesCompaction`).
+- An incoming `deny` is never relaxed: GA's built-in policy hook can deny before spov's, and the allowlist decides only `allow` and `ask` (DL-039; `TestAnIncomingDenyIsNeverRelaxed`).
+- The hook is a guardrail, not a boundary: `/shell` and the proxied API bypass it, and job egress defaults to `open` (DL-040, DL-031).
+- The goal passes through a quoted heredoc and a `json.Marshal` literal. Any replacement encoder must escape U+2028, U+2029, `<`, `>` and `&` (DL-039; `TestPluginSourceEscapesTheGoal`, `TestEntrypointRefusesAPluginContainingTheHeredocTerminator`).
+
+## Jobs and the two quotas
+
+<!-- @decision(DL-045) @decision(DL-009) -->
+
+- A job's session is inserted in the same transaction as the job, `starting` with no sandbox, and is named `job-<id>` (DL-045).
+- The reconciler skips the sessions of `queued` jobs only, and recognises a job's sandbox by its `job` tag, never by session name (DL-045, DL-004; `TestReconcileLeavesAQueuedJobsSessionAlone`, `TestReconcileSweepsTheSessionOfAJobThatHasMovedOn`, `TestReconcileDoesNotAdoptAProvisioningJobsSandbox`).
+- `MaxConcurrentJobs` (2) is separate from the session quota. The session count excludes sessions of unfinished jobs, keyed on the job's state, and the job count takes its own `job:`-prefixed advisory lock (DL-045). Lock bugs show only against real Postgres: `go test -tags integration ./internal/store/postgres/ -run Quota`.
+- The job quota and the reconciler count with `JobState.Counts()` (queued included), not `Live()`; `store.JobCounts` is its SQL twin (`TestJobCountsAgreesWithTheCountsMethod`).
+- A job's duration comes from `--max-duration`, then `sandbox.job_max_duration` (sent with `max_duration_preferred`), then the profile's `default_job_duration`, then 1 h. An explicit duration that does not fit is refused, a default is clamped. Its sandbox timeout is derived, never the request's: the clock plus `WallClockMargin` plus `SteerHeadroom`, cut to `max_timeout` (DL-049; `TestAJobsWallClockIsResolvedAtCreate`). Its idle timeout is that same timeout, and the request's is ignored (DL-049; `TestAJobsSandboxIdlesOutOnlyAtItsTimeout`).
+- `?state=` on the job listing is one comma-separated parameter. huma silently keeps only the first value of a repeated parameter (DL-057; `TestListJobsFiltersByStateAndRefusesAnUnknownOne`).
+- A job's wall clock (DL-049): `MaxDuration` is fixed at create (`jobClock`). It is one allowance across the job: `store.StampJobTimes` keeps a ledger, starting a stretch (`ClockStartedAt`) on entering `running` or `blocked` and banking it into `ClockUsed` on leaving them, so steering pauses it and a resume continues it (`TestTheWallClockIsOneAllowanceAcrossTheJob`, `TestAResumedJobContinuesItsClock`). No count of continuations ends a run; the plugin has no limit (DL-049). The supervisor checks it after each pass, for `running` and `blocked` only, on a locked read (`endAtWallClock`, `JobStore.GetForUpdate`), and writes `jobs.MarkerBounded` in the same transaction as the move to `delivering`. Delivery then calls `EndRun`, which stops the loop and interrupts the turn; before the move, the interrupt would read as a steer (`TestARunningJobIsDeliveredAtItsWallClock`). The verdict names the bound from the marker.
+- A blocked job has a `-> delivering` edge (DL-049), so the DL-045 backstop judges an abandoned blocked job too; gate 3's veto still fails it.
+
+## Which model a session runs on
+
+- A model is `provider/model[#variant]`. The sandbox config file takes the string; the session's `/model` endpoint takes the object `{id, providerID, variant?}` (field `id`, not `modelID`) and answers 400 for a string. `modelRef` builds it (DL-014).
+- The providers are a Go literal in `internal/prep/catalogue.go`, which also sets which key variables are forwarded (`ProviderKeyEnvs`) and where the proxy uses each key (`Provider.API`, DL-034); it never follows a download. Provider IDs come from the pinned build (Gemini is `google`, key `GEMINI_API_KEY`) (DL-013).
+- The models are models.dev's (`internal/modelcat`): the server fetches `models.opencode.ai/api.json`, keeps each carried provider's models that take and produce text, call tools and are not deprecated, newest first, and serves them through `Deps.Models`. It refreshes hourly with the ETag, keeps the list in memory hosted or in `variants.json` locally, and falls back to the embedded snapshot, which `scripts/model-snapshot.sh` regenerates before a release. Tests pin a list with `FixedModels(modelcat.Fixed(...))`, never the snapshot (DL-013).
+- A model the list lacks, under a carried provider, launches with a note (`spov.session.model.custom`, and the launch's progress) and is declared in the sandbox's config at `providers.<id>.models.<model>`; a model models.dev marks deprecated is refused, since OpenCode cannot resolve it (spike S-M1, `-run SM1`, DL-013, DL-038). The config key is `providers` at the pin, not `provider`.
+- `Model unavailable: <provider>/<model>` comes from OpenCode's own resolver: a deprecated model, or an unlisted one nobody declared (S-M1).
+- A running session's model is switched through `POST /sessions/{ref}/model` (`switchmodel.go`), a per-act write like a message; a custom name only back to the launch's own. The page reads the current model from the log's `session.model.selected` (`LogEvent.model`, `currentModel`) and shows it beside Send (`ModelSwitch.svelte`). Every model control is `ModelPicker.svelte` (DL-061, DL-014).
+- Resolution: request, then the caller's stored default, then OpenCode's own. `resolveModel` runs before `checkModel`, and only an empty resolved model skips the check (DL-014, DL-013).
+- The profile row is read once per create (`profileFor`, then `quotaOf`). Do not call `quotaFor` again (DL-014; `TestTheProfileIsReadOncePerCreate`).
+- `prep.LookupModel` and `modelRef` must accept the same references (DL-013; `TestTheCheckAndTheSandboxAgreeOnWhatAReferenceIs`). `withoutVariant` in `web/src/lib/jobform.ts` is a third parser (first `#`, an empty half is no variant) that the Go test cannot see, so change it with them (DL-061). Whether a model is listed is `modelcat.List.Lookup`'s question, never `prep.LookupModel`'s.
+- A catalogue refusal (no such provider, a retired model) and "no key" must keep separate wording (DL-013; `TestTheTwoRefusalsAreNotTheSameMessage`). `refuseModel` adds which rung supplied the model (DL-014).
+- A local `spov serve` reads provider keys once at startup, so a newly stored or exported key needs a restart (`keyAdvice`, DL-013).
+
+## The prep pass (DL-047)
+
+- `internal/prep` is the control plane's only outbound model call: one pass per job before provisioning, which opens the session with the original goal first and verbatim, then the assessment (`openingText`). Client is `github.com/openai/openai-go/v3` behind the `Completer` seam. The assessment is untrusted text and is not sanitisation.
+- Each ladder rung takes the newest model of its family from the live list (`OpenRouterFamily` and the others in `internal/prep/model.go`), resolved again on every pass; its literal is only the fallback, and `TestTheSnapshotHoldsEveryRung` checks both against the snapshot (DL-047).
+- A failed pass, or one whose row write fails, never fails the job. The job opens on the raw goal (`TestAFailedPassLeavesTheJobExactlyAsItWas`, `TestAnAssessmentThatCannotBeRecordedIsNotUsed`). Keep the two log levels separate: no provider is noted once at startup, and a call that was attempted and failed warns on every job (`TestNoProviderIsANoteAndNotAWarning`).
+- A caller's check always wins over a proposed one. Gate 1 names a proposed check on every outcome (`TestACallersCheckIsNeverOverwrittenByAProposedOne`, `TestGateOneSaysWhenTheCheckWasSpovsOwn`). Once a person has put anything in the job's inbox (a `user` item; the goal and the loop's continuations are `synthetic`), a proposed check is unverified whatever it returned (DL-050; `TestAProposedCheckStopsDecidingOnceAPersonWrote`).
+
+## The sandbox toolchain and add-ons
+
+`internal/toolchain` owns what the image carries besides OpenCode and the forge CLIs: the pinned defaults (`Defaults`, `MiseVersion` with a sha256 per target, `CorepackVersion`), the curated add-ons and the AGENTS.md section. It renders commands and calls nothing (DL-032, DL-033).
+
+- The image is built as a chain of layers (`ImageSpec.Layers`), least changed first, with OpenCode last; `EnsureImage` passes one `DockerfileCommands` call per layer so Modal reuses the cached ones. The image name still hashes every command (`TestTheBuildIsLayeredLeastChangedFirst`).
+- Languages resolve through mise's shims, which lead `PATH` (`opencode.sandboxPath`). mise reads idiomatic version files only for the tools in `idiomaticTools`, and `GOTOOLCHAIN=auto` only ever moves Go *up* to a newer `go.mod` toolchain (DL-032).
+- An add-on is an entry in `toolchain.addons`: versions it accepts, layer commands, environment, service, guide note. `Parse` is the only way to a `Selection`, and `ImageSpec.Validate` refuses one it did not produce. Unknown names are refused, never passed to mise (DL-033; `TestParse`).
+- postgres, php and redis install from their upstream apt repositories (`aptRepo`), each trusted only for itself and only after its key matches the fingerprint in `addons.go`; a re-keyed repository fails the build until the fingerprint is updated. Versions are checked by shape, not a list. The default languages are add-ons too (`language`), and one at the base's version is dropped by `Parse`. `toolchain.DebianSuite` must name the base image's release (DL-033; `TestAnyVersionOfTheServiceAddons`, `TestTheAddonRepositoriesFollowTheBaseRelease`). `go test -tags integration ./internal/sandbox/ -run 'TestIntegrationAddonVersions$'` with `SPOV_ADDON_VERSIONS=1` re-measures them.
+- Add-on environment goes in the sandbox's own `Env` (`opencode.EnvConfig.Addons`), not the entrypoint, or a `sandbox exec` cannot see it. Services start in the background before the clones (DL-033).
+- The server derives a variant's image from the request (`Service.variantOf`), again at launch, and refuses add-ons on any image spov did not build. A launch builds a missing variant through `session.VariantBuilder` (one build per name, at most two at once, detached from the launch) unless `modal.build_on_demand` is false; the base image is never built on demand, and `apt` packages the base already has are dropped (DL-016, DL-032).
+- A partial version is resolved by the server (`internal/addonindex`, from mise's index or the apt `Packages` index), and a `Selection` carries both versions: `Version` as asked, `Resolved` the exact release, set only through `Selection.Resolve`, which checks the add-on's `exact` shape. Recipes render `Exact()`; a selection with no `Resolved` renders byte for byte as the versions as asked, so the request's name (`ImageSpec.Requested().Name()`) is the name of the image built from them (DL-033; `TestAPartialVersionResolvesToTheNewestReleaseItCovers`). `go test -tags integration ./internal/addonindex/ -run Integration` re-checks the indexes (no Modal); `./internal/sandbox/ -run 'TestIntegrationResolvedAddons$'` with `SPOV_RESOLVED_ADDONS=1` builds an exact variant.
+- `Service.pickVariant` chooses the image at launch: the exact build, else the newest recorded build of the request while the exact one builds in the background (`VariantBuilder.Start`), else DL-016's launch-path build. Every finished build reaches the registry through `VariantBuilder.OnBuilt`. A session records what it booted in `store.Session.Booted` (DL-016; `variantpick_test.go`).
+- The image registry (`store.ImageStore`: Postgres `images`, or `statefile.File`'s `variants.json` beside a local server's `server.json`) decides whether an image exists, not Modal: a deleted image's name still resolves and `HasImage` says true, but no sandbox starts from it. Rebuild through `BuildImage`, never `EnsureImage`, for a name the registry marks deleted. A create that fails because the image is gone is an `ImageNotFoundError` (`imageGone` in `modal.go`), and `Service.imageGone` marks it deleted so the next launch rebuilds. Pruning marks before it deletes. Pruning is `server.Prunable` and runs daily where the reconciler runs (`RunImagePrune`); `spov serve image prune --dry-run` lists it (DL-016; `TestPrunableFollowsTheRetentions`, spike `TestIntegrationImageDeleteSpike`).
+- Under the `install` egress preset, a first-use install needs the hosts in `sandbox.RegistryDomains`, including `mise-versions.jdx.dev` and Sigstore's `tuf-repo-cdn.sigstore.dev` (DL-032, DL-031).
+- On a toolchain, mise, add-on or image bump, re-run `go test -tags integration ./internal/sandbox/ -run ToolchainImage -v` (with `SPOV_READINESS_BASELINE=<old image>` to compare start-up) and `./internal/session/ -run 'AnAddonVariant|CredentialProxy'`.
+
+## The OpenCode Console sign-in
+
+A user's OpenCode Go and Zen access is an OpenCode Console OAuth grant the server holds (DL-015). The client is `internal/console`; the server side is `internal/server/opencodeconsole.go`.
+
+- The server runs the device flow and keeps the grant: `SealedConsoleStore` (rows `opencode:grant` and `opencode:attempt` in the credential store) when hosted, `LocalConsoleStore` (the keyring) when local. The credential listing hides those rows and `CanonicalPlatform` refuses them. The client ID is OpenCode's own `opencode-cli`, one constant, until the OpenCode team registers one for spov (DL-015).
+- A refresh ends the previous access token at once, and sending a replaced refresh token revokes the whole grant. So only `freshConsoleToken` refreshes, at launch, inside `ConsoleStore.Locked` (a Postgres advisory lock through `CredentialStore.Lock`), and it re-reads the grant after taking the lock. Never refresh anywhere else, and never import the grant of the user's own OpenCode (DL-015; `TestConcurrentLaunchesRefreshOnce`, `TestACredentialLockSerialisesRefreshes`).
+- A session records the grant generation its sidecar holds (`sessions.opencode_grant`, written only by `SetOpenCodeGrant`). After a refresh, `pushOpenCodeGrants` writes the new token in with `spov-proxy set-key`, and `RunRenewals` retries sessions that are behind (DL-015).
+- `GET /api/v1/models` marks a provider the sign-in would unlock with `sign_in: "opencode"`, only where a session would be given it (`consoleCarried`). The browser words its missing-key label and `keyNote` from that field, never from the variable name; `spov credentials` adds the connection's line (DL-015; `TestTheModelListNamesTheSignInThatUnlocksAProvider`, `opencodeconnect.svelte.test.ts`).
+- In the sandbox OpenCode holds a placeholder `OPENCODE_API_KEY` and loads the console config itself, through the proxy. The proxy sets the bearer only on `prep`'s `openCodeAPI.Paths`, where an entry may name a method (`GET /console/api/v2/config`); a 401 from OpenCode on a new console feature means a path or a method is missing there (DL-015; `TestAProviderWithPathsGetsItsKeyOnlyThere`, `TestAProviderPathWithAMethodGetsItsKeyOnlyForThatMethod`). `SPOV_CONSOLE_SPIKE=1 go test -tags integration ./internal/session/ -run OpenCodeConsole -v` re-runs the end-to-end check with a real sign-in on an OpenCode bump; add `SPOV_CONSOLE_KEY_FILE=<file>` to run it on a pasted console API key instead.
+
+## Which OpenCode build a sandbox runs
+
+- The server publishes its configured pin at `GET /opencode-pin.json` (`{scheme, opencode}`), on the raw mux beside `/livez` and unauthenticated. huma cannot document a public operation. `spov fly` compares the sandbox against this pin and falls back to its own config only when the server gives no answer (DL-035).
+- The endpoint is a handshake, not a gate. An unreachable or older server, or an unknown scheme, means the client uses its own configured pin, and the read is bounded by `PinTimeout`. The body carries the version and nothing else (`TestThePinCarriesNothingButTheVersion`).
+- Both `spov fly` gates, the local binary and the sandbox, use the same resolved pin (`TestTheLocalBinaryIsLocatedAgainstTheDeploymentsPin`). A local mismatch is `ClientVersionMismatchError` and a sandbox mismatch is `VersionMismatchError` with a `Source`. `asVersionMismatch` matches only the local type (`TestAsVersionMismatch`).
+- The sandbox must report the pin exactly. The local client is graded by `opencode.CompareVersions` (DL-035): another patch gets a friendly note, another minor release a warning, another major release a `ClientVersionMismatchError` that `--allow-version-mismatch` overrides. A `0.0.0-*` prerelease needs an exact match, and one paired with a release is `Unbridgeable`, which the flag does not override (`TestCompareVersions`, `TestTheLocalClientIsGradedAgainstThePin`).
+
+### Bumping the pin
+
+A bump is checked against the pinned build's own OpenAPI document (DL-035). In order:
+
+1. `scripts/opencode-contract.sh <binary>` refreshes `internal/opencode/contract/` (`openapi.json` and `version`); the document's own `info.version` is not the build's. `TestTheDocumentIsThePinnedBuilds` fails until `version` equals `DefaultOpenCodeVersion`. Put `git diff internal/opencode/contract/openapi.json` in the PR. Record the build in `openCodeReleases` (`internal/sandbox/image.go`): its npm scope, the binary's name in the package, and each target's `dist.integrity`. The image installs that package and checks it, never the live install script (DL-032).
+2. Run the unit tests. Every fake OpenCode server in a test is wrapped in `contract.Checked` (the recorder's fake calls `contract.CheckRequest`), so each request spov sends is checked for its path, query parameters and body fields. OpenCode ignores an unknown query parameter, so only this catches a renamed one. A new call needs an entry in `contract.Used` and a wrapped fake. Leave a fake unwrapped only when it tests plumbing with made-up paths. The contract package is test-only, and a depguard rule enforces that.
+3. Event payloads, stored messages and the plugin API are outside the spec. `SPOV_PROBE=1 go test -tags integration ./internal/server/ -run LocalOpenCodeProbe -v` checks them against the pinned binary on this machine, with the real plugin and a fake model: no Modal and no key. Its `probeProviderPackage` names a build-specific package.
+4. Then run the Modal spikes this file names "on an OpenCode bump". They default to the pin (`contract.Version()`), and one that cannot download its binary fails instead of skipping.
+
+<!-- dld-kit:start -->
+<!-- Generated by dld-kit 1.0.0-rc.6 from templates/rules/dld-workflow.md. Do not edit: updating the rule overwrites this block. -->
+
+# DLD (Decision-Linked Development)
+
+This project uses Decision-Linked Development. Decision records (DL-*.md) live in the `records/` subdirectory of the decisions directory set in `dld.config.yaml` (`decisions/` by default). High-level docs (INDEX.md, OVERVIEW.md) live in the decisions directory.
+
+## Rules
+
+- When you encounter `@decision(DL-XXX)` annotations in code, read the referenced decision with the dld-lookup skill BEFORE modifying the annotated code.
+- ALWAYS look up and verify related decisions before modifying annotated code. Do not skip this step.
+- NEVER modify code in a way that contradicts an existing decision without first confirming with the user. If the change requires breaking a previous decision, a new decision must be recorded (with the dld-decide skill) that explicitly supersedes the old one. If it only partially modifies a previous decision, record it as an amendment instead.
+- Decision records that are not on the base branch yet (e.g. `main`), or still `proposed` there, are drafts: edit them freely, whatever their status. On records already on the base branch, the frontmatter can always be updated (except `id` and `timestamp`), but change the prose below it only through the dld-adjust skill, which follows `decision_edits` in `dld.config.yaml`: `block` (the default) never edits it and records an amendment or superseding decision instead, `ask` edits after the user confirms, `allow` edits.
+
+## Skills
+
+- dld-decide: record a new decision
+- dld-plan: break down a feature into multiple grouped decisions
+- dld-implement: implement proposed decisions
+- dld-lookup: query decisions by ID, tag, or code path
+- dld-adjust: adjust or update existing decisions
+- dld-audit: scan for drift between decisions and code
+- dld-snapshot: regenerate OVERVIEW.md, and any custom artifacts, from the decision log
+- dld-status: a quick overview of the decision log state
+- dld-retrofit: generate decisions from an existing codebase
+- dld-reindex: resolve decision-ID collisions with the base branch and open PRs
+<!-- dld-kit:end -->

@@ -1,0 +1,26 @@
+---
+// Not a page in DL-055's set: it is the file internal/webui serves for
+// any address it has no build output for — which includes a session
+// link whose page is /session/?id=… rather than a path.
+//
+// @decision(DL-055)
+import Base from '../layouts/Base.astro';
+import Logo from '../components/Logo.svelte';
+---
+
+<Base title="Not found — spov">
+  <!-- Centred around the mark to match the signed-out page. The logo is
+       decorative.
+       @decision(DL-056) -->
+  <div class="flex flex-col items-center py-10 text-center">
+    <Logo size={72} class="mb-6 text-faint" />
+    <!-- @decision(DL-056) -->
+    <h1 class="m-0 mb-3 text-xl font-semibold tracking-[-0.01em]">Nothing at this address</h1>
+    <p class="max-w-[62ch] text-soft">
+      <a
+        class="underline decoration-rule-2 underline-offset-[3px] hover:text-ink"
+        href="/">Back to your sessions</a
+      >.
+    </p>
+  </div>
+</Base>

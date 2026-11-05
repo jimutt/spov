@@ -1,0 +1,73 @@
+# Kamal 2 deployment for a single VPS. Run it from the repository root:
+#
+#   kamal deploy -c deploy/kamal/config/deploy.yml
+#
+# Every path below is relative to the root. Secrets come from
+# deploy/kamal/.kamal/secrets, which is gitignored and never committed.
+#
+# @decision(DL-010)
+service: spov
+hooks_path: deploy/kamal/.kamal/hooks
+secrets_path: deploy/kamal/.kamal/secrets
+image: <your-registry>/spov
+
+servers:
+  web:
+    - <your-server-ip>
+
+proxy:
+  ssl: true
+  host: spov.example.com
+  app_port: 8080
+  healthcheck:
+    # Readiness, not liveness: the proxy must not send traffic to a
+    # replica whose migrations are behind.
+    path: /readyz
+    interval: 5
+    timeout: 5
+
+registry:
+  username: <your-registry-user>
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+  dockerfile: deploy/Dockerfile
+  context: .
+
+env:
+  clear:
+    SPOV_LISTEN: ":8080"
+    SPOV_PUBLIC_URL: "https://spov.example.com"
+    MODAL_ENVIRONMENT: "spov-hosted"
+    SPOV_ALLOWLIST_FILE: "/etc/spov/allowlist"
+  secret:
+    # Clients authenticate with it; the server refuses to start without one.
+    - SPOV_SERVER_TOKEN
+    - SPOV_DATABASE_URL
+    - SPOV_CREDENTIAL_KEY
+    # During a key rotation only, the previous key (Kamal refuses a
+    # listed secret that .kamal/secrets does not define):
+    # - SPOV_CREDENTIAL_KEY_OLD
+    # @decision(DL-008)
+    - SPOV_GITHUB_APP_ID
+    - SPOV_GITHUB_APP_PRIVATE_KEY
+    - SPOV_GITHUB_OAUTH_CLIENT_ID
+    - SPOV_GITHUB_OAUTH_CLIENT_SECRET
+    - MODAL_TOKEN_ID
+    - MODAL_TOKEN_SECRET
+    - ANTHROPIC_API_KEY
+
+# The allowlist file seeds a new deployment's allowlist on its first
+# boot; after that the allowlist lives in the database and is managed
+# through the API (see deploy/README.md), and the file is ignored. Put
+# the file at /etc/spov/allowlist on the host before the first deploy.
+#
+# @decision(DL-007)
+volumes:
+  - "/etc/spov:/etc/spov:ro"
+
+# Below Kubernetes' 30s default and above the server's 20s budget, so
+# the process finishes its own drain rather than being killed.
+drain_timeout: 25

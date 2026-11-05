@@ -1,0 +1,658 @@
+<title>Spov Notebook Direction</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  /* =====================================================================
+     Notebook. One token set, two themes.
+     Display: Newsreader (structured serif, no wobble)
+     Body:    Source Serif 4
+     Data:    IBM Plex Mono
+     ===================================================================== */
+  :root {
+    color-scheme: light;
+    --paper:   #EDEAE3;
+    --raised:  #F7F5F0;
+    --sunk:    #E3DFD5;
+    --rule:    #D6D0C2;
+    --rule-2:  #C4BCA9;
+    --ink:     #23211D;
+    --soft:    #635D52;
+    --faint:   #8F887A;
+    --olive:   #5F7343;
+    --olive-b: #4C5D35;
+    --rust:    #A24E28;
+    --gold:    #96741F;
+    --stone:   #7A7466;
+    --chip-run:  rgba(95,115,67,0.14);
+    --chip-start:rgba(150,116,31,0.16);
+    --chip-fail: rgba(162,78,40,0.14);
+    --chip-stop: rgba(122,116,102,0.13);
+    --shadow: 0 1px 2px rgba(35,33,29,0.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --paper:   #16181A;
+      --raised:  #1D2023;
+      --sunk:    #121416;
+      --rule:    #2B3034;
+      --rule-2:  #3A4146;
+      --ink:     #E4E2DC;
+      --soft:    #A29C90;
+      --faint:   #736D63;
+      --olive:   #9DB577;
+      --olive-b: #B2C78F;
+      --rust:    #D98A5E;
+      --gold:    #D4AC5A;
+      --stone:   #8A8478;
+      --chip-run:  rgba(157,181,119,0.15);
+      --chip-start:rgba(212,172,90,0.15);
+      --chip-fail: rgba(217,138,94,0.15);
+      --chip-stop: rgba(138,132,120,0.13);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper:   #16181A;
+    --raised:  #1D2023;
+    --sunk:    #121416;
+    --rule:    #2B3034;
+    --rule-2:  #3A4146;
+    --ink:     #E4E2DC;
+    --soft:    #A29C90;
+    --faint:   #736D63;
+    --olive:   #9DB577;
+    --olive-b: #B2C78F;
+    --rust:    #D98A5E;
+    --gold:    #D4AC5A;
+    --stone:   #8A8478;
+    --chip-run:  rgba(157,181,119,0.15);
+    --chip-start:rgba(212,172,90,0.15);
+    --chip-fail: rgba(217,138,94,0.15);
+    --chip-stop: rgba(138,132,120,0.13);
+    --shadow: 0 1px 2px rgba(0,0,0,0.3);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- explanatory shell (not part of the design) ---------- */
+  .doc-head { padding: 44px 0 26px; }
+  .doc-head h1 {
+    font-family: "Newsreader", Georgia, serif;
+    font-size: clamp(1.8rem, 3.4vw, 2.4rem);
+    font-weight: 600; letter-spacing: -0.015em; line-height: 1.15;
+    margin: 0 0 10px; text-wrap: balance;
+  }
+  .doc-head p { max-width: 66ch; margin: 0 0 8px; color: var(--soft); }
+  .doc-head .chg {
+    margin-top: 18px; padding: 13px 16px;
+    background: var(--raised); border-left: 3px solid var(--olive);
+    font-size: 0.92rem; box-shadow: var(--shadow);
+  }
+  .doc-head .chg ul { margin: 6px 0 0; padding-left: 18px; }
+  .doc-head .chg li { margin-bottom: 3px; }
+  .cap {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.68rem; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--faint); margin: 40px 0 10px;
+  }
+  .frame {
+    border: 1px solid var(--rule); background: var(--paper);
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .scroller { overflow-x: auto; }
+
+  /* ---------- app chrome ---------- */
+  .top {
+    display: flex; align-items: baseline; gap: 24px; flex-wrap: wrap;
+    padding: 18px 26px 15px; border-bottom: 1px solid var(--rule);
+    background: var(--raised);
+  }
+  .mark {
+    font-family: "Newsreader", Georgia, serif;
+    font-weight: 600; font-size: 1.24rem; letter-spacing: -0.005em;
+  }
+  .mark span { color: var(--olive); }
+  .nav { display: flex; gap: 19px; font-size: 0.92rem; color: var(--soft); }
+  .nav a { color: inherit; text-decoration: none; padding-bottom: 3px; border-bottom: 2px solid transparent; }
+  .nav a.on { color: var(--ink); border-bottom-color: var(--olive); }
+  .nav a:hover { color: var(--ink); }
+  .nav a:focus-visible { outline: 2px solid var(--olive); outline-offset: 3px; }
+  .who {
+    margin-left: auto; font-family: "IBM Plex Mono", monospace;
+    font-size: 0.8rem; color: var(--soft);
+    align-self: center;
+  }
+
+  /* theme toggle — two states, the active one marked */
+  .theme {
+    display: inline-flex; align-items: stretch;
+    border: 1px solid var(--rule); background: var(--paper);
+    align-self: center;
+  }
+  .theme button {
+    font: inherit; font-family: "IBM Plex Mono", monospace;
+    font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase;
+    background: none; border: 0; cursor: pointer;
+    padding: 4px 9px; color: var(--faint);
+    display: inline-flex; align-items: center; gap: 5px;
+    transition: color 120ms ease, background-color 120ms ease;
+  }
+  .theme button + button { border-left: 1px solid var(--rule); }
+  .theme button:hover { color: var(--soft); }
+  .theme button[aria-pressed="true"] { background: var(--sunk); color: var(--ink); }
+  .theme button:focus-visible { outline: 2px solid var(--olive); outline-offset: 2px; }
+  .theme svg { width: 12px; height: 12px; display: block; }
+  @media (prefers-reduced-motion: reduce) {
+    .theme button { transition: none; }
+  }
+
+  .body { padding: 26px; }
+
+  /* ---------- lede + aggregate metrics ---------- */
+  .lede {
+    font-family: "Newsreader", Georgia, serif;
+    font-size: 1.62rem; font-weight: 500; line-height: 1.28;
+    letter-spacing: -0.012em; margin: 0 0 22px; max-width: 40ch;
+    text-wrap: balance;
+  }
+  .lede em { font-style: normal; color: var(--olive-b); }
+
+  .metrics {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
+    margin-bottom: 30px;
+  }
+  .metric { padding: 14px 20px 15px; border-right: 1px solid var(--rule); }
+  .metric:last-child { border-right: 0; }
+  @media (max-width: 700px) {
+    .metric { border-right: 0; border-bottom: 1px solid var(--rule); }
+    .metric:last-child { border-bottom: 0; }
+  }
+  .metric .k {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.64rem;
+    letter-spacing: 0.13em; text-transform: uppercase; color: var(--faint);
+  }
+  .metric .v {
+    font-family: "Newsreader", Georgia, serif; font-weight: 500;
+    font-size: 1.72rem; line-height: 1.1; margin-top: 5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .metric .v .u { font-size: 0.82rem; color: var(--soft); margin-left: 4px; font-family: "Source Serif 4", serif; }
+  .metric .n { font-size: 0.78rem; color: var(--faint); margin-top: 3px; }
+  .metric.spend .v { color: var(--rust); }
+
+  /* quota meter — three ticks, filled */
+  .quota { display: flex; gap: 3px; margin-top: 7px; }
+  .quota i { height: 3px; flex: 1; background: var(--rule-2); display: block; }
+  .quota i.on { background: var(--olive); }
+
+  /* ---------- session entries ---------- */
+  .entries { display: flex; flex-direction: column; }
+  .entry {
+    display: grid;
+    grid-template-columns: 82px minmax(0, 1fr) 150px;
+    gap: 0 22px; padding: 13px 0 18px; border-top: 1px solid var(--rule);
+    align-items: start;
+  }
+  .entry:last-child { border-bottom: 1px solid var(--rule); }
+  @media (max-width: 760px) {
+    .entry { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    .status { text-align: left !important; }
+  }
+
+  .when {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.73rem;
+    color: var(--faint); padding-top: 4px; font-variant-numeric: tabular-nums;
+    line-height: 1.4;
+  }
+  .when b { display: block; color: var(--soft); font-weight: 500; }
+
+  .title {
+    font-family: "Newsreader", Georgia, serif; font-size: 1.14rem;
+    font-weight: 600; margin: 0 0 2px; letter-spacing: -0.008em;
+    line-height: 1.3;
+  }
+  .title a { color: inherit; text-decoration: none; }
+  .title a:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--rule-2); }
+  .title a:focus-visible { outline: 2px solid var(--olive); outline-offset: 3px; }
+
+  .meta { font-size: 0.85rem; color: var(--soft); margin: 0 0 6px; line-height: 1.4; }
+  .meta code {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.79rem;
+    background: var(--sunk); padding: 1px 5px; color: var(--soft);
+  }
+  .meta .sep { color: var(--rule-2); margin: 0 6px; }
+
+  .say {
+    font-size: 0.9rem; margin: 0; max-width: 58ch;
+    padding-left: 12px; border-left: 2px solid var(--rule);
+    color: var(--ink); line-height: 1.45;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .say .lbl { color: var(--olive-b); font-weight: 600; }
+  .say.quiet { color: var(--soft); font-style: italic; border-left-color: var(--rule-2); }
+
+  .status { text-align: right; padding-top: 3px; }
+  .statusline {
+    display: flex; align-items: center; justify-content: flex-end; gap: 9px;
+  }
+  .pill {
+    display: inline-block; font-family: "IBM Plex Mono", monospace;
+    font-size: 0.69rem; letter-spacing: 0.09em; text-transform: uppercase;
+    padding: 3px 9px; font-weight: 500;
+  }
+  .pill.run   { background: var(--chip-run);   color: var(--olive-b); }
+  .pill.start { background: var(--chip-start); color: var(--gold); }
+  .pill.fail  { background: var(--chip-fail);  color: var(--rust); }
+  .pill.stop  { background: var(--chip-stop);  color: var(--stone); }
+
+  /* age + lifetime */
+  .age {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.77rem; color: var(--soft); font-variant-numeric: tabular-nums;
+  }
+  .track {
+    margin-top: 6px; height: 3px; background: var(--sunk);
+    position: relative; overflow: hidden;
+  }
+  .track i { position: absolute; inset: 0 auto 0 0; display: block; }
+  .track.run i   { background: var(--olive); }
+  .track.start i { background: var(--gold); }
+  .track.fail i  { background: var(--rust); }
+  .track.stop i  { background: var(--rule-2); }
+  /* footline: cost and the age caption share one row */
+  .footline {
+    display: flex; align-items: baseline; justify-content: flex-end; gap: 8px;
+    margin-top: 5px; font-family: "IBM Plex Mono", monospace;
+    font-size: 0.73rem; font-variant-numeric: tabular-nums;
+  }
+  .footline .cost { color: var(--soft); }
+  .footline .agenote { color: var(--faint); }
+  .footline .agenote.warn { color: var(--gold); }
+  .footline .dot { color: var(--rule-2); }
+
+  /* ---------- session detail ---------- */
+  .read { padding: 26px; display: grid; grid-template-columns: minmax(0,1fr) 216px; gap: 36px; }
+  @media (max-width: 820px) { .read { grid-template-columns: minmax(0,1fr); gap: 26px; } }
+
+  .readhead { margin-bottom: 22px; }
+  .readhead h3 {
+    font-family: "Newsreader", Georgia, serif; font-size: 1.48rem;
+    font-weight: 600; margin: 0 0 5px; letter-spacing: -0.012em;
+  }
+  .readhead .m { font-family: "IBM Plex Mono", monospace; font-size: 0.79rem; color: var(--soft); }
+
+  .turn { margin: 0 0 17px; max-width: 62ch; }
+  .speaker {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.69rem;
+    letter-spacing: 0.11em; text-transform: uppercase; color: var(--faint);
+    display: block; margin-bottom: 5px;
+  }
+  .turn p { margin: 0 0 8px; }
+  .turn.agent { padding-left: 15px; border-left: 2px solid var(--olive); }
+  .turn code { font-family: "IBM Plex Mono", monospace; font-size: 0.85rem; background: var(--sunk); padding: 1px 4px; }
+  .tool {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.78rem;
+    background: var(--raised); border: 1px solid var(--rule);
+    padding: 7px 10px; color: var(--soft); margin: 0 0 8px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .seam {
+    display: flex; align-items: center; gap: 12px; margin: 22px 0;
+    color: var(--rust); font-size: 0.83rem;
+  }
+  .seam .r { flex: 1; height: 1px; background: var(--rule); }
+  .seam .t { font-style: italic; }
+
+  .aside { font-size: 0.85rem; }
+  .aside section + section { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--rule); }
+  .aside h4 {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.64rem;
+    letter-spacing: 0.13em; text-transform: uppercase; color: var(--faint);
+    font-weight: 500; margin: 0 0 9px;
+  }
+  .aside dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; }
+  .aside dt { color: var(--soft); }
+  .aside dd {
+    margin: 0; text-align: right; font-family: "IBM Plex Mono", monospace;
+    font-size: 0.8rem; font-variant-numeric: tabular-nums;
+  }
+  .aside dd.run { color: var(--olive-b); }
+  .aside dd.spend { color: var(--rust); }
+  .aside .hint { color: var(--faint); font-size: 0.78rem; margin: 9px 0 0; line-height: 1.45; }
+
+  .note-after {
+    margin: 14px 0 0; font-size: 0.88rem; color: var(--soft); max-width: 70ch;
+  }
+  .note-after b { color: var(--ink); font-weight: 600; }
+</style>
+
+<div class="wrap">
+  <header class="doc-head">
+    <h1>Notebook</h1>
+    <p>A calm layout that carries a dense page of information, with a display face that has authority rather than personality.</p>
+    <div class="chg">
+      <strong>Design notes</strong>
+      <ul>
+        <li><b>Newsreader</b> is the display face — a structured serif with no decorative wobble, still warm at the reading sizes.</li>
+        <li><b>Aggregate metrics</b> as a hairline stat row, including live-vs-quota as three ticks rather than a boxed panel.</li>
+        <li><b>Sandbox age</b> on every entry, with a lifetime track and an idle-timeout warning where it matters.</li>
+        <li><b>Tight rows</b> — age sits beside the state pill and the cost shares one footline with the age caption.</li>
+        <li><b>Light and dark</b>, built from one token set — the dark ground is a cool near-black, not an inverted paper.</li>
+        <li><b>A theme toggle</b> in the header. It follows your system setting until you choose, then remembers the choice.</li>
+      </ul>
+    </div>
+  </header>
+
+  <p class="cap">Sessions — list</p>
+  <div class="frame">
+    <div class="top">
+      <span class="mark">spov<span>.</span></span>
+      <nav class="nav">
+        <a href="#" class="on">Sessions</a><a href="#">Usage</a><a href="#">Tokens</a><a href="#">Credentials</a>
+      </nav>
+      <span class="who">alice</span>
+      <div class="theme" role="group" aria-label="Colour theme">
+        <button type="button" data-set="light" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          Light
+        </button>
+        <button type="button" data-set="dark" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          Dark
+        </button>
+      </div>
+    </div>
+
+    <div class="body">
+      <h2 class="lede">Two sessions running, <em>one</em> starting up.</h2>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="k">Live now</div>
+          <div class="v">2<span class="u">of 3</span></div>
+          <div class="quota"><i class="on"></i><i class="on"></i><i></i></div>
+        </div>
+        <div class="metric">
+          <div class="k">Sessions</div>
+          <div class="v">14</div>
+          <div class="n">since 1 August</div>
+        </div>
+        <div class="metric">
+          <div class="k">Sandbox hours</div>
+          <div class="v">31.4</div>
+          <div class="n">wall-clock, all sessions</div>
+        </div>
+        <div class="metric spend">
+          <div class="k">Estimated spend</div>
+          <div class="v">$4.82</div>
+          <div class="n">at least — never an invoice</div>
+        </div>
+      </div>
+
+      <div class="entries">
+        <article class="entry">
+          <div class="when"><b>today</b>14:02</div>
+          <div>
+            <h3 class="title"><a href="#">refactor-proxy</a></h3>
+            <p class="meta"><code>acme/widgets</code><span class="sep">·</span>2 cpu, 4096 MiB<span class="sep">·</span>sb-example1</p>
+            <p class="say"><span class="lbl">Last —</span> Tests pass. Want me to wire the server side too?</p>
+          </div>
+          <div class="status">
+            <div class="statusline">
+              <span class="age">1h 12m</span>
+              <span class="pill run">running</span>
+            </div>
+            <div class="track run"><i style="width:30%"></i></div>
+            <div class="footline">
+              <span class="agenote">of 4h</span>
+              <span class="dot">·</span>
+              <span class="cost">≥ $0.41</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="entry">
+          <div class="when"><b>today</b>15:14</div>
+          <div>
+            <h3 class="title"><a href="#">web-concepts</a></h3>
+            <p class="meta"><code>acme/widgets</code><span class="sep">·</span>1 cpu, 2048 MiB<span class="sep">·</span>cloning</p>
+            <p class="say quiet">Waiting for the sandbox to become ready.</p>
+          </div>
+          <div class="status">
+            <div class="statusline">
+              <span class="age">0h 00m</span>
+              <span class="pill start">starting</span>
+            </div>
+            <div class="track start"><i style="width:3%"></i></div>
+            <div class="footline">
+              <span class="agenote">of 4h</span>
+              <span class="dot">·</span>
+              <span class="cost">≥ $0.00</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="entry">
+          <div class="when"><b>today</b>11:20</div>
+          <div>
+            <h3 class="title"><a href="#">migrate-pg18</a></h3>
+            <p class="meta"><code>acme/widgets</code><span class="sep">·</span>2 cpu, 4096 MiB<span class="sep">·</span>sb-example2</p>
+            <p class="say quiet">The sandbox exited before the migration finished.</p>
+          </div>
+          <div class="status">
+            <div class="statusline">
+              <span class="age">2h 41m</span>
+              <span class="pill fail">failed</span>
+            </div>
+            <div class="track fail"><i style="width:67%"></i></div>
+            <div class="footline">
+              <span class="agenote">ended early</span>
+              <span class="dot">·</span>
+              <span class="cost">≥ $0.88</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="entry">
+          <div class="when"><b>yesterday</b>16:44</div>
+          <div>
+            <h3 class="title"><a href="#">device-flow-spike</a></h3>
+            <p class="meta"><code>acme/widgets</code><span class="sep">·</span>1 cpu, 2048 MiB<span class="sep">·</span>sb-example3</p>
+            <p class="say"><span class="lbl">Last —</span> The device flow completes; <code>AuthStyleInParams</code> is required.</p>
+          </div>
+          <div class="status">
+            <div class="statusline">
+              <span class="age">4h 03m</span>
+              <span class="pill stop">stopped</span>
+            </div>
+            <div class="track stop"><i style="width:100%"></i></div>
+            <div class="footline">
+              <span class="agenote">hit limit</span>
+              <span class="dot">·</span>
+              <span class="cost">≥ $1.12</span>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <p class="note-after">Ages update live, and <b>≥</b> means the cost is a floor — an estimate from requested resources, never an invoice. A session close to its idle timeout says so, which is <b>the only place this UI raises its voice</b>, because it is the only thing here that costs money while you are not looking.</p>
+    </div>
+  </div>
+
+  <p class="cap">Sessions — one near its idle timeout</p>
+  <div class="frame">
+    <div class="body" style="padding-top:20px;padding-bottom:20px">
+      <div class="entries">
+        <article class="entry" style="border-top:0">
+          <div class="when"><b>today</b>09:31</div>
+          <div>
+            <h3 class="title"><a href="#">long-review</a></h3>
+            <p class="meta"><code>acme/widgets</code><span class="sep">·</span>2 cpu, 4096 MiB<span class="sep">·</span>sb-example4</p>
+            <p class="say"><span class="lbl">Last —</span> Waiting on your answer about the migration order.</p>
+          </div>
+          <div class="status">
+            <div class="statusline">
+              <span class="age">3h 46m</span>
+              <span class="pill run">running</span>
+            </div>
+            <div class="track run"><i style="width:94%"></i></div>
+            <div class="footline">
+              <span class="agenote warn">idle — stops in 4m</span>
+              <span class="dot">·</span>
+              <span class="cost">≥ $1.28</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </div>
+
+  <p class="cap">Session detail</p>
+  <div class="frame">
+    <div class="top">
+      <span class="mark">spov<span>.</span></span>
+      <nav class="nav">
+        <a href="#" class="on">Sessions</a><a href="#">Usage</a><a href="#">Tokens</a><a href="#">Credentials</a>
+      </nav>
+      <span class="who">alice</span>
+      <div class="theme" role="group" aria-label="Colour theme">
+        <button type="button" data-set="light" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          Light
+        </button>
+        <button type="button" data-set="dark" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          Dark
+        </button>
+      </div>
+    </div>
+
+    <div class="read">
+      <div>
+        <div class="readhead">
+          <h3>refactor-proxy</h3>
+          <div class="m">acme/widgets · running 1h 12m · sb-example1</div>
+        </div>
+
+        <div class="turn">
+          <span class="speaker">You · 14:02</span>
+          <p>Extract the loopback proxy so the server can reuse it.</p>
+        </div>
+
+        <div class="turn agent">
+          <span class="speaker">Agent · 14:02</span>
+          <p>Reading <code>internal/proxy/proxy.go</code> and its call sites to see what the CLI depends on.</p>
+          <p class="tool">read internal/proxy/proxy.go · 412 lines</p>
+          <p class="tool">edit internal/proxy/proxy.go · +38 −11</p>
+        </div>
+
+        <div class="seam">
+          <span class="r"></span>
+          <span class="t">Reconnected at 14:22 — activity between 14:07 and 14:22 wasn't recorded</span>
+          <span class="r"></span>
+        </div>
+
+        <div class="turn agent">
+          <span class="speaker">Agent · 14:22</span>
+          <p>Extracted <code>Mint</code> behind an interface, so the CLI passes its own minter and the server passes one that calls Modal directly.</p>
+          <p class="tool">bash go test ./internal/proxy/ · ok 0.42s</p>
+          <p>Tests pass. Want me to wire the server side too?</p>
+        </div>
+      </div>
+
+      <aside class="aside">
+        <section>
+          <h4>Sandbox</h4>
+          <dl>
+            <dt>State</dt><dd class="run">running</dd>
+            <dt>Age</dt><dd>1h 12m</dd>
+            <dt>Idle in</dt><dd>18m</dd>
+            <dt>CPU</dt><dd>2.0</dd>
+            <dt>Memory</dt><dd>4096 MiB</dd>
+            <dt>Egress</dt><dd>open</dd>
+          </dl>
+        </section>
+        <section>
+          <h4>Workspace</h4>
+          <dl>
+            <dt>Repo</dt><dd>acme/widgets</dd>
+            <dt>Landed</dt><dd>/workspace</dd>
+          </dl>
+        </section>
+        <section>
+          <h4>Estimated cost</h4>
+          <dl>
+            <dt>At least</dt><dd class="spend">$0.41</dd>
+          </dl>
+          <p class="hint">From requested resources and elapsed time. Modal bills the higher of requested and actual, so the real figure can only be more.</p>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <p class="cap">Notes</p>
+  <p class="note-after" style="margin-bottom:60px">
+    <b>Steering:</b> a compose field sits at the end of the reading column, where the conversation already ends — no layout change needed. <b>The metrics row</b> is a hairline stat row, so it reads as part of the page rather than a separate dashboard. <b>Both themes</b> come from one token set, so a colour never exists in only one of them.
+  </p>
+</div>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    var buttons = Array.prototype.slice.call(document.querySelectorAll('.theme button'));
+    var media = window.matchMedia('(prefers-color-scheme: dark)');
+
+    function current() {
+      var set = root.getAttribute('data-theme');
+      if (set === 'dark' || set === 'light') return set;
+      return media.matches ? 'dark' : 'light';
+    }
+
+    function paint() {
+      var now = current();
+      buttons.forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b.dataset.set === now));
+      });
+    }
+
+    buttons.forEach(function (b) {
+      b.addEventListener('click', function () {
+        root.setAttribute('data-theme', b.dataset.set);
+        try { localStorage.setItem('spov-theme', b.dataset.set); } catch (e) { /* private mode */ }
+        paint();
+      });
+    });
+
+    // Follow the OS while no explicit choice has been made.
+    if (media.addEventListener) {
+      media.addEventListener('change', function () {
+        if (!root.getAttribute('data-theme')) paint();
+      });
+    }
+
+    try {
+      var saved = localStorage.getItem('spov-theme');
+      if (saved === 'dark' || saved === 'light') root.setAttribute('data-theme', saved);
+    } catch (e) { /* storage unavailable; fall back to the OS theme */ }
+
+    paint();
+  })();
+</script>

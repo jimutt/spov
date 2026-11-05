@@ -1,0 +1,12 @@
+---
+// The detail page is one static file that reads its session from the
+// query string, /session/?id=<ref>.
+//
+// @decision(DL-057) @decision(DL-055)
+import Base from '../../layouts/Base.astro';
+import SessionDetail from '../../components/SessionDetail.svelte';
+---
+
+<Base title="Session — spov">
+  <SessionDetail client:load />
+</Base>

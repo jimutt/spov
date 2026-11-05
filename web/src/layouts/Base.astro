@@ -1,0 +1,133 @@
+---
+//
+// The two faces, bundled. Only these three stylesheets are imported, so
+// only their WOFF2 files reach the build: the sans in both styles, the
+// mono upright, each in the latin and latin-ext subsets.
+//
+// @decision(DL-056)
+import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
+import '@fontsource-variable/atkinson-hyperlegible-next/wght-italic.css';
+import '@fontsource-variable/atkinson-hyperlegible-mono/wght.css';
+import '../styles/global.css';
+import ThemeToggle from '../components/ThemeToggle.svelte';
+import Logo from '../components/Logo.svelte';
+import Identity from '../components/Identity.svelte';
+
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+
+// The nav's active item is known at build time: these are static pages.
+const here = Astro.url.pathname.replace(/\/+$/, '') || '/';
+const nav = [
+  { href: '/', label: 'Sessions', match: ['/', '/session'] },
+  // @decision(DL-060)
+  { href: '/jobs/', label: 'Jobs', match: ['/jobs'] },
+  { href: '/usage/', label: 'Usage', match: ['/usage'] },
+  { href: '/tokens/', label: 'Tokens', match: ['/tokens'] },
+  { href: '/settings/', label: 'Settings', match: ['/settings'] },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <!-- Carries its own colours: a favicon is fetched outside the page
+         and cannot inherit currentColor. @decision(DL-056) -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Before first paint, or the page flashes the wrong theme. Kept in
+         sync with src/components/theme.ts by hand: a module import here
+         would be deferred and defeat the point. -->
+    <script is:inline>
+      try {
+        const saved = localStorage.getItem('spov-theme');
+        if (saved === 'light' || saved === 'dark') {
+          document.documentElement.setAttribute('data-theme', saved);
+        }
+      } catch {
+        /* storage unavailable; follow the OS */
+      }
+    </script>
+    <!-- The faces' OFL texts travel with the files they cover. Copies of
+         the packages' own, which fonts.test.ts keeps equal.
+         @decision(DL-056) -->
+    <link rel="license" href="/licenses/atkinson-hyperlegible-next.txt" title="Atkinson Hyperlegible Next: SIL Open Font License 1.1" />
+    <link rel="license" href="/licenses/atkinson-hyperlegible-mono.txt" title="Atkinson Hyperlegible Mono: SIL Open Font License 1.1" />
+  </head>
+  <body class="bg-paper text-ink">
+    <!-- Sticky, so the session page can follow the end of a growing
+         transcript. Needs an opaque background — bg-raised — since the
+         transcript scrolls under it.
+         @decision(DL-057) -->
+    <header
+      class="sticky top-0 z-20 flex flex-wrap items-center gap-x-7 gap-y-2 border-b border-rule bg-raised px-6 py-2.5"
+    >
+      <!-- Decorative: the name is right beside it in text. The wordmark
+           is the name alone, in the UI face.
+           @decision(DL-056) -->
+      <a
+        href="/"
+        class="flex items-center gap-2 text-[17px] font-bold tracking-[-0.01em] text-ink no-underline focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-[3px]"
+      >
+        <Logo size={20} />
+        <span>spov</span>
+      </a>
+      <nav class="flex flex-wrap gap-x-5 text-base text-soft">
+        {
+          nav.map((item) => {
+            const on = item.match.some((m) => here === m || here.startsWith(`${m}/`));
+            return (
+              <a
+                href={item.href}
+                class:list={[
+                  'border-b-2 pt-1.5 pb-1 no-underline hover:text-ink focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-[3px]',
+                  on ? 'border-olive font-medium text-ink' : 'border-transparent text-soft',
+                ]}
+                aria-current={on ? 'page' : undefined}
+              >
+                {item.label}
+              </a>
+            );
+          })
+        }
+      </nav>
+      <div class="ml-auto flex items-center gap-4">
+        <Identity client:load />
+        <ThemeToggle client:load />
+      </div>
+    </header>
+    <!-- --main-pad-y rather than a utility class, so a sticky element
+         inside can stick at exactly the offset it already sits at — the
+         sticky offset and the natural position are one number, written
+         once. @decision(DL-057) -->
+    <main class="mx-auto max-w-[var(--page-w)] px-[var(--page-pad-x)] py-[var(--main-pad-y)]">
+      <slot />
+    </main>
+    <!-- The header's height, published as --header-h so a sticky
+         element below it can clear it. Measured rather than written
+         down: the header wraps on a narrow viewport and follows the
+         type scale, so a stale literal reads as a z-index bug rather
+         than a wrong number. The property's own fallback only has to be
+         close, for before this runs or if it never does.
+         @decision(DL-057) -->
+    <script is:inline>
+      (() => {
+        const header = document.querySelector('header');
+        if (!header) return;
+        const publish = () =>
+          document.documentElement.style.setProperty(
+            '--header-h',
+            `${Math.round(header.getBoundingClientRect().height)}px`,
+          );
+        publish();
+        if (typeof ResizeObserver !== 'undefined') new ResizeObserver(publish).observe(header);
+        else addEventListener('resize', publish);
+      })();
+    </script>
+  </body>
+</html>

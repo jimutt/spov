@@ -1,0 +1,355 @@
+@import "tailwindcss";
+
+/* Three states, matching docs/design/web-reference.html: an explicit
+   choice pins the theme through `data-theme` on <html>, and no choice
+   follows the OS. Tailwind's default `dark:` is the media query alone,
+   which cannot express the pinned case. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+/* The palette is defined once, as plain custom properties, and swapped
+   wholesale per theme below — so a colour can never exist in only one
+   theme. `@theme inline` re-exports them as Tailwind utilities without
+   resolving them at build time, which is what lets `bg-paper` follow a
+   theme change at runtime.
+
+   Every text colour passes WCAG AA on --paper and --raised in both
+   themes, which theme.test.ts checks. --gold is for marks and fills,
+   and --gold-t is the same hue for words.
+
+   @decision(DL-055) @decision(DL-056) */
+:root {
+  color-scheme: light;
+  --paper: #ebeae6;
+  --raised: #f6f5f2;
+  --sunk: #e1e0db;
+  --rule: #d4d3cd;
+  --rule-2: #bebcb4;
+  --ink: #23211d;
+  --soft: #59564e;
+  --faint: #67635a;
+  --olive: #5f7343;
+  --olive-b: #4c5d35;
+  --rust: #9a4724;
+  --gold: #96741f;
+  --gold-t: #765b15;
+  --stone: #68645b;
+  --on-accent: #f6f5f2;
+  /* The sticky header's height, for elements that stick below it. The
+     layout measures the real header and overwrites this; the value here
+     is what the page uses before that runs and if it never does. It is
+     the header's height at the desktop type scale, which is where a
+     sticky sidebar exists at all.
+
+     @decision(DL-057) */
+  --header-h: 49px;
+  /* The main column's top padding, published so a sticky element can
+     stick exactly where it already sits.
+
+     Without this the sticky offset and the natural position differ, and
+     the difference shows as a JUMP: at the top of the page the element
+     is in normal flow, and it moves the moment it starts sticking. The
+     two numbers have to be the same number, so it is written once here
+     and Base.astro's `main` uses it too.
+
+     @decision(DL-057) */
+  --main-pad-y: 1.75rem;
+  /* How wide a line of the transcript is allowed to get.
+
+     One variable rather than a literal at each of the four places that
+     cap a column, because they have to move TOGETHER: the messages, the
+     seams, the event runs and the composer are read as one column, and
+     a cap changed in three of the four leaves them visibly misaligned.
+     Each caps at --log-w, which is this column: the transcript has no
+     gutter.
+
+     @decision(DL-057) @decision(DL-058) */
+  --read-w: 72ch;
+  --log-w: var(--read-w);
+  /* The page shell's measurements, published because more than one
+     thing has to line up with them: `main` sets its own width and
+     padding from these, and the session page's floating control centres
+     itself over the reading column by subtracting the sidebar from
+     them. Written once, for the same reason --main-pad-y is.
+
+     @decision(DL-057) @decision(DL-056) */
+  --page-w: 1180px;
+  --page-pad-x: 1.5rem;
+  --side-w: 280px;
+  --col-gap: 2.5rem;
+}
+
+/* The dark values, written once and applied by both selectors. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #16181a;
+    --raised: #1d2023;
+    --sunk: #121416;
+    --rule: #2b3034;
+    --rule-2: #3a4146;
+    --ink: #e4e2dc;
+    --soft: #a29c90;
+    --faint: #8f887a;
+    --olive: #9db577;
+    --olive-b: #b2c78f;
+    --rust: #d98a5e;
+    --gold: #d4ac5a;
+    --gold-t: #d4ac5a;
+    --stone: #938d81;
+    --on-accent: #16181a;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #16181a;
+  --raised: #1d2023;
+  --sunk: #121416;
+  --rule: #2b3034;
+  --rule-2: #3a4146;
+  --ink: #e4e2dc;
+  --soft: #a29c90;
+  --faint: #8f887a;
+  --olive: #9db577;
+  --olive-b: #b2c78f;
+  --rust: #d98a5e;
+  --gold: #d4ac5a;
+  --gold-t: #d4ac5a;
+  --stone: #938d81;
+  --on-accent: #16181a;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-raised: var(--raised);
+  --color-sunk: var(--sunk);
+  --color-rule: var(--rule);
+  --color-rule-2: var(--rule-2);
+  --color-ink: var(--ink);
+  --color-soft: var(--soft);
+  --color-faint: var(--faint);
+  --color-olive: var(--olive);
+  --color-olive-b: var(--olive-b);
+  --color-rust: var(--rust);
+  --color-gold: var(--gold);
+  --color-gold-t: var(--gold-t);
+  --color-stone: var(--stone);
+  --color-on-accent: var(--on-accent);
+}
+
+/* The faces are bundled: Base.astro imports their Fontsource packages,
+   and the build copies the WOFF2 files into the binary. Each stack ends
+   in a face the system already has, so a file that fails to load leaves
+   the page in a fallback rather than unstyled. Mono is for machine text
+   only.
+
+   The type scale replaces Tailwind's sizes: 15 px is the interface's
+   default and 16 px the transcript's, and nothing is smaller than 13 px
+   except a <kbd>. Controls are rounded (`rounded-ctl`); containers are
+   not.
+
+   @decision(DL-056) */
+@theme {
+  --font-sans: "Atkinson Hyperlegible Next Variable", "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --font-mono:
+    "Atkinson Hyperlegible Mono Variable", "Atkinson Hyperlegible Mono", ui-monospace, SFMono-Regular, Menlo,
+    monospace;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.4;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.45;
+  --text-md: 0.875rem;
+  --text-md--line-height: 1.45;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.5;
+  --text-read: 1rem;
+  --text-read--line-height: 1.6;
+  --text-lg: 1.25rem;
+  --text-lg--line-height: 1.3;
+  --text-xl: 1.5rem;
+  --text-xl--line-height: 1.2;
+  --radius-ctl: 4px;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The one place this app animates: a disclosure's chevron. Off for a
+   reader who asked for less motion.
+
+   @decision(DL-056) */
+.chevron {
+  transition: transform 150ms ease-out;
+}
+details[open] > summary .chevron,
+[aria-expanded="true"] > .chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}
+summary::-webkit-details-marker {
+  display: none;
+}
+
+/* Rendered Markdown.
+
+   The markup comes from lib/markdown.ts and carries no Tailwind classes
+   of its own — Tailwind generates from source, and this HTML is built
+   at runtime — so the elements are styled here by tag.
+
+   Scoped under .md-body so nothing here can reach the page's own
+   markup, and so a future second surface gets the same treatment by
+   adding one class rather than by copying rules.
+
+   @decision(DL-063) @decision(DL-056) */
+.md-body {
+  overflow-wrap: anywhere;
+}
+.md-body > :first-child {
+  margin-top: 0;
+}
+.md-body > :last-child {
+  margin-bottom: 0;
+}
+.md-body p,
+.md-body ul,
+.md-body ol,
+.md-body blockquote,
+.md-body pre,
+.md-body table {
+  margin: 0 0 0.65em;
+}
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  line-height: 1.25;
+  margin: 1.1em 0 0.45em;
+}
+.md-body h1 {
+  font-size: 1.3rem;
+}
+.md-body h2 {
+  font-size: 1.15rem;
+}
+.md-body h3 {
+  font-size: 1.03rem;
+}
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  font-size: 0.95rem;
+}
+.md-body ul,
+.md-body ol {
+  padding-left: 1.35em;
+}
+.md-body ul {
+  list-style: disc;
+}
+.md-body ol {
+  list-style: decimal;
+}
+.md-body li {
+  margin: 0.15em 0;
+}
+.md-body a {
+  color: var(--olive-b);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* A relative or anchor link has no href once sanitised — only http,
+   https and mailto survive — so it would otherwise read as a link that
+   does nothing when clicked. Agents write `[check](scripts/check.sh)`
+   constantly. */
+.md-body a:not([href]) {
+  color: inherit;
+  text-decoration: none;
+}
+.md-body code {
+  background: var(--sunk);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  padding: 0.05em 0.3em;
+}
+/* A block, not an inline run: the padding and background belong to the
+   <pre>, so the <code> inside it must not draw its own. */
+.md-body pre {
+  background: var(--sunk);
+  overflow-x: auto;
+  padding: 0.6em 0.75em;
+}
+.md-body pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.84375rem;
+  line-height: 1.55;
+}
+.md-body blockquote {
+  border-left: 2px solid var(--rule-2);
+  color: var(--soft);
+  padding-left: 0.85em;
+}
+.md-body hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 1.1em 0;
+}
+/* A wide table scrolls inside its own box rather than widening the
+   column it sits in. */
+.md-body table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  width: max-content;
+  max-width: 100%;
+}
+.md-body th,
+.md-body td {
+  border: 1px solid var(--rule);
+  padding: 0.28em 0.6em;
+  text-align: left;
+}
+.md-body th {
+  background: var(--sunk);
+  font-weight: 600;
+}
+
+/* A message is one voice in a conversation, not a document. An agent
+   that opens its reply with `# Done` should read as emphasis rather
+   than as the page's own title — which is why the heading TAGS are
+   still allowed by the sanitiser and demoted here instead: withholding
+   them would drop the heading's text along with it.
+
+   @decision(DL-063) */
+.md-message h1,
+.md-message h2,
+.md-message h3,
+.md-message h4,
+.md-message h5,
+.md-message h6 {
+  font-size: 1rem;
+  margin: 0.8em 0 0.3em;
+}

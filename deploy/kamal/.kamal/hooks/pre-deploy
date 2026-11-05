@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Migrate before any new container serves, so a bad migration fails the
+# deploy rather than crash-looping replicas.
+#
+# @decision(DL-010)
+set -euo pipefail
+
+echo "spov: applying migrations for ${KAMAL_VERSION:-unknown}"
+# Kamal runs hooks from the directory it was started in, the repository
+# root, and passes no config path, so the hook names the config itself.
+kamal app exec -c deploy/kamal/config/deploy.yml \
+  ${KAMAL_DESTINATION:+-d "$KAMAL_DESTINATION"} \
+  --version "${KAMAL_VERSION:?KAMAL_VERSION is not set}" -- serve migrate up
+echo "spov: migrations at head"
