@@ -196,6 +196,12 @@ type Deps struct {
 	//
 	// @decision(DL-008)
 	Credentials *CredentialStore
+	// RoutedCredentials keeps each user's routed credentials. Nil means
+	// the deployment can hold none: a hosted server without a credential
+	// key.
+	//
+	// @decision(DL-073)
+	RoutedCredentials RoutedCredentialSource
 	// Verifier checks a credential against its platform before it is
 	// stored. Nil stores whatever is given, unverified.
 	//

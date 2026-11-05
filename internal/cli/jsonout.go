@@ -49,6 +49,8 @@ type (
 	credentialsBody struct {
 		Credentials []server.CredentialView `json:"credentials"`
 		Enabled     bool                    `json:"enabled"`
+		// @decision(DL-073)
+		RoutedCredentials []server.RoutedCredentialView `json:"routed_credentials"`
 	}
 )
 

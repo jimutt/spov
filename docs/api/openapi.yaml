@@ -1334,6 +1334,25 @@ components:
       required:
         - token
       type: object
+    PutRoutedCredentialInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/PutRoutedCredentialInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        route:
+          $ref: "#/components/schemas/Route"
+        secret:
+          description: The credential to store
+          type: string
+      required:
+        - secret
+        - route
+      type: object
     QuotaInput:
       additionalProperties: false
       properties:
@@ -1497,6 +1516,85 @@ components:
             - "null"
       required:
         - repos
+      type: object
+    Route:
+      additionalProperties: false
+      properties:
+        attach:
+          enum:
+            - always
+            - asked
+          type: string
+        header:
+          type: string
+        hosts:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        name:
+          type: string
+        paths:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        preset:
+          type: string
+        scheme:
+          enum:
+            - bearer
+            - basic
+            - header
+          type: string
+        user:
+          type: string
+      required:
+        - name
+        - hosts
+        - scheme
+      type: object
+    RoutedCredentialView:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RoutedCredentialView.json
+          format: uri
+          readOnly: true
+          type: string
+        missing:
+          description: The secret is gone; add the credential again
+          type: boolean
+        route:
+          $ref: "#/components/schemas/Route"
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - route
+      type: object
+    RoutedCredentialsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/RoutedCredentialsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        routed_credentials:
+          items:
+            $ref: "#/components/schemas/RoutedCredentialView"
+          type:
+            - array
+            - "null"
+      required:
+        - routed_credentials
       type: object
     SandboxConfigView:
       additionalProperties: false
@@ -2932,6 +3030,130 @@ paths:
       security:
         - bearer: []
       summary: Where an OpenCode Console sign-in stands
+      tags:
+        - credentials
+  /api/v1/me/routed-credentials:
+    get:
+      operationId: list-routed-credentials
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutedCredentialsOutputBody"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: The caller's routed credentials, without their secrets
+      tags:
+        - credentials
+  /api/v1/me/routed-credentials/{name}:
+    delete:
+      operationId: delete-routed-credential
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: Remove a routed credential
+      tags:
+        - credentials
+    put:
+      operationId: put-routed-credential
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutRoutedCredentialInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutedCredentialView"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: Store a routed credential, replacing its route and secret together
       tags:
         - credentials
   /api/v1/me/tokens:

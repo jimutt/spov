@@ -720,6 +720,11 @@ type UserCredential struct {
 	// @decision(DL-041)
 	Scopes    []string
 	ExpiresAt time.Time
+	// Route is a routed credential's route, encoded, which its seal
+	// binds; nil on every other credential.
+	//
+	// @decision(DL-073)
+	Route     []byte
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

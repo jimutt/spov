@@ -257,6 +257,7 @@ type UserCredential struct {
 	UpdatedAt  pgtype.Timestamptz
 	Scopes     []string
 	ExpiresAt  pgtype.Timestamptz
+	Route      []byte
 }
 
 type WebSession struct {

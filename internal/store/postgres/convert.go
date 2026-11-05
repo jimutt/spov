@@ -245,6 +245,7 @@ func credentialFromRow(r sqlcgen.UserCredential) store.UserCredential {
 		VerifiedAs: r.VerifiedAs,
 		Scopes:     nilIfEmpty(r.Scopes),
 		ExpiresAt:  goTime(r.ExpiresAt),
+		Route:      r.Route,
 		CreatedAt:  goTime(r.CreatedAt),
 		UpdatedAt:  goTime(r.UpdatedAt),
 	}

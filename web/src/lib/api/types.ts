@@ -214,6 +214,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/routed-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's routed credentials, without their secrets */
+        get: operations["list-routed-credentials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/routed-credentials/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Store a routed credential, replacing its route and secret together */
+        put: operations["put-routed-credential"];
+        post?: never;
+        /** Remove a routed credential */
+        delete: operations["delete-routed-credential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/tokens": {
         parameters: {
             query?: never;
@@ -1289,6 +1324,17 @@ export interface components {
             /** @description The credential to store */
             token: string;
         };
+        PutRoutedCredentialInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PutRoutedCredentialInputBody.json
+             */
+            readonly $schema?: string;
+            route: components["schemas"]["Route"];
+            /** @description The credential to store */
+            secret: string;
+        };
         QuotaInput: {
             /**
              * Format: int64
@@ -1371,6 +1417,40 @@ export interface components {
             platforms?: components["schemas"]["PlatformTier"][] | null;
             repos: components["schemas"]["RepoView"][] | null;
             warnings?: string[] | null;
+        };
+        Route: {
+            /** @enum {string} */
+            attach?: "always" | "asked";
+            header?: string;
+            hosts: string[] | null;
+            name: string;
+            paths?: string[] | null;
+            preset?: string;
+            /** @enum {string} */
+            scheme: "bearer" | "basic" | "header";
+            user?: string;
+        };
+        RoutedCredentialView: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RoutedCredentialView.json
+             */
+            readonly $schema?: string;
+            /** @description The secret is gone; add the credential again */
+            missing?: boolean;
+            route: components["schemas"]["Route"];
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        RoutedCredentialsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RoutedCredentialsOutputBody.json
+             */
+            readonly $schema?: string;
+            routed_credentials: components["schemas"]["RoutedCredentialView"][] | null;
         };
         SandboxConfigView: {
             cloud?: string;
@@ -2682,6 +2762,171 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OpenCodeAttemptView"];
                 };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-routed-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutedCredentialsOutputBody"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-routed-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutRoutedCredentialInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutedCredentialView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-routed-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Unauthorized */
             401: {

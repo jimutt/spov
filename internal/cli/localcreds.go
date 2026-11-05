@@ -440,6 +440,13 @@ func listLocal(env *Env, asJSON bool) error {
 	if err != nil {
 		return err
 	}
+	// The index lists routed credentials, which probing cannot find.
+	//
+	// @decision(DL-073)
+	routes, err := listRoutedCredentials(context.Background(), env)
+	if err != nil {
+		return err
+	}
 	const probed = "Only configured platforms and the provider variables spov knows are checked;" +
 		" a key stored under another name is not listed."
 	// The hosted listing's shape, with a platform named as config names
@@ -448,7 +455,7 @@ func listLocal(env *Env, asJSON bool) error {
 	// @decision(DL-023)
 	if asJSON {
 		_, _ = fmt.Fprintln(env.Err, "spov: "+probed)
-		return writeJSON(env.Out, credentialsBody{Credentials: orEmpty(views), Enabled: true})
+		return writeJSON(env.Out, credentialsBody{Credentials: orEmpty(views), Enabled: true, RoutedCredentials: orEmpty(routes)})
 	}
 	if len(lines) == 0 {
 		_, _ = fmt.Fprintf(env.Out, "No credentials stored on this machine (%s).\n", env.Credentials.Name())
@@ -459,6 +466,7 @@ func listLocal(env *Env, asJSON bool) error {
 		}
 	}
 	_, err = fmt.Fprintln(env.Out, probed)
+	printRoutedCredentials(env, routes)
 	return err
 }
 
