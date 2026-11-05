@@ -415,6 +415,30 @@ Set the orchestrator's grace period above 20 s: Kubernetes'
 `terminationGracePeriodSeconds: 30` and Kamal's `drain_timeout: 25`
 both do.
 
+## The published image
+
+Each release publishes `ghcr.io/jimutt/spov:<version>` for `linux/amd64`
+and `linux/arm64`, signed by its digest and with a build provenance
+attestation (DL-082). Deploy it by digest, so a moved tag can never change
+what runs: the release workflow prints `ghcr.io/jimutt/spov:<version>@sha256:<digest>`
+as a notice, and `docker buildx imagetools inspect ghcr.io/jimutt/spov:<version>`
+shows it too. Check it before deploying:
+
+```sh
+cosign verify ghcr.io/jimutt/spov@sha256:<digest> \
+  --certificate-identity-regexp '^https://github.com/jimutt/spov/\.github/workflows/release\.yml@refs/tags/v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://ghcr.io/jimutt/spov@sha256:<digest> --repo jimutt/spov
+```
+
+The Kubernetes manifests name the published image by digest. Compose and
+Kamal build from `deploy/Dockerfile` instead, which is how they prove a
+change before it is released; to run a release with Compose, replace its
+`build:` with `image: ghcr.io/jimutt/spov:<version>@sha256:<digest>`.
+
+`:latest` follows the newest release that is not a prerelease. Nothing here
+uses it.
+
 ## The image has no shell
 
 It is distroless, so there is no shell, no `curl` and no `wget`. A
