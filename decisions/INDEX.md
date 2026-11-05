@@ -2,11 +2,10 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-070 | The recorder reads a conversation's messages page by page | proposed | server | server, recorder |
-| DL-069 | Where a user's extra egress domains are honoured | proposed | sandbox | sandbox, egress, config |
-| DL-068 | A bad Modal environment on a by-name sandbox lookup is an error, not a missing sandbox | proposed | sandbox | sandbox, modal |
-| DL-067 | A synced launch whose checkout matches several platforms is an error | proposed | cli | cli, sync, platforms |
-| DL-066 | The CLI and the server bound the same size of a sync bundle | proposed | cli | cli, sync |
+| DL-069 | The recorder reads a conversation's messages page by page | proposed | server | server, recorder |
+| DL-068 | Where a user's extra egress domains are honoured | proposed | sandbox | sandbox, egress, config |
+| DL-067 | A bad Modal environment on a by-name sandbox lookup is an error, not a missing sandbox | proposed | sandbox | sandbox, modal |
+| DL-066 | A synced launch whose checkout matches several platforms is an error | proposed | cli | cli, sync, platforms |
 | DL-065 | The connect-token mint limit is exact across replicas | accepted | server | server, connect, postgres |
 | DL-064 | A local server listens only on loopback, whatever --listen says | accepted | server | server, local, security |
 | DL-063 | Agent-written Markdown is rendered through one sanitised renderer, and a report may show its own collected images | accepted | web | web, markdown, security |
