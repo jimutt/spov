@@ -21,6 +21,7 @@ import (
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/proxy"
+	"github.com/jimutt/spov/internal/routedcred"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/toolchain"
 )
@@ -107,6 +108,11 @@ type Options struct {
 	//
 	// @decision(DL-072) @decision(DL-077)
 	Routes []credproxy.Route
+	// Presets are the routes, secret-less, whose preset has a client
+	// config the entrypoint writes with the placeholder.
+	//
+	// @decision(DL-076)
+	Presets []routedcred.Route
 	// Identity is the author commits made in the sandbox are attributed
 	// to. Either half may be empty.
 	//
@@ -401,6 +407,12 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		return nil, err
 	}
 	entrypoint.Proxied = cred != nil
+	// @decision(DL-076)
+	if cred != nil {
+		entrypoint.Files = routedcred.PresetFiles(opts.Presets, func(name string) string {
+			return cred.placeholders[credproxy.RouteEnvVar(name)]
+		})
+	}
 
 	command, err := entrypoint.Command()
 	if err != nil {

@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jimutt/spov/internal/credproxy"
 	"github.com/jimutt/spov/internal/git"
+	"github.com/jimutt/spov/internal/routedcred"
 )
 
 func TestEntrypointScript(t *testing.T) {
@@ -624,5 +626,40 @@ func TestEverySandboxGetsAScratchpadNoCloneCanTake(t *testing.T) {
 func TestTheReservedDirectoriesAgree(t *testing.T) {
 	if !slices.Equal(reservedDirs, git.ReservedDirs) {
 		t.Errorf("opencode reserves %v, git %v", reservedDirs, git.ReservedDirs)
+	}
+}
+
+// With the proxy, the entrypoint builds the Java trust store and exports
+// JAVA_TOOL_OPTIONS only once it exists, and writes each preset's file
+// through a quoted heredoc; a file that could end its heredoc early is
+// refused.
+//
+// @decision(DL-076)
+func TestThePresetFilesAndTheJavaTrustStoreAreWritten(t *testing.T) {
+	e := Entrypoint{Port: 4096, Proxied: true, Files: []routedcred.File{{Path: routedcred.NPMRCFile, Content: "//npm.acme.com/:_authToken=ph\n"}}}
+	script, err := e.Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"-jdktrust anyExtendedKeyUsage",
+		"then export JAVA_TOOL_OPTIONS='-Djavax.net.ssl.trustStore=" + credproxy.JavaTrustStore,
+		"cat > '/root/.npmrc' <<'SPOV_PRESET_EOF'\n//npm.acme.com/:_authToken=ph\nSPOV_PRESET_EOF\n",
+		"mkdir -p '/root'",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the script lacks %q", want)
+		}
+	}
+	if strings.Index(script, "JAVA_TOOL_OPTIONS") > strings.Index(script, "spov_i=0") {
+		t.Error("JAVA_TOOL_OPTIONS is exported after the proxy wait, not before the clones")
+	}
+	plain, _ := Entrypoint{Port: 4096}.Script()
+	if strings.Contains(plain, "JAVA_TOOL_OPTIONS") || strings.Contains(plain, "SPOV_PRESET_EOF") {
+		t.Error("a sandbox without the proxy got the Java trust store or preset files")
+	}
+	e.Files = []routedcred.File{{Path: routedcred.NPMRCFile, Content: "x\nSPOV_PRESET_EOF\nrm -rf /\n"}}
+	if _, err := e.Script(); err == nil {
+		t.Error("a file holding the heredoc's terminator was written")
 	}
 }

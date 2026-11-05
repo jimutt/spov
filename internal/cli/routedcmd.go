@@ -35,17 +35,37 @@ type routeOptions struct {
 	//
 	// @decision(DL-074)
 	Org bool
+	// Preset and its options make the route from a package manager's
+	// registry.
+	//
+	// @decision(DL-076)
+	Preset string
+	URL    string
+	Scope  string
+	RepoID string
+	User   string
 }
 
 // set reports whether any routed-credential flag was given, which is
 // what makes `add` store one.
 func (o routeOptions) set() bool {
 	return len(o.Hosts) > 0 || len(o.Paths) > 0 || o.Bearer || o.Basic != "" || o.Header != "" ||
-		o.Attach != "" || o.SecretFile != "" || o.Org
+		o.Attach != "" || o.SecretFile != "" || o.Org || o.Preset != "" || o.URL != ""
 }
 
 // route is the route the flags describe.
 func (o routeOptions) route(name string) (routedcred.Route, error) {
+	// @decision(DL-076)
+	if o.Preset != "" {
+		if len(o.Hosts) > 0 || o.Bearer || o.Basic != "" || o.Header != "" {
+			return routedcred.Route{}, errors.New("a preset sets the host and scheme itself; give --url instead of --host, --bearer, --basic or --header")
+		}
+		return routedcred.FromPreset(name, o.Preset, routedcred.PresetOptions{URL: o.URL, Scope: o.Scope,
+			RepoID: o.RepoID, User: o.User, Paths: o.Paths, Attach: o.Attach})
+	}
+	if o.URL != "" || o.Scope != "" || o.RepoID != "" || o.User != "" {
+		return routedcred.Route{}, errors.New("--url, --scope, --id and --user go with --preset")
+	}
 	r := routedcred.Route{Name: name, Hosts: o.Hosts, Paths: o.Paths, Attach: o.Attach}
 	schemes := 0
 	if o.Bearer {
@@ -79,6 +99,13 @@ func addRouteFlags(cmd *cobra.Command, o *routeOptions) {
 	f.StringVar(&o.Header, "header", "", "send it as the value of this header")
 	f.StringVar(&o.Attach, "attach", "", "always (default): every session gets it; asked: only a launch that names it")
 	f.StringVar(&o.SecretFile, "secret-file", "", "read the secret from this file, or - for standard input; prompted for if omitted")
+	// @decision(DL-076)
+	f.StringVar(&o.Preset, "preset", "", "make it from a package registry: "+strings.Join(routedcred.Presets, ", ")+
+		"; writes the client's config in the sandbox")
+	f.StringVar(&o.URL, "url", "", "the preset's registry address, as https://npm.acme.com/ (sets the host and path)")
+	f.StringVar(&o.Scope, "scope", "", "npm: the scope the registry serves, as @acme")
+	f.StringVar(&o.RepoID, "id", "", "maven: the repository's id in pom.xml (defaults to the name)")
+	f.StringVar(&o.User, "user", "", "the preset's username: maven's, nuget's (spov) or pypi's (__token__)")
 	// @decision(DL-074)
 	f.BoolVar(&o.Org, "org", false, "store the organisation's routed credential, which every member's sessions get (admins, hosted server)")
 }

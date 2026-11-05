@@ -12,6 +12,7 @@ import (
 
 	"github.com/jimutt/spov/internal/credproxy"
 	"github.com/jimutt/spov/internal/git"
+	"github.com/jimutt/spov/internal/routedcred"
 	"github.com/jimutt/spov/internal/sandbox"
 )
 
@@ -464,5 +465,29 @@ func TestALaunchWithoutTheProxyRefusesRoutedCredentials(t *testing.T) {
 	}
 	if len(f.provider.Created) != 0 || len(f.platform.Requested()) != 0 {
 		t.Error("the refused launch minted a token or created a sandbox")
+	}
+}
+
+// A preset route's client config is written with the route's
+// placeholder, which the main container holds in its variable.
+//
+// @decision(DL-076)
+func TestAPresetsConfigHoldsThePlaceholder(t *testing.T) {
+	f := newFixture(t)
+	withProxy(f)
+	preset, err := routedcred.FromPreset("acme-npm", routedcred.PresetNPM, routedcred.PresetOptions{URL: "https://npm.acme.com/", Scope: "@acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.opts.Routes = []credproxy.Route{preset.WithSecret("npm_realsecret")}
+	f.opts.Presets = []routedcred.Route{preset}
+	if _, err := f.launcher.Launch(context.Background(), f.opts); err != nil {
+		t.Fatal(err)
+	}
+	spec := f.provider.Created[0]
+	ph := spec.Secrets[credproxy.RouteEnvVar("acme-npm")]
+	script := strings.Join(spec.Command, " ")
+	if ph == "" || !strings.Contains(script, "//npm.acme.com/:_authToken="+ph) || strings.Contains(script, "npm_realsecret") {
+		t.Errorf("placeholder %q; script holds the secret or lacks the placeholder", ph)
 	}
 }

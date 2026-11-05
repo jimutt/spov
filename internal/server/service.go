@@ -14,6 +14,7 @@ import (
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/routedcred"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/session"
 	"github.com/jimutt/spov/internal/store"
@@ -611,8 +612,9 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		log.Note(n)
 	}
 	proxied := make([]credproxy.Route, len(routed))
+	presets := make([]routedcred.Route, len(routed))
 	for i, c := range routed {
-		proxied[i] = c.Proxied()
+		proxied[i], presets[i] = c.Proxied(), c.Route
 	}
 	if len(providerKeys) == 0 {
 		log.Note("no model provider key is configured (ANTHROPIC_API_KEY and friends), so the agent cannot reach a model")
@@ -694,7 +696,9 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		// @decision(DL-034)
 		ProviderAPIs: prep.ProviderAPIs(),
 		// @decision(DL-072) @decision(DL-075)
-		Routes:   proxied,
+		Routes: proxied,
+		// @decision(DL-076)
+		Presets:  presets,
 		Identity: identity,
 	}
 	// @decision(DL-027)
