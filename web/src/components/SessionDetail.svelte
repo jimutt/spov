@@ -3,6 +3,7 @@
   // Reads from the store, not the sandbox.
   //
   // @decision(DL-058) @decision(DL-018) @decision(DL-057)
+  import { tick } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { api, unwrap } from '../lib/api/client';
   import { logStream, type LogEvent } from '../lib/api/live';
@@ -51,6 +52,7 @@
   } from '../lib/timeline';
   import type { Conversation } from '../lib/timeline';
   import { Tail, atBottom } from '../lib/tail';
+  import { earlier, earlierLabel, held, windowOf, type Start } from '../lib/transcriptwindow';
   import { hasMarkup, render } from '../lib/markdown';
   import {
     STATUS_WORDS,
@@ -107,12 +109,16 @@
   // caller never named.
   const ref = /^\.+$/.test(named) ? '' : named;
 
-  let conversations = $state<Conversation[]>([]);
+  // Raw, not proxied: both are only ever replaced whole, and a deep
+  // proxy over a long conversation makes every read of it a trap.
+  //
+  // @decision(DL-070)
+  let conversations = $state.raw<Conversation[]>([]);
   let warnings = $state<string[]>([]);
   let transcriptError = $state<unknown>(undefined);
   let readTranscript = $state(false);
-  // @decision(DL-058)
-  let activity = $state<LogEvent[]>([]);
+  // @decision(DL-058) @decision(DL-070)
+  let activity = $state.raw<LogEvent[]>([]);
   let connected = $state(true);
   // @decision(DL-018)
   let tailEnded = $state(false);
@@ -258,6 +264,13 @@
    */
   const blocks = $derived(blocksOf(condense(buildTimeline(conversations, activity, echoing, inboxEnded))));
 
+  // Only a window of the newest blocks is drawn. It slides while the
+  // page follows the tail and is held once the reader leaves the end.
+  //
+  // @decision(DL-070)
+  let start = $state<Start>(undefined);
+  const windowed = $derived(windowOf(blocks, start));
+
   // A queued message can no longer be read once the session has ended or
   // its job's run is over: it is then drawn as not processed.
   //
@@ -399,7 +412,9 @@
       revealed.has(key) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
     }`;
   // @decision(DL-058)
-  const dividers = $derived(timeDividers(blocks, now));
+  // Over the drawn window, so its first block has its quiet time.
+  // @decision(DL-058) @decision(DL-070)
+  const dividers = $derived(timeDividers(windowed.shown, now));
 
   // An event's name without the `session.` every one of them starts
   // with. Display only: grouping and keys use the real name.
@@ -529,6 +544,44 @@
     if (!el) return;
     tail.onScroll(el);
     atEnd = atBottom(el);
+    // @decision(DL-070)
+    start = tail.following ? undefined : held(blocks, start);
+    anchoring();
+  }
+
+  // Scroll anchoring is off while the page follows the tail: a sliding
+  // window drops blocks above the reader, and anchoring would move them
+  // up by that height in the same frame the page moved them to the end.
+  //
+  // @decision(DL-070)
+  function anchoring(): void {
+    if (typeof document !== 'undefined') document.documentElement.style.overflowAnchor = tail.following ? 'none' : '';
+  }
+  $effect(() => {
+    anchoring();
+    return () => {
+      document.documentElement.style.overflowAnchor = '';
+    };
+  });
+
+  // Draws one more window above the first block, then scrolls by what
+  // that added, so the block the reader was looking at stays put.
+  //
+  // @decision(DL-070)
+  // Anchoring is off meanwhile, so only this correction moves the page.
+  async function showEarlier(ev: MouseEvent): Promise<void> {
+    // The first block's own row, not its time divider, which goes once
+    // the block is no longer first.
+    let first = (ev.currentTarget as HTMLElement).parentElement?.nextElementSibling ?? null;
+    while (first?.matches('[data-testid="time-divider"]')) first = first.nextElementSibling;
+    const before = first?.getBoundingClientRect().top;
+    tail.release();
+    document.documentElement.style.overflowAnchor = 'none';
+    start = earlier(blocks, start);
+    await tick();
+    const after = first?.getBoundingClientRect().top;
+    if (before !== undefined && after !== undefined && after !== before) scroller()?.scrollBy(0, after - before);
+    anchoring();
   }
   function toEnd(): void {
     const el = scroller();
@@ -540,6 +593,7 @@
     // arrives. Jumping outright also matches what the control says it
     // does.
     el.scrollTo({ top: tail.resume(el), behavior: 'auto' });
+    anchoring();
     measure();
   }
   $effect(() => {
@@ -678,7 +732,15 @@
         </div>
       {/each}
 
-      {#each blocks as block (block.key)}
+      <!-- @decision(DL-070) -->
+      {#if windowed.hidden > 0}
+        <div class="{row} mb-6">
+          <button type="button" class={secondary} onclick={showEarlier} data-testid="transcript-earlier">
+            {earlierLabel(windowed.hidden)}
+          </button>
+        </div>
+      {/if}
+      {#each windowed.shown as block (block.key)}
         <!-- A quiet time before the first entry and after a pause.
              @decision(DL-058) -->
         {#if dividers.has(block.key)}

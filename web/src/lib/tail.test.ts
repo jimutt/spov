@@ -60,6 +60,7 @@ describe('following the tail', () => {
 
   test('scrolling up releases the latch and keeps it released', () => {
     const tail = new Tail();
+    tail.onScroll(scroller(end()));
     tail.onScroll(scroller(end() - 900));
     expect(tail.following).toBe(false);
     // The event that arrives while the reader is up the page must not
@@ -71,6 +72,7 @@ describe('following the tail', () => {
 
   test('scrolling back to the end resumes following', () => {
     const tail = new Tail();
+    tail.onScroll(scroller(end()));
     tail.onScroll(scroller(end() - 900));
     expect(tail.following).toBe(false);
     tail.onScroll(scroller(end()));
@@ -86,6 +88,7 @@ describe('following the tail', () => {
 
   test('the way back re-arms the latch', () => {
     const tail = new Tail();
+    tail.onScroll(scroller(end()));
     tail.onScroll(scroller(0));
     expect(tail.following).toBe(false);
     expect(tail.resume(scroller(0, 6000))).toBe(6000);
@@ -114,4 +117,65 @@ describe('following the tail', () => {
     tail.onScroll(scroller(end(content) - 900, content));
     expect(tail.onGrow(scroller(end(content) - 900, content + 1000))).toBeUndefined();
   });
+
+  test('growth that leaves the reader short of the end does not release', () => {
+    // A fast replay: the content grows past the end before the page has
+    // followed it, and a scroll event lands first at the same position.
+    // @decision(DL-070)
+    const tail = new Tail();
+    tail.onScroll(scroller(end(5000), 5000));
+    tail.onScroll(scroller(end(5000), 9000));
+    expect(tail.following).toBe(true);
+    expect(tail.onGrow(scroller(end(5000), 9000))).toBe(9000);
+  });
+
+  test('the first scroll event only records where the scroller is', () => {
+    // Scroll anchoring while a replay arrives, before the page has
+    // followed anything: nothing to compare with, so not the reader.
+    // @decision(DL-070)
+    const tail = new Tail();
+    tail.onScroll(scroller(0, 9000));
+    expect(tail.following).toBe(true);
+  });
+
+  test('blocks dropped from above do not release', () => {
+    // The transcript's window slides: blocks leave the top and the
+    // content shrinks, which can clamp the position lower.
+    // @decision(DL-070)
+    const tail = new Tail();
+    tail.onScroll(scroller(end(9000), 9000));
+    tail.onScroll(scroller(end(7000), 7000));
+    expect(tail.following).toBe(true);
+  });
+
+  test('one step up after growth that fired no scroll event releases', () => {
+    // PageUp or a jump to a find-in-page match is a single event, and
+    // the content grew since the last one without a scroll.
+    // @decision(DL-070)
+    const tail = new Tail();
+    tail.onScroll(scroller(end(9000), 9000));
+    tail.onScroll(scroller(end(9000) - 800, 9600));
+    expect(tail.following).toBe(false);
+  });
+
+  test('release stops following until the end is reached again', () => {
+    // @decision(DL-070)
+    const tail = new Tail();
+    tail.release();
+    expect(tail.onGrow(scroller(0, 9000))).toBeUndefined();
+    tail.onScroll(scroller(end(9000), 9000));
+    expect(tail.following).toBe(true);
+  });
+
+  test('a reader scrolling up after layout has settled releases', () => {
+    // @decision(DL-070)
+    const tail = new Tail();
+    tail.onScroll(scroller(end(9000), 9000));
+    tail.onScroll(scroller(end(9000) - 400, 9000));
+    expect(tail.following).toBe(false);
+    // Content growing below while they read keeps it released.
+    tail.onScroll(scroller(end(9000) - 400, 9500));
+    expect(tail.following).toBe(false);
+  });
 });
+

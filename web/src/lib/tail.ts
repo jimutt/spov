@@ -44,6 +44,10 @@ export class Tail {
   following = true;
 
   #within: number;
+  // Where the last scroll event left the scroller, to tell a reader
+  // moving up from content changing under them.
+  #lastTop: number | undefined;
+  #lastHeight: number | undefined;
 
   constructor(within: number = NearBottom) {
     this.#within = within;
@@ -51,16 +55,28 @@ export class Tail {
 
   /**
    * onScroll records where the reader is. Scrolling up releases the
-   * latch; scrolling back to the end re-arms it.
+   * latch; scrolling back to the end re-arms it. A move up that comes
+   * with the content shrinking is layout, not the reader: the browser
+   * clamping the position, or scroll anchoring after blocks above were
+   * dropped (the page turns anchoring off while it follows). It leaves
+   * the latch as it was, and so does the first event, which has nothing
+   * to compare with: on a real page that is the page's own scroll to the
+   * end. Growth is not compared, since it often fires no scroll event.
    *
    * Called for scrolls the page causes as well as ones the reader
    * causes, deliberately: a programmatic scroll to the end leaves the
    * reader at the end, which is what `following` already says. Do not
    * suppress the handler around a programmatic scroll instead — the
    * scroll event arrives on a later frame than the call that caused it.
+   *
+   * @decision(DL-057) @decision(DL-070)
    */
   onScroll(el: Scroller): void {
-    this.following = atBottom(el, this.#within);
+    const moved = this.#lastHeight !== undefined && el.scrollHeight >= this.#lastHeight && el.scrollTop < (this.#lastTop ?? Infinity);
+    if (atBottom(el, this.#within)) this.following = true;
+    else if (moved) this.following = false;
+    this.#lastTop = el.scrollTop;
+    this.#lastHeight = el.scrollHeight;
   }
 
   /**
@@ -80,6 +96,11 @@ export class Tail {
    * resume is the reader taking the offered way back. It re-arms the
    * latch and asks for the end.
    */
+  /** release is the reader asking for earlier output: stop following. */
+  release(): void {
+    this.following = false;
+  }
+
   resume(el: Scroller): number {
     this.following = true;
     return el.scrollHeight;
