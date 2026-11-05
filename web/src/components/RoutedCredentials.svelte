@@ -10,6 +10,10 @@
   import Problem from './Problem.svelte';
   import { danger, sectionTitle } from './ui';
 
+  // Every member sees the organisation's, which their sessions get too;
+  // only an admin can remove one. @decision(DL-074)
+  let { admin = false }: { admin?: boolean } = $props();
+
   // A server that can hold none answers 501, which is a state to show,
   // not a failure.
   const routes = resource(async (signal) => {
@@ -18,8 +22,27 @@
     return unwrap(r);
   });
 
+  const orgRoutes = resource(async (signal) => {
+    const r = await api.GET('/api/v1/org/routed-credentials', { signal });
+    if (r.response.status === 501) return null;
+    return unwrap(r);
+  });
+
   let failure = $state<unknown>(undefined);
   const list = $derived(routes.data?.routed_credentials ?? []);
+  const orgList = $derived(orgRoutes.data?.routed_credentials ?? []);
+
+  async function removeOrg(name: string) {
+    if (!confirm(`Delete the organisation's routed credential ${name}? Every member's later sessions lose it.`)) return;
+    failure = undefined;
+    try {
+      const r = await api.DELETE('/api/v1/org/routed-credentials/{name}', { params: { path: { name } } });
+      if (!r.response.ok) throw new ApiError(r.response.status, r.error);
+      await orgRoutes.refresh();
+    } catch (err) {
+      failure = err;
+    }
+  }
 
   async function remove(name: string) {
     if (!confirm(`Delete the routed credential ${name}?`)) return;
@@ -71,4 +94,25 @@
   {/if}
 {:else if !routes.error}
   <p class="text-soft">Loading…</p>
+{/if}
+
+{#if orgList.length > 0}
+  <h3 class="mt-8 mb-3 text-base font-semibold">The organisation's</h3>
+  <p class="mt-0 mb-3 max-w-[64ch] text-soft">
+    An admin defines these, and your sessions get them too. One of your own on the same host takes its
+    place.
+  </p>
+  <div class="mb-8 max-w-[70ch] border-t border-rule" data-testid="org-routed-credentials">
+    {#each orgList as rc (rc.route.name)}
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-2.5">
+        <span class="font-mono text-md">{rc.route.name}</span>
+        <span class="text-md text-soft">
+          {routedCredentialLine(rc.route)}{rc.route.attach === 'asked' ? ', only when a launch asks' : ''}
+        </span>
+        {#if admin}
+          <button type="button" class="{danger} ml-auto" onclick={() => removeOrg(rc.route.name)}>Delete</button>
+        {/if}
+      </div>
+    {/each}
+  </div>
 {/if}

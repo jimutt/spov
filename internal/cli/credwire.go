@@ -67,6 +67,8 @@ func (e *Env) wireCredentials(deps *server.Deps, cfg config.Config, localMode bo
 	}
 	// @decision(DL-042)
 	deps.OrgApps = &server.OrgApps{Store: deps.Store, Sealer: sealer, Now: e.now}
+	// @decision(DL-074)
+	deps.OrgRoutedCredentials = &server.SealedOrgRoutedCredentials{Store: deps.Store, Sealer: sealer}
 	hosted := &hostedCredentials{
 		env:     e,
 		cfg:     cfg,

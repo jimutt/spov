@@ -1980,6 +1980,42 @@ func (q *Queries) ListMintsBySession(ctx context.Context, arg ListMintsBySession
 	return items, nil
 }
 
+const listOrgCredentials = `-- name: ListOrgCredentials :many
+select id, org_id, platform, ciphertext, nonce, key_version, meta, updated_by, created_at, updated_at from org_credentials where org_id = $1 order by platform
+`
+
+// @decision(DL-074)
+func (q *Queries) ListOrgCredentials(ctx context.Context, orgID string) ([]OrgCredential, error) {
+	rows, err := q.db.Query(ctx, listOrgCredentials, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OrgCredential
+	for rows.Next() {
+		var i OrgCredential
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Platform,
+			&i.Ciphertext,
+			&i.Nonce,
+			&i.KeyVersion,
+			&i.Meta,
+			&i.UpdatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserCredentials = `-- name: ListUserCredentials :many
 select id, org_id, user_id, platform, ciphertext, nonce, key_version, verified_as, created_at, updated_at, scopes, expires_at, route from user_credentials where org_id = $1 and user_id = $2 order by platform
 `

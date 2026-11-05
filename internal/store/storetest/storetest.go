@@ -65,6 +65,18 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		if _, err := oc.Get(ctx, "other", "github"); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("another org sees it: %v", err)
 		}
+		// @decision(DL-074)
+		if err := oc.Put(ctx, store.OrgCredential{ID: store.NewID(t0), OrgID: "org", Platform: "route:acme",
+			Ciphertext: []byte("r"), Nonce: []byte("n"), KeyVersion: 1, Meta: []byte(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := oc.Put(ctx, store.OrgCredential{ID: store.NewID(t0), OrgID: "other", Platform: "route:theirs",
+			Ciphertext: []byte("r"), Nonce: []byte("n"), KeyVersion: 1, Meta: []byte(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if list, err := oc.List(ctx, "org"); err != nil || len(list) != 2 || list[0].Platform != "github" || list[1].Platform != "route:acme" {
+			t.Errorf("list = %+v, %v", list, err)
+		}
 		if err := oc.Delete(ctx, "org", "github"); err != nil {
 			t.Fatal(err)
 		}

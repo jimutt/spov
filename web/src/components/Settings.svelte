@@ -309,7 +309,7 @@
        above, and GET /api/v1/models has already answered. -->
   <Credentials onChanged={() => void models.refresh()} />
   <!-- @decision(DL-077) -->
-  <RoutedCredentials />
+  <RoutedCredentials admin={me.data?.admin ?? false} />
 </section>
 
 <!-- Admin only; a server that keeps no App draws nothing.

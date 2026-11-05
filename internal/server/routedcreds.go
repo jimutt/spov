@@ -43,14 +43,6 @@ type RoutedCredentialSource interface {
 	Open(ctx context.Context, orgID, userID string) ([]HeldRoute, error)
 }
 
-// OrgRoutedCredentialSource keeps the organisation's routed credentials.
-//
-// @decision(DL-074)
-type OrgRoutedCredentialSource interface {
-	// Open is every one, with its secret.
-	Open(ctx context.Context, orgID string) ([]HeldRoute, error)
-}
-
 // HeldRoute is a routed credential with its secret, in memory only while
 // a launch resolves it.
 //

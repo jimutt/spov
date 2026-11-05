@@ -1695,6 +1695,19 @@ func (s memOrgCredentials) Get(_ context.Context, orgID, platform string) (OrgCr
 	return c, nil
 }
 
+func (s memOrgCredentials) List(_ context.Context, orgID string) ([]OrgCredential, error) {
+	defer s.m.lock()()
+	var out []OrgCredential
+	for _, c := range s.m.orgCredentials {
+		if c.OrgID == orgID {
+			c.Ciphertext, c.Nonce, c.Meta = slices.Clone(c.Ciphertext), slices.Clone(c.Nonce), slices.Clone(c.Meta)
+			out = append(out, c)
+		}
+	}
+	slices.SortFunc(out, func(a, b OrgCredential) int { return strings.Compare(a.Platform, b.Platform) })
+	return out, nil
+}
+
 func (s memOrgCredentials) Delete(_ context.Context, orgID, platform string) error {
 	defer s.m.lock()()
 	key := orgID + "\x00" + platform

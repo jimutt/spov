@@ -518,6 +518,10 @@ set ciphertext = excluded.ciphertext, nonce = excluded.nonce,
 -- name: GetOrgCredential :one
 select * from org_credentials where org_id = $1 and platform = $2;
 
+-- name: ListOrgCredentials :many
+-- @decision(DL-074)
+select * from org_credentials where org_id = $1 order by platform;
+
 -- name: DeleteOrgCredential :execrows
 delete from org_credentials where org_id = $1 and platform = $2;
 
