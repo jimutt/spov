@@ -144,3 +144,47 @@ func TestAnOrgRoutedCredentialNeedsAHostedServer(t *testing.T) {
 		t.Errorf("prompted %v", f.prompted)
 	}
 }
+
+// The secret can come from standard input, a missing file or an empty
+// secret is refused, and a hosted listing shows no organisation's
+// credentials from a server that keeps none.
+//
+// @decision(DL-073) @decision(DL-074)
+func TestARoutedSecretComesFromStandardInput(t *testing.T) {
+	f := newLoginFixture(t)
+	f.env.StateDir = t.TempDir()
+	stdin, err := os.CreateTemp(t.TempDir(), "stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = stdin.WriteString("from-stdin\n")
+	_, _ = stdin.Seek(0, 0)
+	f.env.Stdin = stdin
+	if _, _, err := runWith(t, f.env, "credentials", "add", "acme", "--host", "npm.acme.com", "--bearer", "--secret-file", "-"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.store.Get(routedcred.Key("acme")); got != "from-stdin" {
+		t.Errorf("stored %q", got)
+	}
+	if _, _, err := runWith(t, f.env, "credentials", "add", "b", "--host", "b.acme.com", "--bearer", "--secret-file",
+		filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Error("a missing secret file was accepted")
+	}
+	f.reply = "  "
+	if _, _, err := runWith(t, f.env, "credentials", "add", "c", "--host", "c.acme.com", "--bearer"); err == nil {
+		t.Error("an empty secret was accepted")
+	}
+	if _, _, err := runWith(t, f.env, "credentials", "add", "none", "--host", "c.acme.com", "--bearer"); err == nil {
+		t.Error("the reserved name none was accepted")
+	}
+
+	h := keyedFixture(t)
+	out, _, err := runWith(t, h.env, "credentials", "--json")
+	var body credentialsBody
+	if err != nil || json.Unmarshal([]byte(out), &body) != nil || body.OrgRoutedCredentials != nil {
+		t.Errorf("hosted json = %q, %v", out, err)
+	}
+	if _, _, err := runWith(t, h.env, "credentials", "remove", "shared", "--org"); err == nil {
+		t.Error("removing an organisation credential from a server without them succeeded")
+	}
+}
