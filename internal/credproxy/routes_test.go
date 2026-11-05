@@ -214,10 +214,8 @@ func TestARoutesEchoedSecretIsScrubbed(t *testing.T) {
 			t.Errorf("the response carried %q: %s / %s", leaked, body, resp.Header.Get("X-Echo"))
 		}
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(r.audit) != 1 || r.audit[0].Route != "acme" {
-		t.Errorf("audit %+v", r.audit)
+	if audit := r.audits(1); len(audit) != 1 || audit[0].Route != "acme" {
+		t.Errorf("audit %+v", audit)
 	}
 }
 
