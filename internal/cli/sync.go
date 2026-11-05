@@ -52,9 +52,13 @@ func (e *Env) resolveSyncLaunch(ctx context.Context, c *client.Client, cfg confi
 
 	var platformName string
 	if checkout.Remote != "" {
+		// Only a checkout no platform matches falls back to the bundle;
+		// an ambiguous match is an error, or the sandbox gets no origin.
+		//
+		// @decision(DL-066)
 		if platform, err := matchPlatformForCheckout(cfg, checkout, wantPlatform); err == nil {
 			platformName = platform.Name
-		} else if wantPlatform != "" {
+		} else if wantPlatform != "" || !errors.Is(err, errNoPlatformMatch) {
 			return server.RepoRef{}, nil, git.LocalCheckout{}, err
 		}
 	} else if wantPlatform != "" {
@@ -368,6 +372,12 @@ func platformHostAndBase(p config.Platform) (host, basePath string) {
 	return h, bp
 }
 
+// errNoPlatformMatch is a checkout whose remote no configured platform
+// matches, as opposed to one several platforms match.
+//
+// @decision(DL-066)
+var errNoPlatformMatch = errors.New("no configured platform matches")
+
 func matchPlatformForCheckout(cfg config.Config, checkout git.LocalCheckout, explicit string) (config.Platform, error) {
 	if explicit != "" {
 		p, err := findPlatform(cfg, explicit)
@@ -423,8 +433,8 @@ func matchPlatformForCheckout(cfg config.Config, checkout git.LocalCheckout, exp
 		}
 		return p, nil
 	case 0:
-		return config.Platform{}, fmt.Errorf("no configured platform matches %s%s (from remote %q); add a `platforms:` entry to %s",
-			checkout.Host, checkout.BasePath, checkout.Remote, config.UserFileName)
+		return config.Platform{}, fmt.Errorf("%w %s%s (from remote %q); add a `platforms:` entry to %s",
+			errNoPlatformMatch, checkout.Host, checkout.BasePath, checkout.Remote, config.UserFileName)
 	default:
 		names := make([]string, len(matches))
 		for i, m := range matches {
