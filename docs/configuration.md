@@ -69,7 +69,7 @@ sandbox:
   cloud: aws                        # aws | gcp | oci | auto
   workdir: /workspace               # absolute; every session lands in /workspace regardless
   egress: install                   # open | install | agent; default open, for sessions and jobs
-  egress_extra_domains: [pkg.example.com]  # added to the preset; not allowed with open
+  egress_extra_domains: [pkg.example.com]  # added to the preset, at most 16, sent with each launch; not allowed with open
   inbound_cidrs: [203.0.113.0/24]   # who may reach the sandbox's edge
   git_access: repos                 # repos | all, for spov fly; the server treats it as a preference
   job_git_access: repos             # repos | all, for spov jobs create; never inherits git_access

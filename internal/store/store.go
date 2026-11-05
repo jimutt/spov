@@ -342,6 +342,10 @@ type SessionRequest struct {
 	Image   string
 	Sandbox SandboxConfig
 	Egress  string
+	// EgressExtraDomains are the caller's own additions to the preset.
+	//
+	// @decision(DL-068)
+	EgressExtraDomains []string
 	// GitName and GitEmail are the author of commits made in the
 	// sandbox, as the client resolved them; empty falls back to the
 	// server's own identity.

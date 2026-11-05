@@ -630,6 +630,14 @@ components:
         egress:
           description: Egress preset name
           type: string
+        egress_extra_domains:
+          description: Domains added to the egress preset (not with open), at most 16
+          items:
+            type: string
+          maxItems: 16
+          type:
+            - array
+            - "null"
         git:
           $ref: "#/components/schemas/GitIdentityView"
         git_access:
@@ -1635,6 +1643,14 @@ components:
         egress:
           description: Egress preset name
           type: string
+        egress_extra_domains:
+          description: Domains added to the egress preset (not with open), at most 16
+          items:
+            type: string
+          maxItems: 16
+          type:
+            - array
+            - "null"
         git:
           $ref: "#/components/schemas/GitIdentityView"
         git_access:

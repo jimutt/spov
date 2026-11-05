@@ -52,6 +52,8 @@ type JobRequest struct {
 	// two names for the same thing.
 	Sandbox SandboxConfigView `json:"sandbox,omitempty"`
 	Egress  string            `json:"egress,omitempty" doc:"Egress preset name"`
+	// @decision(DL-068)
+	EgressExtraDomains []string `json:"egress_extra_domains,omitempty" maxItems:"16" doc:"Domains added to the egress preset (not with open), at most 16"`
 	// Git authors the commits a job makes. Halves left empty fall back
 	// to the caller's profile, then the server's configured identity.
 	//

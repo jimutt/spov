@@ -936,6 +936,8 @@ export interface components {
             };
             /** @description Egress preset name */
             egress?: string;
+            /** @description Domains added to the egress preset (not with open), at most 16 */
+            egress_extra_domains?: string[] | null;
             git?: components["schemas"]["GitIdentityView"];
             /**
              * @description How far the forge credentials reach: the job's repositories, or every repository they can; the caller's job default, then repos, when empty
@@ -1437,6 +1439,8 @@ export interface components {
             };
             /** @description Egress preset name */
             egress?: string;
+            /** @description Domains added to the egress preset (not with open), at most 16 */
+            egress_extra_domains?: string[] | null;
             git?: components["schemas"]["GitIdentityView"];
             /**
              * @description How far the forge credentials reach: the session's repositories, or every repository they can; the caller's default, then repos, when empty

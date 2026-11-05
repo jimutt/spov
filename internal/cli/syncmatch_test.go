@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -66,9 +67,13 @@ func TestACheckoutIsMatchedToExactlyOnePlatform(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "codeberg, codeberg-2") || !strings.Contains(err.Error(), "--repo") {
 		t.Errorf("ambiguous err = %v", err)
 	}
+	// Only "no match" lets a synced launch fall back to a bundle (DL-066).
+	if errors.Is(err, errNoPlatformMatch) {
+		t.Errorf("an ambiguous match reads as no match: %v", err)
+	}
 	// An unknown host names the host and the file to edit.
 	_, err = matchPlatformForCheckout(cfg, at("example.org", "o", "r"), "")
-	if err == nil || !strings.Contains(err.Error(), "example.org") || !strings.Contains(err.Error(), "platforms:") {
+	if err == nil || !strings.Contains(err.Error(), "example.org") || !strings.Contains(err.Error(), "platforms:") || !errors.Is(err, errNoPlatformMatch) {
 		t.Errorf("unknown host err = %v", err)
 	}
 	// A name that is not a legal repository path is refused before use.

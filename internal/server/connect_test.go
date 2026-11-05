@@ -589,3 +589,47 @@ func TestConnectLocksTheSessionBeforeCounting(t *testing.T) {
 		t.Errorf("calls = %q, want the lock then the count, both in one transaction", got)
 	}
 }
+
+// TestACallersExtraEgressDomainsReachTheSandbox: a request's own extra
+// domains join the preset beside the server's, are bounded in number,
+// and are refused on open egress, where they would do nothing.
+//
+// @decision(DL-068)
+func TestACallersExtraEgressDomainsReachTheSandbox(t *testing.T) {
+	f := newAPIFixture(t)
+	f.srv.svc.deps.Defaults.EgressExtraDomains = []string{"registry.internal.example"}
+	req := repoReq("alpha")
+	req.Egress = sandbox.PresetInstall
+	req.EgressExtraDomains = []string{"npm.acme.example"}
+	id := f.create(req)
+	f.events(id)
+	if len(f.provider.Created) != 1 {
+		t.Fatalf("%d sandboxes created", len(f.provider.Created))
+	}
+	got := f.provider.Created[0].Egress.Domains
+	for _, want := range []string{"npm.acme.example", "registry.internal.example", "registry.npmjs.org"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("the sandbox cannot reach %s: %v", want, got)
+		}
+	}
+
+	refused := func(name string, mutate func(*SessionRequest)) {
+		t.Helper()
+		r := repoReq("beta")
+		r.Egress = sandbox.PresetInstall
+		mutate(&r)
+		if res, body := f.do(http.MethodPost, "/api/v1/sessions", r); res.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("%s: %d %s, want 422", name, res.StatusCode, body)
+		}
+	}
+	refused("too many", func(r *SessionRequest) {
+		for i := range MaxEgressExtraDomains + 1 {
+			r.EgressExtraDomains = append(r.EgressExtraDomains, fmt.Sprintf("d%d.acme.example", i))
+		}
+	})
+	refused("on open egress", func(r *SessionRequest) {
+		r.Egress = sandbox.PresetOpen
+		r.EgressExtraDomains = []string{"npm.acme.example"}
+	})
+	refused("not a domain", func(r *SessionRequest) { r.EgressExtraDomains = []string{"https://npm.acme.example/"} })
+}

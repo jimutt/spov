@@ -200,7 +200,12 @@ func TestFlyRequestCarriesTheConfig(t *testing.T) {
 	cfg.Sandbox.CPU = 3
 	cfg.Sandbox.InboundCIDRs = []string{"10.0.0.0/8"}
 	cfg.Landing = "spov"
+	cfg.Sandbox.EgressExtraDomains = []string{"npm.acme.example"}
 	req := sessionRequest(cfg, flyOptions{}, "n", []server.RepoRef{{Platform: "p", Owner: "o", Name: "r"}}, gitIdentityOf("A", "a@x"))
+	// @decision(DL-068)
+	if len(req.EgressExtraDomains) != 1 || req.EgressExtraDomains[0] != "npm.acme.example" {
+		t.Errorf("extra egress domains = %v, want the config's", req.EgressExtraDomains)
+	}
 	if req.Image != "" {
 		t.Errorf("image = %q, want none so the server's default applies", req.Image)
 	}
