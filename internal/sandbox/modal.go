@@ -348,8 +348,12 @@ func (p *ModalProvider) Get(ctx context.Context, ref string) (Handle, error) {
 // than NotFound, but only on the by-ID path: on the by-name path an
 // InvalidArgument is a genuine bad argument (a bad environment, say) and
 // must not be disguised as a missing sandbox.
+//
+// @decision(DL-067)
 func (p *ModalProvider) resolveErr(ref string, byID bool, err error) error {
-	if isNotFound(err) || (byID && status.Code(err) == codes.InvalidArgument) {
+	var nf modal.NotFoundError
+	missing := errors.As(err, &nf) || status.Code(err) == codes.NotFound
+	if missing || (byID && status.Code(err) == codes.InvalidArgument) {
 		return fmt.Errorf("sandbox %q: %w", ref, ErrNotFound)
 	}
 	return fmt.Errorf("sandbox: resolve %q: %w", ref, err)
