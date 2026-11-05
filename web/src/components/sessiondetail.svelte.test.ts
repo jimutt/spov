@@ -700,3 +700,31 @@ describe("reading one report after another", () => {
     page.done();
   });
 });
+
+describe("a long transcript", () => {
+  // @decision(DL-070)
+  it("draws only its newest window and offers the rest on request", async () => {
+    const page = await open();
+    for (let i = 0; i < 250; i++) {
+      stub.say({
+        name: "session.text.ended",
+        source: "opencode",
+        text: `line ${i} said`,
+        at: new Date(Date.UTC(2026, 8, 16, 10, 0, i)).toISOString(),
+        pos: i + 1,
+      });
+    }
+    await settle();
+    const drawn = () => (page.said().match(/line \d+ said/g) ?? []).length;
+    expect(drawn()).toBe(200);
+    expect(page.said()).not.toContain("line 49 said");
+    expect(page.said()).toContain("line 50 said");
+    const earlier = page.control("transcript-earlier");
+    expect(earlier?.textContent).toContain("Show earlier (50 more)");
+    earlier!.click();
+    await settle();
+    expect(drawn()).toBe(250);
+    expect(page.control("transcript-earlier")).toBeNull();
+    page.done();
+  });
+});
