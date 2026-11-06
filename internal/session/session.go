@@ -52,6 +52,11 @@ type Options struct {
 	//
 	// @decision(DL-088)
 	SnapshotImage string
+	// Resume is the entrypoint's resume mode (opencode.ResumeSnapshot or
+	// ResumeTranscript); empty for a first launch.
+	//
+	// @decision(DL-088) @decision(DL-089)
+	Resume string
 	// User launched the session, recorded as a tag. In hosted mode it
 	// is their ULID; in local mode "local".
 	//
@@ -445,6 +450,8 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		})
 	}
 
+	// @decision(DL-088) @decision(DL-089)
+	entrypoint.Resume = opts.Resume
 	command, err := entrypoint.Command()
 	if err != nil {
 		return nil, err

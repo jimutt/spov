@@ -134,6 +134,11 @@ func sessionWhere(sb *strings.Builder, sel, orgID string, f store.SessionFilter)
 		args = append(args, f.OwnerID)
 		fmt.Fprintf(sb, " and owner_id = $%d", len(args))
 	}
+	// @decision(DL-087)
+	if f.Name != "" {
+		args = append(args, f.Name)
+		fmt.Fprintf(sb, " and name = $%d", len(args))
+	}
 	if len(f.States) > 0 {
 		states := make([]string, len(f.States))
 		for i, st := range f.States {

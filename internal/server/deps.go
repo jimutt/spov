@@ -102,6 +102,11 @@ type Deps struct {
 	//
 	// @decision(DL-016)
 	ProxyImageName string
+	// Persistent says the store outlives this process (Postgres), which
+	// is what lets a stopped session be resumed at all.
+	//
+	// @decision(DL-087)
+	Persistent bool
 	// Snapshots, when set, gives every interactive sandbox under the
 	// proxy an exit snapshot and keeps it as these settings say. Nil
 	// takes none: snapshots are off, there is no proxy, or the server

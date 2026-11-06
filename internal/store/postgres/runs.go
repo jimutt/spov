@@ -27,6 +27,7 @@ func runFromRow(r sqlcgen.SessionRun) store.Run {
 		Origin: store.RunOrigin(r.Origin), StartedAt: goTime(r.StartedAt),
 		RunningAt: goTimePtr(r.RunningAt), EndedAt: goTimePtr(r.EndedAt),
 		Snapshot: r.Snapshot, SnapshotState: store.SnapshotState(r.SnapshotState), SnapshotAt: goTimePtr(r.SnapshotAt),
+		FirstMessage: r.FirstMessage,
 	}
 }
 
@@ -36,6 +37,7 @@ func (p pgRuns) Insert(ctx context.Context, r store.Run) error {
 		SandboxID: r.SandboxID, Booted: r.Booted, BootedImageID: r.BootedImageID, Opencode: r.OpenCode,
 		Origin: string(r.Origin), StartedAt: ts(r.StartedAt), RunningAt: tsPtr(r.RunningAt), EndedAt: tsPtr(r.EndedAt),
 		Snapshot: r.Snapshot, SnapshotState: string(r.SnapshotState), SnapshotAt: tsPtr(r.SnapshotAt),
+		FirstMessage: nonEmpty(r.FirstMessage),
 	})
 	if err != nil {
 		return mapErr("insert run", err)
@@ -52,6 +54,7 @@ func (p pgRuns) Update(ctx context.Context, r store.Run) error {
 		SandboxID: r.SandboxID, Booted: r.Booted, BootedImageID: r.BootedImageID, Opencode: r.OpenCode,
 		Origin: string(r.Origin), RunningAt: tsPtr(r.RunningAt), EndedAt: tsPtr(r.EndedAt),
 		Snapshot: r.Snapshot, SnapshotState: string(r.SnapshotState), SnapshotAt: tsPtr(r.SnapshotAt),
+		FirstMessage: nonEmpty(r.FirstMessage),
 	})
 	if err != nil {
 		return mapErr("update run", err)

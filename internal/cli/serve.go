@@ -711,6 +711,8 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 	return server.Deps{
 		// @decision(DL-084) @decision(DL-086)
 		Snapshots: snapshots,
+		// @decision(DL-087)
+		Persistent: isPostgres(st),
 		// @decision(DL-033) @decision(DL-016)
 		Images:   images,
 		Resolver: e.addonResolver(stateFile, warn),
@@ -777,6 +779,15 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 	}, closeStore, nil
 }
 
+// isPostgres reports whether the server keeps its sessions in Postgres,
+// which a resume needs.
+//
+// @decision(DL-087)
+func isPostgres(st store.Store) bool {
+	_, ok := st.(*postgres.Store)
+	return ok
+}
+
 // snapshotSettings is the server's snapshot setting: nil, taking none,
 // unless snapshots are enabled, the proxy holds the secrets and the
 // sessions are kept in Postgres, where a resume can find them.
@@ -790,7 +801,7 @@ func snapshotSettings(c config.Snapshots, st store.Store, proxy bool) (*server.S
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
-	if _, persistent := st.(*postgres.Store); !persistent || !proxy {
+	if !isPostgres(st) || !proxy {
 		return nil, nil
 	}
 	return &s, nil

@@ -373,14 +373,19 @@ func (r *Reconciler) orgFromTag(v string) bool {
 //
 // @decision(DL-004)
 // launchStart is when the session's current launch began: a resume's
-// run start, else the session's creation.
+// run start, else the session's creation. A transcript resume's import
+// budget is added, since its launch may run that much longer.
 //
-// @decision(DL-087)
+// @decision(DL-087) @decision(DL-089)
 func (r *Reconciler) launchStart(ctx context.Context, sess store.Session) time.Time {
-	if run, err := r.Store.Runs().Current(ctx, sess.OrgID, sess.ID); err == nil && run.N > 1 {
-		return run.StartedAt
+	run, err := r.Store.Runs().Current(ctx, sess.OrgID, sess.ID)
+	switch {
+	case err != nil || run.N < 2:
+		return sess.CreatedAt
+	case run.Origin == store.RunFromTranscript:
+		return run.StartedAt.Add(ImportBudget)
 	}
-	return sess.CreatedAt
+	return run.StartedAt
 }
 
 // sessionNameOf is the session a sandbox was launched for: its name

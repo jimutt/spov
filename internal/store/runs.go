@@ -63,6 +63,11 @@ type Run struct {
 	Snapshot      string
 	SnapshotState SnapshotState
 	SnapshotAt    *time.Time
+	// FirstMessage is the message a resume carries, as the server's JSON
+	// of it, until it is delivered; empty then and otherwise.
+	//
+	// @decision(DL-087)
+	FirstMessage []byte
 }
 
 // Ran reports whether the run ever reached running.

@@ -163,6 +163,8 @@ func New(deps Deps, addr string) (*Server, error) {
 	s.web = webui.Handler(deps.WebUI)
 
 	s.registerSessions()
+	// @decision(DL-087)
+	s.registerResume()
 	// The live read surfaces.
 	//
 	// @decision(DL-018)

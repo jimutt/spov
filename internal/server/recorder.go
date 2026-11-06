@@ -789,6 +789,17 @@ func (r *Recorder) frame(ctx context.Context, c *capture, raw string) error {
 	if err != nil {
 		return err
 	}
+	// An imported conversation's log started again: its echo of the
+	// import is already stored, and later frames continue the stored
+	// sequence.
+	//
+	// @decision(DL-089)
+	if source == store.SourceOpenCode && conv.SeqAfter > 0 {
+		if seq <= conv.SeqAfter {
+			return nil
+		}
+		seq = conv.SeqBase + seq - conv.SeqAfter
+	}
 	// Durable frames only: an ephemeral frame has seq 0 and would spend
 	// the conversation's one check.
 	//

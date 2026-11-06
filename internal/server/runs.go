@@ -54,7 +54,7 @@ func recordRun(ctx context.Context, tx store.Store, run store.Run) error {
 	cur, err := tx.Runs().Current(ctx, run.OrgID, run.SessionID)
 	switch {
 	case err == nil && cur.N == run.N:
-		run.StartedAt = cur.StartedAt
+		run.StartedAt, run.FirstMessage = cur.StartedAt, cur.FirstMessage
 		return tx.Runs().Update(ctx, run)
 	case err == nil || errors.Is(err, store.ErrNotFound):
 		return tx.Runs().Insert(ctx, run)

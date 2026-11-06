@@ -46,6 +46,8 @@ type Conversation struct {
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 	Info       []byte
+	SeqBase    int64
+	SeqAfter   int64
 }
 
 type DeviceCode struct {
@@ -243,6 +245,7 @@ type SessionRun struct {
 	Snapshot      string
 	SnapshotState string
 	SnapshotAt    pgtype.Timestamptz
+	FirstMessage  []byte
 }
 
 type User struct {

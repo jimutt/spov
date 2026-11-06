@@ -21,6 +21,7 @@ create table session_runs (
     snapshot        text        not null default '',
     snapshot_state  text        not null check (snapshot_state in ('none', 'pending', 'kept', 'failed', 'deleted')),
     snapshot_at     timestamptz,
+    first_message   bytea,
     primary key (session_id, n)
 );
 create index session_runs_ended on session_runs (snapshot_state, ended_at) where ended_at is not null;

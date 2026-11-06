@@ -733,6 +733,13 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		fail(errors.New("the launcher returned no session"))
 		return
 	}
+	// A transcript resume imports the session's conversations through
+	// the launcher's own connection, before the session is running.
+	//
+	// @decision(DL-089)
+	if plan.origin() == store.RunFromTranscript {
+		s.importConversations(ctx, sess, live, log)
+	}
 	// The launcher's proxy proved the path; the client that attaches
 	// runs its own.
 	live.CloseProxy()
@@ -827,6 +834,10 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	// @decision(DL-011)
 	s.deps.Metrics.SessionLaunched(storeCtx, kind, true, "", s.deps.Now().Sub(started))
 	log.ready(viewOf(sess, s.deps.Now()))
+	// @decision(DL-087)
+	if plan.number() > 1 {
+		s.deliverFirstMessage(storeCtx, sess)
+	}
 }
 
 // commitLaunch records a finished launch as running, unless a delete
@@ -865,6 +876,15 @@ func (s *Service) Log(id string) (*launchLog, bool) {
 // Get resolves a session the principal may see.
 func (s *Service) Get(ctx context.Context, p auth.Principal, ref string) (store.Session, error) {
 	sess, err := s.deps.Store.Sessions().Get(ctx, p.OrgID, ref)
+	// A name no live session holds is the caller's newest stopped
+	// session of that name, so a stopped one can be found to resume.
+	//
+	// @decision(DL-087)
+	if errors.Is(err, store.ErrNotFound) && !store.ValidID(ref) {
+		if found, ferr := s.deps.Store.Sessions().List(ctx, p.OrgID, store.SessionFilter{Name: ref, OwnerID: p.UserID, Limit: 1}); ferr == nil && len(found) == 1 {
+			sess, err = found[0], nil
+		}
+	}
 	if err != nil {
 		return store.Session{}, err
 	}

@@ -314,6 +314,10 @@ select * from events where org_id = $1 and session_id = $2 and name = $3
   and position(@contains::bytea in raw) > 0
 order by pos desc limit 1;
 
+-- name: SetSeqOffset :execrows
+-- @decision(DL-089)
+update conversations set seq_base = $3, seq_after = $4 where id = $1 and org_id = $2;
+
 -- name: LastSeqs :many
 -- One index probe per conversation, on events_opencode_seq.
 -- @decision(DL-017)
@@ -536,15 +540,15 @@ select * from admin_events where org_id = $1 order by at desc, id desc limit $2;
 -- name: InsertRun :execrows
 -- @decision(DL-085)
 insert into session_runs (session_id, org_id, owner_id, n, sandbox_id, booted, booted_image_id, opencode,
-                          origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at)
-select s.id, s.org_id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+                          origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at, first_message)
+select s.id, s.org_id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 from sessions s where s.id = $1 and s.org_id = $2;
 
 -- name: UpdateRun :execrows
 -- @decision(DL-085)
 update session_runs
 set sandbox_id = $4, booted = $5, booted_image_id = $6, opencode = $7, origin = $8,
-    running_at = $9, ended_at = $10, snapshot = $11, snapshot_state = $12, snapshot_at = $13
+    running_at = $9, ended_at = $10, snapshot = $11, snapshot_state = $12, snapshot_at = $13, first_message = $14
 where session_id = $1 and org_id = $2 and n = $3;
 
 -- name: CurrentRun :one

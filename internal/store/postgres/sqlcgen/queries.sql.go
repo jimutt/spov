@@ -415,7 +415,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 }
 
 const currentRun = `-- name: CurrentRun :one
-select session_id, org_id, owner_id, n, sandbox_id, booted, booted_image_id, opencode, origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at from session_runs where session_id = $1 and org_id = $2 order by n desc limit 1
+select session_id, org_id, owner_id, n, sandbox_id, booted, booted_image_id, opencode, origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at, first_message from session_runs where session_id = $1 and org_id = $2 order by n desc limit 1
 `
 
 type CurrentRunParams struct {
@@ -443,6 +443,7 @@ func (q *Queries) CurrentRun(ctx context.Context, arg CurrentRunParams) (Session
 		&i.Snapshot,
 		&i.SnapshotState,
 		&i.SnapshotAt,
+		&i.FirstMessage,
 	)
 	return i, err
 }
@@ -1282,8 +1283,8 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (Event
 
 const insertRun = `-- name: InsertRun :execrows
 insert into session_runs (session_id, org_id, owner_id, n, sandbox_id, booted, booted_image_id, opencode,
-                          origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at)
-select s.id, s.org_id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+                          origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at, first_message)
+select s.id, s.org_id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 from sessions s where s.id = $1 and s.org_id = $2
 `
 
@@ -1303,6 +1304,7 @@ type InsertRunParams struct {
 	Snapshot      string
 	SnapshotState string
 	SnapshotAt    pgtype.Timestamptz
+	FirstMessage  []byte
 }
 
 // @decision(DL-085)
@@ -1323,6 +1325,7 @@ func (q *Queries) InsertRun(ctx context.Context, arg InsertRunParams) (int64, er
 		arg.Snapshot,
 		arg.SnapshotState,
 		arg.SnapshotAt,
+		arg.FirstMessage,
 	)
 	if err != nil {
 		return 0, err
@@ -1663,7 +1666,7 @@ func (q *Queries) ListAllowlist(ctx context.Context, orgID string) ([]AllowlistE
 }
 
 const listConversations = `-- name: ListConversations :many
-select id, org_id, session_id, opencode_id, title, created_at, updated_at, info from conversations where org_id = $1 and session_id = $2 order by created_at, id
+select id, org_id, session_id, opencode_id, title, created_at, updated_at, info, seq_base, seq_after from conversations where org_id = $1 and session_id = $2 order by created_at, id
 `
 
 type ListConversationsParams struct {
@@ -1693,6 +1696,8 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Info,
+			&i.SeqBase,
+			&i.SeqAfter,
 		); err != nil {
 			return nil, err
 		}
@@ -2119,7 +2124,7 @@ func (q *Queries) ListOrgCredentials(ctx context.Context, orgID string) ([]OrgCr
 }
 
 const listRuns = `-- name: ListRuns :many
-select session_id, org_id, owner_id, n, sandbox_id, booted, booted_image_id, opencode, origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at from session_runs where org_id = $1 and session_id = any($2::text[]) order by session_id, n
+select session_id, org_id, owner_id, n, sandbox_id, booted, booted_image_id, opencode, origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at, first_message from session_runs where org_id = $1 and session_id = any($2::text[]) order by session_id, n
 `
 
 type ListRunsParams struct {
@@ -2153,6 +2158,7 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]SessionRu
 			&i.Snapshot,
 			&i.SnapshotState,
 			&i.SnapshotAt,
+			&i.FirstMessage,
 		); err != nil {
 			return nil, err
 		}
@@ -2848,6 +2854,31 @@ func (q *Queries) SetMintExpiry(ctx context.Context, arg SetMintExpiryParams) (i
 	return result.RowsAffected(), nil
 }
 
+const setSeqOffset = `-- name: SetSeqOffset :execrows
+update conversations set seq_base = $3, seq_after = $4 where id = $1 and org_id = $2
+`
+
+type SetSeqOffsetParams struct {
+	ID       string
+	OrgID    string
+	SeqBase  int64
+	SeqAfter int64
+}
+
+// @decision(DL-089)
+func (q *Queries) SetSeqOffset(ctx context.Context, arg SetSeqOffsetParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setSeqOffset,
+		arg.ID,
+		arg.OrgID,
+		arg.SeqBase,
+		arg.SeqAfter,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setSessionGitToken = `-- name: SetSessionGitToken :execrows
 update sessions
 set git_token_minted_at = $3, git_token_expires_at = $4, updated_at = $5
@@ -2905,7 +2936,7 @@ func (q *Queries) SetSessionOpenCodeGrant(ctx context.Context, arg SetSessionOpe
 }
 
 const snapshotRuns = `-- name: SnapshotRuns :many
-select session_id, org_id, owner_id, n, sandbox_id, booted, booted_image_id, opencode, origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at from session_runs
+select session_id, org_id, owner_id, n, sandbox_id, booted, booted_image_id, opencode, origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at, first_message from session_runs
 where ended_at is not null and snapshot_state = any($1::text[])
 order by ended_at, session_id, n
 `
@@ -2936,6 +2967,7 @@ func (q *Queries) SnapshotRuns(ctx context.Context, dollar_1 []string) ([]Sessio
 			&i.Snapshot,
 			&i.SnapshotState,
 			&i.SnapshotAt,
+			&i.FirstMessage,
 		); err != nil {
 			return nil, err
 		}
@@ -3063,7 +3095,7 @@ func (q *Queries) UpdateJob(ctx context.Context, arg UpdateJobParams) (int64, er
 const updateRun = `-- name: UpdateRun :execrows
 update session_runs
 set sandbox_id = $4, booted = $5, booted_image_id = $6, opencode = $7, origin = $8,
-    running_at = $9, ended_at = $10, snapshot = $11, snapshot_state = $12, snapshot_at = $13
+    running_at = $9, ended_at = $10, snapshot = $11, snapshot_state = $12, snapshot_at = $13, first_message = $14
 where session_id = $1 and org_id = $2 and n = $3
 `
 
@@ -3081,6 +3113,7 @@ type UpdateRunParams struct {
 	Snapshot      string
 	SnapshotState string
 	SnapshotAt    pgtype.Timestamptz
+	FirstMessage  []byte
 }
 
 // @decision(DL-085)
@@ -3099,6 +3132,7 @@ func (q *Queries) UpdateRun(ctx context.Context, arg UpdateRunParams) (int64, er
 		arg.Snapshot,
 		arg.SnapshotState,
 		arg.SnapshotAt,
+		arg.FirstMessage,
 	)
 	if err != nil {
 		return 0, err
@@ -3214,7 +3248,7 @@ on conflict (session_id, opencode_id) do update
 set title      = case when excluded.title = '' then conversations.title else excluded.title end,
     info       = coalesce(excluded.info, conversations.info),
     updated_at = excluded.updated_at
-returning id, org_id, session_id, opencode_id, title, created_at, updated_at, info
+returning id, org_id, session_id, opencode_id, title, created_at, updated_at, info, seq_base, seq_after
 `
 
 type UpsertConversationParams struct {
@@ -3251,6 +3285,8 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Info,
+		&i.SeqBase,
+		&i.SeqAfter,
 	)
 	return i, err
 }

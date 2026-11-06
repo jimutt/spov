@@ -306,7 +306,7 @@ func mapErr(op string, err error) error {
 func conversationFromRow(r sqlcgen.Conversation) store.Conversation {
 	return store.Conversation{
 		ID: r.ID, OrgID: r.OrgID, SessionID: r.SessionID, OpenCodeID: r.OpencodeID, Title: r.Title,
-		Info: r.Info, CreatedAt: goTime(r.CreatedAt), UpdatedAt: goTime(r.UpdatedAt),
+		Info: r.Info, SeqBase: r.SeqBase, SeqAfter: r.SeqAfter, CreatedAt: goTime(r.CreatedAt), UpdatedAt: goTime(r.UpdatedAt),
 	}
 }
 

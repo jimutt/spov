@@ -1563,6 +1563,42 @@ components:
       required:
         - repos
       type: object
+    ResumeRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ResumeRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        message:
+          $ref: "#/components/schemas/SteerRequest"
+          description: A message to send once the session runs
+        timeout_secs:
+          description: The resumed sandbox's lifetime in seconds; omitted takes the one the session was launched with
+          format: int64
+          minimum: 0
+          type: integer
+      type: object
+    ResumeView:
+      additionalProperties: false
+      properties:
+        mode:
+          description: snapshot brings the workspace back as it was; transcript clones the repositories fresh and restores the conversation
+          enum:
+            - snapshot
+            - transcript
+          type: string
+        pending:
+          type: boolean
+        until:
+          format: date-time
+          type: string
+      required:
+        - mode
+      type: object
     Route:
       additionalProperties: false
       properties:
@@ -2037,6 +2073,8 @@ components:
           type:
             - array
             - "null"
+        resume:
+          $ref: "#/components/schemas/ResumeView"
         routed_credentials:
           description: The routed credentials the proxy holds for this session, with their hosts
           items:
@@ -5007,6 +5045,59 @@ paths:
       security:
         - bearer: []
       summary: Allow once or reject a permission the agent asked for
+      tags:
+        - sessions
+  /api/v1/sessions/{ref}/resume:
+    post:
+      operationId: resume-session
+      parameters:
+        - description: Session ID or name
+          in: path
+          name: ref
+          required: true
+          schema:
+            description: Session ID or name
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResumeRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionView"
+          description: Accepted
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: Reopen a stopped session in a new sandbox
       tags:
         - sessions
   /api/v1/sessions/{ref}/sync-export:

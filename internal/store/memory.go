@@ -1370,6 +1370,22 @@ func (s memConversations) FindEvent(_ context.Context, orgID, sessionID, name st
 	return s.lastEvent(orgID, sessionID, func(e Event) bool { return e.Name == name && bytes.Contains(e.Raw, contains) })
 }
 
+// SetSeqOffset implements ConversationStore.
+//
+// @decision(DL-089)
+func (s memConversations) SetSeqOffset(_ context.Context, orgID, conversationID string, base, after int64) error {
+	defer s.m.lock()()
+	c, ok := s.m.conversations[conversationID]
+	if !ok || c.OrgID != orgID {
+		return ErrNotFound
+	}
+	old := c
+	c.SeqBase, c.SeqAfter = base, after
+	s.m.conversations[conversationID] = c
+	s.m.journal(func() { s.m.conversations[old.ID] = old })
+	return nil
+}
+
 // LastSeqs implements ConversationStore.
 //
 // @decision(DL-017)

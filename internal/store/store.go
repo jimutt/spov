@@ -473,6 +473,11 @@ type SessionFilter struct {
 	States []SessionState
 	// OwnerID, when set, keeps only this owner's sessions.
 	OwnerID string
+	// Name, when set, keeps only sessions of exactly this name, which a
+	// stopped session shares with later ones.
+	//
+	// @decision(DL-087)
+	Name string
 	// Before, when set, keeps only sessions with an ID below it: the
 	// page after the one that ended with that ID. Count ignores it.
 	//
@@ -487,6 +492,9 @@ type SessionFilter struct {
 
 func (f SessionFilter) matches(s Session) bool {
 	if f.OwnerID != "" && s.OwnerID != f.OwnerID {
+		return false
+	}
+	if f.Name != "" && s.Name != f.Name {
 		return false
 	}
 	if f.Before != "" && s.ID >= f.Before {
@@ -861,7 +869,15 @@ type Conversation struct {
 	// resume imports it.
 	//
 	// @decision(DL-089)
-	Info      []byte
+	Info []byte
+	// SeqBase and SeqAfter map a conversation imported by a transcript
+	// resume onto its stored sequence: a durable frame at seq is stored
+	// at SeqBase + seq - SeqAfter, and one at or before SeqAfter is the
+	// import's own echo. Both are 0 for a conversation never imported.
+	//
+	// @decision(DL-089)
+	SeqBase   int64
+	SeqAfter  int64
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -972,6 +988,11 @@ type ConversationStore interface {
 	//
 	// @decision(DL-017)
 	LastSeqs(ctx context.Context, orgID, sessionID string) (map[string]int64, error)
+	// SetSeqOffset records how an imported conversation's durable log
+	// continues its stored one (Conversation.SeqBase and SeqAfter).
+	//
+	// @decision(DL-089)
+	SetSeqOffset(ctx context.Context, orgID, conversationID string, base, after int64) error
 	// LastEventExcept is LastEvent passing over the named events, so a
 	// marker written after real activity cannot hide it.
 	//
