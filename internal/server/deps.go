@@ -207,7 +207,7 @@ type Deps struct {
 	// server, or a hosted one without a credential key.
 	//
 	// @decision(DL-074)
-	OrgRoutedCredentials OrgRoutedCredentialSource
+	OrgRoutedCredentials *SealedOrgRoutedCredentials
 	// Verifier checks a credential against its platform before it is
 	// stored. Nil stores whatever is given, unverified.
 	//

@@ -51,6 +51,8 @@ type (
 		Enabled     bool                    `json:"enabled"`
 		// @decision(DL-073)
 		RoutedCredentials []server.RoutedCredentialView `json:"routed_credentials"`
+		// @decision(DL-074)
+		OrgRoutedCredentials []server.RoutedCredentialView `json:"org_routed_credentials,omitempty"`
 	}
 )
 

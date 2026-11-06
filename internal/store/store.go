@@ -792,6 +792,10 @@ type OrgCredentialStore interface {
 	// Put inserts or replaces, keeping the first row's ID and CreatedAt.
 	Put(ctx context.Context, c OrgCredential) error
 	Get(ctx context.Context, orgID, platform string) (OrgCredential, error)
+	// List is every one the org holds, by platform.
+	//
+	// @decision(DL-074)
+	List(ctx context.Context, orgID string) ([]OrgCredential, error)
 	// Delete is ErrNotFound when there was nothing to delete.
 	Delete(ctx context.Context, orgID, platform string) error
 }

@@ -466,7 +466,7 @@ func listLocal(env *Env, asJSON bool) error {
 		}
 	}
 	_, err = fmt.Fprintln(env.Out, probed)
-	printRoutedCredentials(env, routes)
+	printRoutedCredentials(env, routes, "Routed credentials:")
 	return err
 }
 

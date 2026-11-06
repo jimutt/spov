@@ -31,13 +31,17 @@ type routeOptions struct {
 	Header     string
 	Attach     string
 	SecretFile string
+	// Org stores the organisation's, which only an admin may.
+	//
+	// @decision(DL-074)
+	Org bool
 }
 
 // set reports whether any routed-credential flag was given, which is
 // what makes `add` store one.
 func (o routeOptions) set() bool {
 	return len(o.Hosts) > 0 || len(o.Paths) > 0 || o.Bearer || o.Basic != "" || o.Header != "" ||
-		o.Attach != "" || o.SecretFile != ""
+		o.Attach != "" || o.SecretFile != "" || o.Org
 }
 
 // route is the route the flags describe.
@@ -75,6 +79,8 @@ func addRouteFlags(cmd *cobra.Command, o *routeOptions) {
 	f.StringVar(&o.Header, "header", "", "send it as the value of this header")
 	f.StringVar(&o.Attach, "attach", "", "always (default): every session gets it; asked: only a launch that names it")
 	f.StringVar(&o.SecretFile, "secret-file", "", "read the secret from this file, or - for standard input; prompted for if omitted")
+	// @decision(DL-074)
+	f.BoolVar(&o.Org, "org", false, "store the organisation's routed credential, which every member's sessions get (admins, hosted server)")
 }
 
 // routeName is a routed credential's name as typed: route:<name>, or a
@@ -126,9 +132,25 @@ func addRoutedCredential(ctx context.Context, env *Env, arg string, opts routeOp
 	if err != nil {
 		return err
 	}
+	// Before the secret is read: a local server has no organisation.
+	//
+	// @decision(DL-074)
+	var org *client.Client
+	if opts.Org {
+		if org, err = orgRouteClient(ctx, env); err != nil {
+			return err
+		}
+	}
 	secret, err := routeSecret(env, name, opts.SecretFile)
 	if err != nil {
 		return err
+	}
+	if org != nil {
+		if err := org.PutOrgRoutedCredential(ctx, r, secret); err != nil {
+			return fmt.Errorf("%s", redactSecret(err.Error(), secret))
+		}
+		_, _ = fmt.Fprintf(env.Out, "Stored the organisation's %s, unchecked: %s.\n", name, routeLine(r))
+		return nil
 	}
 	src, err := routeSource(ctx, env)
 	if err != nil {
@@ -294,11 +316,11 @@ func (hostedRoutes) Open(context.Context, string, string) ([]server.HeldRoute, e
 // printRoutedCredentials ends a listing with the routed credentials.
 //
 // @decision(DL-073)
-func printRoutedCredentials(env *Env, views []server.RoutedCredentialView) {
+func printRoutedCredentials(env *Env, views []server.RoutedCredentialView, heading string) {
 	if len(views) == 0 {
 		return
 	}
-	_, _ = fmt.Fprintln(env.Out, "Routed credentials:")
+	_, _ = fmt.Fprintln(env.Out, heading)
 	for _, v := range views {
 		line := "  " + v.Route.Name + "  " + routeLine(v.Route)
 		if v.Missing {
@@ -330,6 +352,54 @@ func routeLine(r routedcred.Route) string {
 		line += "  only when asked"
 	}
 	return line
+}
+
+// orgRouteClient is the hosted server's client for the organisation's
+// routed credentials; a local server has no organisation.
+//
+// @decision(DL-074)
+func orgRouteClient(ctx context.Context, env *Env) (*client.Client, error) {
+	hosted, err := env.hostedServer()
+	if err != nil {
+		return nil, err
+	}
+	if !hosted {
+		return nil, errors.New("--org stores the organisation's credential on a hosted server; a local server has no organisation")
+	}
+	return env.client(ctx)
+}
+
+// removeOrgRoutedCredential removes one of the organisation's.
+//
+// @decision(DL-074)
+func removeOrgRoutedCredential(ctx context.Context, env *Env, arg string) error {
+	name, _ := routeName(arg)
+	c, err := orgRouteClient(ctx, env)
+	if err != nil {
+		return err
+	}
+	if err := c.DeleteOrgRoutedCredential(ctx, name); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(env.Out, "Removed the organisation's %s.\n", name)
+	return nil
+}
+
+// listOrgRoutedCredentials reads the organisation's, or none from a
+// server that keeps none.
+//
+// @decision(DL-074)
+func listOrgRoutedCredentials(ctx context.Context, env *Env) ([]server.RoutedCredentialView, error) {
+	c, err := env.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	views, err := c.ListOrgRoutedCredentials(ctx)
+	var apiErr *client.Error
+	if errors.As(err, &apiErr) && (apiErr.Status == http.StatusNotImplemented || apiErr.Status == http.StatusNotFound) {
+		return nil, nil
+	}
+	return views, err
 }
 
 // routedFlags are a launch's own choice of routed credentials.

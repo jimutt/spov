@@ -124,3 +124,23 @@ func TestARoutedCredentialIsStoredOnAHostedServer(t *testing.T) {
 		t.Errorf("remove = %q, %v", out, err)
 	}
 }
+
+// --org stores the organisation's routed credential, which a local
+// server, having no organisation, refuses before reading the secret.
+//
+// @decision(DL-074)
+func TestAnOrgRoutedCredentialNeedsAHostedServer(t *testing.T) {
+	f := newLoginFixture(t)
+	f.env.StateDir = t.TempDir()
+	f.reply = "s3cret"
+	if _, _, err := runWith(t, f.env, "credentials", "add", "shared", "--org", "--host", "npm.acme.com", "--bearer"); err == nil ||
+		!strings.Contains(err.Error(), "hosted") {
+		t.Errorf("err = %v", err)
+	}
+	if _, _, err := runWith(t, f.env, "credentials", "remove", "shared", "--org"); err == nil {
+		t.Error("a local remove --org was accepted")
+	}
+	if len(f.prompted) != 0 {
+		t.Errorf("prompted %v", f.prompted)
+	}
+}

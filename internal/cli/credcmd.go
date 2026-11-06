@@ -291,12 +291,19 @@ func runListCredentials(ctx context.Context, env *Env, asJSON bool) error {
 	if err != nil {
 		return err
 	}
+	// @decision(DL-074)
+	orgRoutes, err := listOrgRoutedCredentials(ctx, env)
+	if err != nil {
+		return err
+	}
 	if asJSON {
-		return writeJSON(env.Out, credentialsBody{Credentials: orEmpty(creds), Enabled: enabled, RoutedCredentials: orEmpty(routes)})
+		return writeJSON(env.Out, credentialsBody{Credentials: orEmpty(creds), Enabled: enabled,
+			RoutedCredentials: orEmpty(routes), OrgRoutedCredentials: orgRoutes})
 	}
 	defer printOpenCodeLine(ctx, env)
 	defer printPreferences(env)
-	defer printRoutedCredentials(env, routes)
+	defer printRoutedCredentials(env, orgRoutes, "The organisation's routed credentials, which your sessions get too:")
+	defer printRoutedCredentials(env, routes, "Routed credentials:")
 	if !enabled {
 		_, _ = fmt.Fprintln(env.Out, "This server stores no user credentials:"+
 			" it has no SPOV_CREDENTIAL_KEY configured.")
@@ -387,7 +394,8 @@ func openCodeLine(v server.OpenCodeConnectionView) string {
 }
 
 func newCredentialsRemoveCmd(env *Env) *cobra.Command {
-	return &cobra.Command{
+	var org bool
+	cmd := &cobra.Command{
 		Use:   "remove <name>",
 		Short: "Remove a stored credential",
 		Long: "Remove one of your stored credentials, named as `spov credentials` lists it.\n\n" +
@@ -397,6 +405,10 @@ func newCredentialsRemoveCmd(env *Env) *cobra.Command {
 		// @decision(DL-023)
 		ValidArgsFunction: completeCredentials(env),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// @decision(DL-074)
+			if org {
+				return removeOrgRoutedCredential(cmd.Context(), env, args[0])
+			}
 			// A bare name that cannot be a platform is tried as a routed
 			// credential first; route:<name> is only ever one.
 			//
@@ -414,6 +426,8 @@ func newCredentialsRemoveCmd(env *Env) *cobra.Command {
 			return removeCredential(cmd.Context(), env, parseCredentialName(args[0]))
 		},
 	}
+	cmd.Flags().BoolVar(&org, "org", false, "remove the organisation's routed credential of that name (admins, hosted server)")
+	return cmd
 }
 
 // removeCredential removes one credential from where the server reads it.
