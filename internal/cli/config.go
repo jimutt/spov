@@ -123,6 +123,10 @@ type shownSandbox struct {
 	GPU                string   `json:"gpu,omitempty" yaml:"gpu,omitempty"`
 	GitAccess          string   `json:"git_access,omitempty" yaml:"git_access,omitempty"`
 	JobGitAccess       string   `json:"job_git_access,omitempty" yaml:"job_git_access,omitempty"`
+	// @decision(DL-075)
+	Credentials    []string `json:"credentials,omitempty" yaml:"credentials,omitempty"`
+	JobCredentials []string `json:"job_credentials,omitempty" yaml:"job_credentials,omitempty"`
+	Needs          []string `json:"needs,omitempty" yaml:"needs,omitempty"`
 	// @decision(DL-049)
 	JobMaxDuration string `json:"job_max_duration,omitempty" yaml:"job_max_duration,omitempty"`
 	// @decision(DL-027)
@@ -184,6 +188,9 @@ func newShownConfig(res config.Result, credentialBackend string, stored *shownSt
 			GPU:                c.Sandbox.GPU,
 			GitAccess:          c.Sandbox.GitAccess,
 			JobGitAccess:       c.Sandbox.JobGitAccess,
+			Credentials:        c.Sandbox.Credentials,
+			JobCredentials:     c.Sandbox.JobCredentials,
+			Needs:              c.Sandbox.Needs,
 			JobMaxDuration:     configuredDuration(c.Sandbox.JobMaxDuration),
 			Sync:               c.Sandbox.Sync,
 			Addons:             c.Sandbox.Addons,

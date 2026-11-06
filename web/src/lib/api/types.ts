@@ -214,6 +214,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/routed-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's routed credentials, without their secrets */
+        get: operations["list-routed-credentials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/routed-credentials/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Store a routed credential, replacing its route and secret together */
+        put: operations["put-routed-credential"];
+        post?: never;
+        /** Remove a routed credential */
+        delete: operations["delete-routed-credential"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/tokens": {
         parameters: {
             query?: never;
@@ -315,6 +350,41 @@ export interface paths {
         post?: never;
         /** Remove the organisation's stored GitHub App for a platform */
         delete: operations["delete-org-github"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/org/routed-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The organisation's routed credentials, which every member's sessions get; never their secrets */
+        get: operations["list-org-routed-credentials"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/org/routed-credentials/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Store one of the organisation's routed credentials */
+        put: operations["put-org-routed-credential"];
+        post?: never;
+        /** Remove one of the organisation's routed credentials */
+        delete: operations["delete-org-routed-credential"];
         options?: never;
         head?: never;
         patch?: never;
@@ -934,6 +1004,10 @@ export interface components {
             credential_preference?: {
                 [key: string]: string;
             };
+            /** @description Attach exactly these routed credentials, asked-only ones included */
+            credentials?: string[] | null;
+            /** @description The configuration's narrowing: keep only these of the default, or none for none; it never adds one */
+            credentials_preferred?: string[] | null;
             /** @description Egress preset name */
             egress?: string;
             /** @description Domains added to the egress preset (not with open), at most 16 */
@@ -962,6 +1036,10 @@ export interface components {
             max_duration_preferred?: boolean;
             /** @description Model to run on, as provider/model; OpenCode's default when empty */
             model?: string;
+            /** @description Hosts the project needs; the launch notes any no routed credential covers */
+            needs?: string[] | null;
+            /** @description Attach no routed credential */
+            no_credentials?: boolean;
             repos: components["schemas"]["RepoRef"][] | null;
             sandbox?: components["schemas"]["SandboxConfigView"];
         };
@@ -1214,6 +1292,15 @@ export interface components {
             updated_at?: string;
             updated_by?: string;
         };
+        OrgRoutedOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgRoutedOutputBody.json
+             */
+            readonly $schema?: string;
+            routed_credentials: components["schemas"]["RoutedCredentialView"][] | null;
+        };
         PatchMeInputBody: {
             /**
              * Format: uri
@@ -1288,6 +1375,17 @@ export interface components {
             readonly $schema?: string;
             /** @description The credential to store */
             token: string;
+        };
+        PutRoutedCredentialInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/PutRoutedCredentialInputBody.json
+             */
+            readonly $schema?: string;
+            route: components["schemas"]["Route"];
+            /** @description The credential to store */
+            secret: string;
         };
         QuotaInput: {
             /**
@@ -1372,6 +1470,44 @@ export interface components {
             repos: components["schemas"]["RepoView"][] | null;
             warnings?: string[] | null;
         };
+        Route: {
+            /** @enum {string} */
+            attach?: "always" | "asked";
+            header?: string;
+            hosts: string[] | null;
+            name: string;
+            paths?: string[] | null;
+            /** @enum {string} */
+            preset?: "npm" | "maven" | "nuget" | "pypi";
+            repo_id?: string;
+            /** @enum {string} */
+            scheme: "bearer" | "basic" | "header";
+            scope?: string;
+            url?: string;
+            user?: string;
+        };
+        RoutedCredentialView: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RoutedCredentialView.json
+             */
+            readonly $schema?: string;
+            /** @description The secret is gone; add the credential again */
+            missing?: boolean;
+            route: components["schemas"]["Route"];
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        RoutedCredentialsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RoutedCredentialsOutputBody.json
+             */
+            readonly $schema?: string;
+            routed_credentials: components["schemas"]["RoutedCredentialView"][] | null;
+        };
         SandboxConfigView: {
             cloud?: string;
             /** Format: double */
@@ -1437,6 +1573,10 @@ export interface components {
             credential_preference?: {
                 [key: string]: string;
             };
+            /** @description Attach exactly these routed credentials, asked-only ones included */
+            credentials?: string[] | null;
+            /** @description The configuration's narrowing: keep only these of the default, or none for none; it never adds one */
+            credentials_preferred?: string[] | null;
             /** @description Egress preset name */
             egress?: string;
             /** @description Domains added to the egress preset (not with open), at most 16 */
@@ -1456,10 +1596,32 @@ export interface components {
             model?: string;
             /** @description Session and sandbox name; generated when empty */
             name?: string;
+            /** @description Hosts the project needs; the launch notes any no routed credential covers */
+            needs?: string[] | null;
+            /** @description Attach no routed credential */
+            no_credentials?: boolean;
             repos: components["schemas"]["RepoRef"][] | null;
             sandbox?: components["schemas"]["SandboxConfigView"];
             /** @description Seed the repository from a local git branch and commit */
             sync?: components["schemas"]["SessionSyncRequest"];
+        };
+        SessionRoutedCredentialView: {
+            /** @description The header it is set in */
+            header?: string;
+            hosts: string[] | null;
+            name: string;
+            /** @description The path prefixes it is set on; every path when absent */
+            paths?: string[] | null;
+            preset?: string;
+            /** @enum {string} */
+            scheme: "bearer" | "basic" | "header";
+            /**
+             * @description Whose credential it is: the user's own, or the organisation's
+             * @enum {string}
+             */
+            tier: "user" | "org";
+            /** @description The Basic username */
+            user?: string;
         };
         SessionSyncRequest: {
             /** @description 40-character hex commit SHA of the local HEAD */
@@ -1515,6 +1677,8 @@ export interface components {
             name: string;
             owner_id: string;
             repos: components["schemas"]["RepoRef"][] | null;
+            /** @description The routed credentials the proxy holds for this session, with their hosts */
+            routed_credentials?: components["schemas"]["SessionRoutedCredentialView"][] | null;
             sandbox: components["schemas"]["SandboxConfigView"];
             sandbox_id?: string;
             /** @enum {string} */
@@ -2721,6 +2885,171 @@ export interface operations {
             };
         };
     };
+    "list-routed-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutedCredentialsOutputBody"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-routed-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutRoutedCredentialInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutedCredentialView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-routed-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "list-tokens": {
         parameters: {
             query?: never;
@@ -3126,6 +3455,212 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-org-routed-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgRoutedOutputBody"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-org-routed-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PutRoutedCredentialInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgRoutedOutputBody"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-org-routed-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgRoutedOutputBody"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

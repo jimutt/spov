@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -689,5 +690,29 @@ func TestSizesReadInTheirLargestUnit(t *testing.T) {
 		if got := formatBytes(n); got != want {
 			t.Errorf("formatBytes(%d) = %q, want %q", n, got, want)
 		}
+	}
+}
+
+// TestAJobTakesItsOwnCredentialDefault: a job sends sandbox.job_credentials
+// as its narrowing, never sandbox.credentials, and --no-credentials
+// reaches the job's session.
+//
+// @decision(DL-075)
+func TestAJobTakesItsOwnCredentialDefault(t *testing.T) {
+	st, j := runFlagRow(t, nil, "sandbox:\n  credentials: [interactive-only]\n  job_credentials: [none]\n  needs: [npm.acme.com]\n")
+	sess, err := st.Sessions().Get(context.Background(), auth.LocalID, j.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := sess.Request.Routed; !slices.Equal(r.Preferred, []string{"none"}) || !slices.Equal(r.Needs, []string{"npm.acme.com"}) || r.None {
+		t.Errorf("config reached the session as %+v", r)
+	}
+	st, j = runFlagRow(t, []string{"--no-credentials"}, "")
+	sess, err = st.Sessions().Get(context.Background(), auth.LocalID, j.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.Request.Routed.None {
+		t.Errorf("--no-credentials reached the session as %+v", sess.Request.Routed)
 	}
 }

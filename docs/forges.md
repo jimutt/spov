@@ -129,6 +129,28 @@ forges' hosts (DL-031), unless a forge is addressed by an IP or a single-label
 name, which only the `open` preset reaches. A forge on a private network cannot
 be reached through the proxy, which only dials public addresses.
 
+## The forge's own package registry
+
+A session's forge token also reads its forge's package registry, for the
+session's own namespaces, and never publishes:
+
+- **GitLab:** the packages of the session's projects, and of the groups above
+  them, under `/api/v4/projects/<project>/packages/` and
+  `/api/v4/groups/<group>/-/packages/`. The instance-level endpoints
+  (`/api/v4/packages/...`) get no token.
+- **Forgejo and Gitea:** `/api/packages/<owner>/...` for an owner of one of the
+  session's repositories.
+- **GitHub:** GitHub Packages accepts only a classic personal access token, not
+  an App's token or a fine-grained one. With a classic PAT the sandbox reads
+  `npm.pkg.github.com`, `maven.pkg.github.com` and `nuget.pkg.github.com` for the
+  session's owners. Otherwise store a classic PAT with only `read:packages` as a
+  routed credential: `spov credentials add gh-npm --preset npm --url
+  https://npm.pkg.github.com/ --scope @your-org`. Container images (`ghcr.io`)
+  are not covered.
+
+With git access `all`, the namespace rule is lifted as the repository rule is;
+the token still only reads.
+
 ## Pull requests and merge requests
 
 A `pr` job opens a pull request, which is a merge request on GitLab. The agent

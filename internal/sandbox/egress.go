@@ -181,6 +181,20 @@ func (p EgressPolicy) WithForgeHosts(hosts ...string) EgressPolicy {
 	return EgressPolicy{Preset: p.Preset, CIDRs: slices.Clone(p.CIDRs), Domains: domains(p.Domains, bare)}
 }
 
+// WithRouteHosts returns the policy with the hosts of a session's routed
+// credentials allowed, keeping the preset's name, as forge hosts are. Unlike
+// WithForgeHosts it also adds them to a custom policy, which a launch's
+// extra domains have already made of its preset. An open policy is
+// returned as it is.
+//
+// @decision(DL-072)
+func (p EgressPolicy) WithRouteHosts(hosts ...string) EgressPolicy {
+	if p.Open() || len(hosts) == 0 {
+		return p
+	}
+	return EgressPolicy{Preset: p.Preset, CIDRs: slices.Clone(p.CIDRs), Domains: domains(p.Domains, hosts)}
+}
+
 // WithDomains returns the policy with more domains allowed. The preset
 // becomes custom, since it is no longer what the name describes.
 //

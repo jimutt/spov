@@ -30,4 +30,9 @@ if ! git diff --quiet HEAD --; then
 fi
 
 echo "pre-push: running scripts/check.sh (git push --no-verify skips it)"
-bash scripts/check.sh
+# Git gives a hook the repository it runs for in these variables, as an
+# absolute path in a linked worktree. Tests that make throwaway
+# repositories inherit them and then rewrite this one's config and
+# branches, so check.sh runs without them.
+exec env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR -u GIT_PREFIX \
+  -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES bash scripts/check.sh
