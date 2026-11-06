@@ -86,7 +86,7 @@ elif [ "${SKIP_LINT:-}" = "1" ]; then
 else
   echo "golangci-lint not installed." >&2
   echo "Install it, or set SKIP_LINT=1 to run the rest of the checks:" >&2
-  echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2" >&2
+  echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0" >&2
   exit 1
 fi
 
