@@ -23,8 +23,8 @@ func newStopCmd(env *Env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop [name|id]",
 		Short: "Stop a spov session and terminate its sandbox",
-		Long: "Stop a spov session: its sandbox is terminated and stops billing. A stopped session cannot be\n" +
-			"resumed; on a hosted server its transcript stays readable on the web.\n\n" +
+		Long: "Stop a spov session: its sandbox is terminated and stops billing. `spov resume` reopens it\n" +
+			"later in a new sandbox, and on a hosted server its transcript stays readable on the web.\n\n" +
 			"Stopping a job's session cancels the job, as `spov jobs cancel` does.",
 		Args: cobra.MaximumNArgs(1),
 		// @decision(DL-023)

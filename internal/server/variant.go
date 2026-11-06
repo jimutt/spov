@@ -299,19 +299,34 @@ func (s *Service) ImageDeleted(ctx context.Context, name string) bool {
 // @decision(DL-016)
 func (s *Service) imageGone(ctx context.Context, pick variantPick, err error) error {
 	var nf *sandbox.ImageNotFoundError
-	if s.deps.Images == nil || !errors.As(err, &nf) || nf.Name != pick.image {
+	if !errors.As(err, &nf) || nf.Name != pick.image {
 		return err
+	}
+	if s.deps.Images == nil {
+		return s.unbuiltBase(pick, err)
 	}
 	img, known := s.imageEntry(ctx, pick.image)
 	if !known || img.DeletedAt != nil {
-		return err
+		return s.unbuiltBase(pick, err)
 	}
 	if merr := s.deps.Images.MarkDeleted(ctx, pick.image, s.deps.Now()); merr != nil {
 		s.deps.Warn(fmt.Sprintf("mark image %s deleted: %v", pick.image, merr))
-		return err
+		return s.unbuiltBase(pick, err)
 	}
 	if img.Kind == store.ImageBase {
-		return fmt.Errorf("%w; the image no longer exists, and an operator rebuilds it with `spov serve image build`", err)
+		return s.unbuiltBase(pick, err)
 	}
 	return fmt.Errorf("%w; the image no longer exists, so the next launch builds it again", err)
+}
+
+// unbuiltBase names the build for a base image Modal does not have: it is
+// built deliberately, never by a launch, so a first launch on a new Modal
+// account or OpenCode pin meets this as well as a pruned one.
+//
+// @decision(DL-035) @decision(DL-016)
+func (s *Service) unbuiltBase(pick variantPick, err error) error {
+	if pick.image != s.baseImage() {
+		return err
+	}
+	return fmt.Errorf("%w; the sandbox image for this OpenCode version is not on Modal: run `spov serve image build` once (it takes a few minutes)", err)
 }

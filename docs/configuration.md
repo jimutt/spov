@@ -281,8 +281,7 @@ does not already have, makes the session's image a variant of the base. A server
 builds a variant on its first launch, which takes seconds to a few minutes, once,
 unless `modal.build_on_demand` is false. In that case an operator prebuilds it
 with `spov serve image build --addons ... --apt ...`. The default toolchain and
-the add-ons are described in the README's
-[Inside the sandbox](../README.md#inside-the-sandbox).
+the add-ons are described in [The sandbox](sandbox.md).
 
 ### Partial versions follow new releases
 

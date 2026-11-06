@@ -428,3 +428,21 @@ func TestABackgroundBuildNeedsEveryVersionResolvedAndNewer(t *testing.T) {
 		t.Error("an older patch than the recorded build must not build")
 	}
 }
+
+// TestAnUnbuiltBaseImageNamesTheBuildCommand: the first launch on a new
+// Modal account or pin meets a base image nobody has built, and says how
+// to build it.
+//
+// @decision(DL-035)
+func TestAnUnbuiltBaseImageNamesTheBuildCommand(t *testing.T) {
+	rf := newRegistryFixture(t, true, newImageFake())
+	base := sandbox.ImageSpec{OpenCodeVersion: variantPin}.Name()
+	rf.launchErr = &sandbox.ImageNotFoundError{Name: base, Err: errors.New("NotFound: image not found")}
+	var out strings.Builder
+	for _, e := range rf.events(rf.create(repoReq("first"))) {
+		out.Write(e.Data)
+	}
+	if !strings.Contains(out.String(), "run `spov serve image build` once") {
+		t.Fatalf("the failure does not name the build: %s", out.String())
+	}
+}
