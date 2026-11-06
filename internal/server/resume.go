@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/jimutt/spov/internal/auth"
+	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/redact"
 	"github.com/jimutt/spov/internal/session"
@@ -58,6 +60,12 @@ type ResumeRequest struct {
 	TimeoutSecs int `json:"timeout_secs,omitempty" minimum:"0" doc:"The resumed sandbox's lifetime in seconds; omitted takes the one the session was launched with"`
 	// Message is sent once the session runs, as a steer.
 	Message *SteerRequest `json:"message,omitempty" doc:"A message to send once the session runs"`
+	// SyncBundle is a synced session's base commit, from the checkout it
+	// was launched from, for a transcript resume's fresh clone. Used for
+	// this resume only and never stored.
+	//
+	// @decision(DL-098)
+	SyncBundle string `json:"sync_bundle,omitempty" doc:"A base64 git bundle of a synced session's base commit, for a resume from the transcript; ignored otherwise"`
 }
 
 // ResumeView says how a stopped session would resume, for its owner.
@@ -154,6 +162,10 @@ func (s *Service) Resume(ctx context.Context, p auth.Principal, ref string, req 
 	if err != nil {
 		return store.Session{}, err
 	}
+	bundle, err := resumeBundle(sess, choice, req.SyncBundle)
+	if err != nil {
+		return store.Session{}, err
+	}
 	// A snapshot still being taken is waited for, never skipped: a
 	// stop-and-resume would otherwise lose the work it exists to keep.
 	plan := runPlan{N: nextRun(runs), Origin: store.RunFromTranscript}
@@ -175,8 +187,35 @@ func (s *Service) Resume(ctx context.Context, p auth.Principal, ref string, req 
 		return store.Session{}, err
 	}
 	s.markResumed(ctx, sess, plan, was)
-	s.startResume(ctx, sess, plan)
+	s.startResume(ctx, sess, plan, bundle)
 	return sess, nil
+}
+
+// resumeBundle decodes a resume's sync bundle, kept only for a transcript
+// resume of a synced session. A synced session with no platform has
+// nothing to clone, so its transcript resume needs one.
+//
+// @decision(DL-098)
+func resumeBundle(sess store.Session, choice ResumeView, encoded string) ([]byte, error) {
+	if choice.Mode != ResumeTranscript || sess.Request.Sync == nil {
+		return nil, nil
+	}
+	var bundle []byte
+	if encoded != "" {
+		var err error
+		if bundle, err = base64.StdEncoding.DecodeString(encoded); err != nil {
+			return nil, fmt.Errorf("%w: sync_bundle is not valid base64", ErrInvalidRequest)
+		}
+		if len(bundle) > git.MaxSyncBundleBytes {
+			return nil, fmt.Errorf("%w: sync_bundle is %d bytes; the limit is %d", ErrInvalidRequest, len(bundle), git.MaxSyncBundleBytes)
+		}
+	}
+	localOnly := len(sess.Request.Repos) == 1 && sess.Request.Repos[0].Platform == ""
+	if localOnly && len(bundle) == 0 {
+		return nil, fmt.Errorf("%w: its repository is only on the machine it was launched from, and it resumes from its transcript;"+
+			" run spov resume inside that checkout", ErrInvalidRequest)
+	}
+	return bundle, nil
 }
 
 // resumeTimeout is the resumed sandbox's lifetime: an explicit one,
@@ -346,7 +385,7 @@ func (s *Service) markResumed(ctx context.Context, sess store.Session, plan runP
 // Create runs a launch.
 //
 // @decision(DL-087)
-func (s *Service) startResume(ctx context.Context, sess store.Session, plan runPlan) {
+func (s *Service) startResume(ctx context.Context, sess store.Session, plan runPlan, bundle []byte) {
 	log := newLaunchLog(s.deps.Now)
 	launchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.resumeLaunchTimeout(plan))
 	s.mu.Lock()
@@ -367,6 +406,10 @@ func (s *Service) startResume(ctx context.Context, sess store.Session, plan runP
 			opts.Resume = opencode.ResumeTranscript
 			if plan.Origin == store.RunFromSnapshot {
 				opts.Resume = opencode.ResumeSnapshot
+			}
+			// @decision(DL-098)
+			if opts.Sync != nil && len(bundle) > 0 {
+				opts.Sync.Bundle = bundle
 			}
 		})
 	}()
@@ -446,6 +489,8 @@ func (s *Server) registerResume() {
 	register(s.api, huma.Operation{
 		OperationID: "resume-session", Method: http.MethodPost, Path: "/api/v1/sessions/{ref}/resume",
 		Summary: "Reopen a stopped session in a new sandbox", DefaultStatus: http.StatusAccepted, Tags: []string{"sessions"},
+		// @decision(DL-098)
+		MaxBodyBytes: MaxSessionBodyBytes,
 	}, func(ctx context.Context, in *resumeInput) (*resumeOutput, error) {
 		p := principal(ctx)
 		sess, err := s.svc.Resume(ctx, p, in.Ref, in.Body)

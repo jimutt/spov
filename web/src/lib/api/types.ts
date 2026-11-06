@@ -1500,6 +1500,8 @@ export interface components {
             readonly $schema?: string;
             /** @description A message to send once the session runs */
             message?: components["schemas"]["SteerRequest"];
+            /** @description A base64 git bundle of a synced session's base commit, for a resume from the transcript; ignored otherwise */
+            sync_bundle?: string;
             /**
              * Format: int64
              * @description The resumed sandbox's lifetime in seconds; omitted takes the one the session was launched with

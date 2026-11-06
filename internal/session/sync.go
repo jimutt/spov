@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -12,6 +13,15 @@ import (
 	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/sandbox"
 )
+
+// ErrSeedBaseMissing is a seed allowed to miss its base that missed it:
+// the clone stays on its default branch.
+//
+// @decision(DL-098)
+var ErrSeedBaseMissing = errors.New("session: the sync base commit is not reachable")
+
+// seedBaseMissingExit is the seed script's exit for ErrSeedBaseMissing.
+const seedBaseMissingExit = 95
 
 // applySyncSeed checks out seed.Branch at seed.BaseCommit inside the
 // sandbox's cloned repository, fetching or unbundling commits as needed.
@@ -32,6 +42,7 @@ repo_path="$1"
 branch="$2"
 base="$3"
 has_bundle="$4"
+allow_missing="$5"
 if [ "$has_bundle" = "1" ]; then
   cat > /tmp/spov-seed.bundle
   trap 'rm -f /tmp/spov-seed.bundle' EXIT
@@ -57,10 +68,10 @@ if [ "$has_bundle" = "1" ] && ! git cat-file -e "${base}^{commit}" 2>/dev/null; 
       git fetch --no-tags origin "$prereq" >/dev/null 2>&1 || true
     fi
   done
-  if ! git bundle unbundle /tmp/spov-seed.bundle >/dev/null 2>&1 && ! git fetch --no-tags /tmp/spov-seed.bundle "HEAD:refs/spov-seed/head" >/dev/null 2>&1; then
+  if ! git bundle unbundle /tmp/spov-seed.bundle >/dev/null 2>&1 && ! git fetch --no-tags /tmp/spov-seed.bundle "+refs/*:refs/spov-seed/*" >/dev/null 2>&1; then
     git fetch --unshallow --no-tags origin "+refs/heads/*:refs/remotes/origin/*" >/dev/null 2>&1 || \
       git fetch --depth=2147483647 --no-tags origin "+refs/heads/*:refs/remotes/origin/*" >/dev/null 2>&1 || true
-    git bundle unbundle /tmp/spov-seed.bundle >/dev/null 2>&1 || git fetch --no-tags /tmp/spov-seed.bundle "HEAD:refs/spov-seed/head"
+    git bundle unbundle /tmp/spov-seed.bundle >/dev/null 2>&1 || git fetch --no-tags /tmp/spov-seed.bundle "+refs/*:refs/spov-seed/*"
   fi
 fi
 if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
@@ -68,15 +79,26 @@ if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
     git fetch --unshallow --no-tags origin "+refs/heads/*:refs/remotes/origin/*" >/dev/null 2>&1 || \
     git fetch --depth=2147483647 --no-tags origin "+refs/heads/*:refs/remotes/origin/*" >/dev/null 2>&1 || true
 fi
+if [ "$allow_missing" = "1" ] && ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+  exit 95
+fi
 git checkout -B "$branch" "$base"
 `
 	hasBundle := "0"
 	if len(seed.Bundle) > 0 {
 		hasBundle = "1"
 	}
-	res, err := h.ExecInput(ctx, []string{"bash", "-c", script, "spov-seed", repoPath, seed.Branch, commit, hasBundle}, seed.Bundle)
+	allowMissing := "0"
+	if seed.AllowMissingBase {
+		allowMissing = "1"
+	}
+	res, err := h.ExecInput(ctx, []string{"bash", "-c", script, "spov-seed", repoPath, seed.Branch, commit, hasBundle, allowMissing}, seed.Bundle)
 	if err != nil {
 		return fmt.Errorf("session: seed local branch %s: %w", seed.Branch, err)
+	}
+	// @decision(DL-098)
+	if res.ExitCode == seedBaseMissingExit && seed.AllowMissingBase {
+		return ErrSeedBaseMissing
 	}
 	if res.ExitCode != 0 {
 		detail := strings.TrimSpace(res.Stderr)
@@ -136,11 +158,17 @@ if head and head != base:
     with tempfile.NamedTemporaryFile(suffix=".bundle", delete=False) as tf:
         bpath = tf.name
     try:
-        anc = False
-        if base:
-            r = run("git", "merge-base", "--is-ancestor", base, head, check=False)
-            anc = (r.returncode == 0)
-        rev_arg = f"{base}..HEAD" if (base and anc) else "HEAD"
+        # From the base when the sandbox's history holds it, else from the
+        # remote's default branch, which the local checkout has too.
+        range_base = ""
+        if base and run("git", "merge-base", "--is-ancestor", base, head, check=False).returncode == 0:
+            range_base = base
+        else:
+            oh = run("git", "rev-parse", "--verify", "-q", "refs/remotes/origin/HEAD", check=False)
+            cand = oh.stdout.decode().strip().lower() if oh.returncode == 0 else ""
+            if cand and run("git", "merge-base", "--is-ancestor", cand, head, check=False).returncode == 0:
+                range_base = cand
+        rev_arg = f"{range_base}..HEAD" if range_base else "HEAD"
         run("git", "bundle", "create", bpath, rev_arg)
         bsize = os.path.getsize(bpath)
         total_bytes += bsize
@@ -271,4 +299,12 @@ PY
 		WorktreeTar: tarBytes,
 		Deleted:     wire.Deleted,
 	}, nil
+}
+
+// shortCommit is a commit as a person reads it.
+func shortCommit(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }

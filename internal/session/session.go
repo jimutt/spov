@@ -177,9 +177,14 @@ type SyncSeed struct {
 	Branch     string
 	BaseCommit string
 	Bundle     []byte
-	Slug       string
-	Dir        string
-	Host       string
+	// AllowMissingBase leaves a clone that cannot reach BaseCommit on its
+	// default branch instead of failing: a transcript resume's.
+	//
+	// @decision(DL-098)
+	AllowMissingBase bool
+	Slug             string
+	Dir              string
+	Host             string
 }
 
 // JobOptions is what a launch needs to know about the job it is running.
@@ -574,14 +579,21 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 	// seeding it again would reset the branch to the launch's base and
 	// drop every commit made in the sandbox since.
 	//
-	// @decision(DL-027) @decision(DL-088)
+	// @decision(DL-027) @decision(DL-088) @decision(DL-098)
 	if opts.Sync != nil && opts.Resume != opencode.ResumeSnapshot {
 		seedDir := opts.Sync.Dir
 		if len(bootstrap.Clones) == 1 {
 			seedDir = bootstrap.Clones[0].Dir
 		}
+		seed := *opts.Sync
+		seed.AllowMissingBase = opts.Resume == opencode.ResumeTranscript
 		if seedDir != "" {
-			if err := applySyncSeed(ctx, handle, seedDir, *opts.Sync); err != nil {
+			err := applySyncSeed(ctx, handle, seedDir, seed)
+			switch {
+			case errors.Is(err, ErrSeedBaseMissing) && seed.AllowMissingBase:
+				l.progress(fmt.Sprintf("the session started from %s at %s, which is not on the remote, so the workspace is on its default branch"+
+					" without those commits; to bring them, stop the session and run spov resume inside the checkout", seed.Branch, shortCommit(seed.BaseCommit)))
+			case err != nil:
 				return nil, err
 			}
 		}
