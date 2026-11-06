@@ -1588,12 +1588,23 @@ components:
             - array
             - "null"
         preset:
+          enum:
+            - npm
+            - maven
+            - nuget
+            - pypi
+          type: string
+        repo_id:
           type: string
         scheme:
           enum:
             - bearer
             - basic
             - header
+          type: string
+        scope:
+          type: string
+        url:
           type: string
         user:
           type: string

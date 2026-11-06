@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jimutt/spov/internal/credproxy"
@@ -57,8 +58,15 @@ type Route struct {
 	User string `json:"user,omitempty"`
 	// Header is the header a header-scheme secret is set in.
 	Header string `json:"header,omitempty"`
-	// Preset names the preset the credential was made with, if any.
-	Preset string `json:"preset,omitempty"`
+	// Preset names the preset the credential was made with, if any, and
+	// URL, Scope and RepoID are its options: the registry's address,
+	// npm's scope, and Maven's repository id.
+	//
+	// @decision(DL-076)
+	Preset string `json:"preset,omitempty" enum:"npm,maven,nuget,pypi"`
+	URL    string `json:"url,omitempty"`
+	Scope  string `json:"scope,omitempty"`
+	RepoID string `json:"repo_id,omitempty"`
 	// Attach is AttachAlways or AttachAsked.
 	Attach string `json:"attach,omitempty" enum:"always,asked"`
 }
@@ -83,6 +91,27 @@ func (r Route) Validate() error {
 	if r.Attach != AttachAlways && r.Attach != AttachAsked {
 		return fmt.Errorf("routed credential %s: attach is %q, not always or asked", r.Name, r.Attach)
 	}
+	// A preset's options are checked by remaking it, so a stored route
+	// cannot carry a URL its hosts do not cover.
+	//
+	// @decision(DL-076)
+	if r.Preset != "" {
+		again, err := FromPreset(r.Name, r.Preset, PresetOptions{URL: r.URL, Scope: r.Scope, RepoID: r.RepoID,
+			User: r.User, Paths: r.Paths, Attach: r.Attach})
+		if err != nil {
+			return fmt.Errorf("routed credential %s: %w", r.Name, err)
+		}
+		if !slices.Equal(again.Hosts, r.Hosts) || again.Scheme != r.Scheme {
+			return fmt.Errorf("routed credential %s: its hosts or scheme are not its %s preset's", r.Name, r.Preset)
+		}
+	} else if r.URL != "" || r.Scope != "" || r.RepoID != "" {
+		return fmt.Errorf("routed credential %s: url, scope and repo_id are a preset's", r.Name)
+	}
+	return r.validateBase()
+}
+
+// validateBase checks what the proxy checks, with any secret.
+func (r Route) validateBase() error {
 	if err := r.WithSecret("x").Validate(); err != nil {
 		return errors.New(strings.TrimPrefix(err.Error(), "credproxy: "))
 	}

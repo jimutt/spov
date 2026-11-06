@@ -1477,9 +1477,13 @@ export interface components {
             hosts: string[] | null;
             name: string;
             paths?: string[] | null;
-            preset?: string;
+            /** @enum {string} */
+            preset?: "npm" | "maven" | "nuget" | "pypi";
+            repo_id?: string;
             /** @enum {string} */
             scheme: "bearer" | "basic" | "header";
+            scope?: string;
+            url?: string;
             user?: string;
         };
         RoutedCredentialView: {

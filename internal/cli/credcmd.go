@@ -163,7 +163,9 @@ func newCredentialsAddCmd(env *Env) *cobra.Command {
 			"  spov credentials add forgejo:codeberg.org a Forgejo token\n" +
 			"  spov credentials add OPENROUTER_API_KEY   a model provider key\n" +
 			"  spov credentials add acme-npm --host npm.acme.com --bearer\n" +
-			"                                            a routed credential, set only on its host\n\n" +
+			"                                            a routed credential, set only on its host\n" +
+			"  spov credentials add acme-npm --preset npm --url https://npm.acme.com/ --scope @acme\n" +
+			"                                            the same from a preset, which writes .npmrc\n\n" +
 			"The secret is prompted for without echo unless --token gives it. A routed credential's\n" +
 			"secret comes from the prompt or --secret-file, and is stored unchecked.",
 		Args: cobra.ExactArgs(1),
