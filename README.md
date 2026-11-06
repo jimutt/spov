@@ -553,6 +553,60 @@ launch uses a stored token, the forge is asked first whether the token can see
 each repository, and the launch is refused before any sandbox exists if it
 cannot.
 
+### Private registries and other services
+
+A **routed credential** is a secret for something other than your forge, such
+as a private npm registry, an internal API or a Maven repository, together
+with where it may be used. The credential proxy holds it outside the sandbox
+and adds it only to requests for the hosts (and, optionally, the paths) you
+name. Inside the sandbox it is a placeholder in `SPOV_CREDENTIAL_<NAME>`, so
+the agent never holds the secret, and a request anywhere else goes out
+without it. Routed credentials need the credential proxy: a server without
+it refuses a launch that would attach one.
+
+```sh
+# A bearer token for one host:
+spov credentials add acme-api --host api.acme.com --bearer
+# Basic auth, or a header of your own, below a path:
+spov credentials add acme-files --host files.acme.com --path /team/ --basic deploy
+spov credentials add acme-search --host search.acme.com --header X-Api-Key
+```
+
+The secret is prompted for without echo (or read with `--secret-file`) and
+stored unchecked. `--host` repeats, and the hosts must be exact names; a
+route can never cover a forge's or a model provider's host.
+
+**Presets** fill in the scheme and the host from a registry's URL, and write
+the client's own config file in the sandbox with the placeholder in it:
+
+| Preset | Options | Written in the sandbox |
+|---|---|---|
+| `npm` | `--url`, `--scope @acme` (optional) | `~/.npmrc`, read by npm, pnpm and Bun |
+| `maven` | `--url`, `--id` (the repository's id in `pom.xml`), `--user` | `~/.m2/settings.xml` |
+| `nuget` | `--url` (the feed's `index.json`), `--user` | `~/.nuget/NuGet/NuGet.Config` |
+| `pypi` | `--url` (the index's `/simple/` URL), `--user` | `pip.conf` and `uv.toml`, as an extra index |
+
+```sh
+spov credentials add acme-npm --preset npm --url https://npm.acme.com/ --scope @acme
+```
+
+**Which sessions get one.** Every session and job gets each routed
+credential you hold by default. `--attach asked` stores one that only a
+launch naming it gets. To narrow per launch, use `--credentials a,b` (exactly
+these, asked-only ones included) or `--no-credentials` on `spov fly` and
+`spov jobs create`. In config, `sandbox.credentials` keeps only the ones it
+names, or `[none]`; jobs use `sandbox.job_credentials` instead and never take
+the interactive list. A project file can only take
+credentials away, never add one ([docs/configuration.md](docs/configuration.md#a-project-file-can-only-take-routed-credentials-away)).
+`sandbox.needs` lists hosts a project needs, and a launch says when no routed
+credential covers one. On a hosted server an admin can store the
+organisation's own with `--org`, which every member's sessions get. The
+session page lists each credential a session holds, with its hosts, never
+the secret.
+
+Values that are not secret, such as a registry's URL or a feature flag, belong
+in `sandbox.env` instead ([Inside the sandbox](#inside-the-sandbox)).
+
 ## Inside the sandbox
 
 Each sandbox has `git`, `ripgrep`, the pinned `opencode`, and the forge CLIs:
@@ -574,8 +628,8 @@ value in your user file or a project's `.spov.yaml` (merged by name), or
 would read as a number or `true`. They reach every
 process in the sandbox, sessions and jobs alike, and are not secret: spov
 stores them with the session and shows them on its page. A token or a key
-goes in a routed credential instead (`spov credentials add <name> --host ...`;
-see [docs/configuration.md](docs/configuration.md#a-project-file-can-only-take-routed-credentials-away)).
+goes in a routed credential instead (see [Private registries and other
+services](#private-registries-and-other-services)).
 Names spov relies on, such
 as `PATH`, `GITHUB_TOKEN` or `OPENCODE_CONFIG`, are refused;
 [docs/configuration.md](docs/configuration.md#environment-variables-in-the-sandbox)
