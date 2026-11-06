@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jimutt/spov/internal/credproxy"
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/toolchain"
@@ -50,6 +51,25 @@ func Validate(c Config) error {
 	for _, kv := range [][2]string{{"sandbox.git_access", c.Sandbox.GitAccess}, {"sandbox.job_git_access", c.Sandbox.JobGitAccess}} {
 		if v := kv[1]; v != "" && v != "repos" && v != "all" {
 			return fmt.Errorf("config: %s must be repos or all, got %q", kv[0], v)
+		}
+	}
+	// @decision(DL-075)
+	for _, kv := range []struct {
+		key   string
+		names []string
+	}{{"sandbox.credentials", c.Sandbox.Credentials}, {"sandbox.job_credentials", c.Sandbox.JobCredentials}} {
+		for _, n := range kv.names {
+			if n == "none" && len(kv.names) > 1 {
+				return fmt.Errorf("config: %s names none beside other credentials", kv.key)
+			}
+			if n != "none" && !credproxy.ValidRouteName(n) {
+				return fmt.Errorf("config: %s: %q is not a routed credential's name", kv.key, n)
+			}
+		}
+	}
+	for _, h := range c.Sandbox.Needs {
+		if !credproxy.ValidRouteHost(strings.ToLower(h)) {
+			return fmt.Errorf("config: sandbox.needs: %q is not an exact host name", h)
 		}
 	}
 	// @decision(DL-049)

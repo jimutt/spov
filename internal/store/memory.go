@@ -555,6 +555,15 @@ func copySession(s Session) Session {
 		s.Request.Sync = &sync
 	}
 	s.Booted.Addons = slices.Clone(s.Booted.Addons)
+	// @decision(DL-075)
+	s.RoutedCredentials = slices.Clone(s.RoutedCredentials)
+	for i := range s.RoutedCredentials {
+		s.RoutedCredentials[i].Hosts = slices.Clone(s.RoutedCredentials[i].Hosts)
+		s.RoutedCredentials[i].Paths = slices.Clone(s.RoutedCredentials[i].Paths)
+	}
+	s.Request.Routed.Names = slices.Clone(s.Request.Routed.Names)
+	s.Request.Routed.Preferred = slices.Clone(s.Request.Routed.Preferred)
+	s.Request.Routed.Needs = slices.Clone(s.Request.Routed.Needs)
 	if s.StoppedAt != nil {
 		t := *s.StoppedAt
 		s.StoppedAt = &t
@@ -989,6 +998,8 @@ func copyCredential(c UserCredential) UserCredential {
 	if len(c.Scopes) == 0 {
 		c.Scopes = nil
 	}
+	// @decision(DL-073)
+	c.Route = slices.Clone(c.Route)
 	return c
 }
 
@@ -1682,6 +1693,19 @@ func (s memOrgCredentials) Get(_ context.Context, orgID, platform string) (OrgCr
 	}
 	c.Ciphertext, c.Nonce, c.Meta = slices.Clone(c.Ciphertext), slices.Clone(c.Nonce), slices.Clone(c.Meta)
 	return c, nil
+}
+
+func (s memOrgCredentials) List(_ context.Context, orgID string) ([]OrgCredential, error) {
+	defer s.m.lock()()
+	var out []OrgCredential
+	for _, c := range s.m.orgCredentials {
+		if c.OrgID == orgID {
+			c.Ciphertext, c.Nonce, c.Meta = slices.Clone(c.Ciphertext), slices.Clone(c.Nonce), slices.Clone(c.Meta)
+			out = append(out, c)
+		}
+	}
+	slices.SortFunc(out, func(a, b OrgCredential) int { return strings.Compare(a.Platform, b.Platform) })
+	return out, nil
 }
 
 func (s memOrgCredentials) Delete(_ context.Context, orgID, platform string) error {

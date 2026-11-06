@@ -73,6 +73,9 @@ sandbox:
   inbound_cidrs: [203.0.113.0/24]   # who may reach the sandbox's edge
   git_access: repos                 # repos | all, for spov fly; the server treats it as a preference
   job_git_access: repos             # repos | all, for spov jobs create; never inherits git_access
+  credentials: [acme-npm]           # keep only these of your routed credentials for spov fly, or [none]; only narrows (or pass --credentials / --no-credentials)
+  job_credentials: [none]           # the same for spov jobs create; never inherits credentials
+  needs: [npm.acme.com]             # hosts the project needs; a launch says when no routed credential covers one
   job_max_duration: 2h              # a job's wall clock when --max-duration is unset; at least 1m, clamped to your limit (quotas.max_job_duration)
   sync: false                       # seed spov fly from the local git branch and sync back on exit (or pass --sync / --no-sync)
   addons: [rust, postgres@16, node@22]  # dotnet, java, php, playwright, postgres, redis, ruby, rust; or bun, go, node, python, uv
@@ -134,6 +137,16 @@ names neither, such as a session started from the browser.
 
 `platforms` and `server` belong in the user file only (above). `spov serve`
 reads no project file.
+
+### A project file can only take routed credentials away
+
+Every session gets the routed credentials you hold (`spov credentials add <name>
+--host ...`), except those you stored with `--attach asked`. `sandbox.credentials`,
+in your user file or a project file, keeps only the ones it names, and `[none]`
+keeps none; it never attaches one you did not already get, so a repository you
+clone from someone else cannot send your credentials anywhere new. A launch's own
+`--credentials a,b` attaches exactly those, asked-only ones included, and
+`--no-credentials` attaches none.
 
 ### A project file can ask for git access `all`
 

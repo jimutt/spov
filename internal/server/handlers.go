@@ -79,6 +79,11 @@ type SessionView struct {
 	//
 	// @decision(DL-043)
 	Credentials []SandboxCredentialView `json:"credentials,omitempty" doc:"What the sandbox holds for each platform"`
+	// RoutedCredentials names each routed credential the proxy holds,
+	// with its hosts; never a secret.
+	//
+	// @decision(DL-077)
+	RoutedCredentials []SessionRoutedCredentialView `json:"routed_credentials,omitempty" doc:"The routed credentials the proxy holds for this session, with their hosts"`
 	// GitAccess is what the launch asked for; each credential says what
 	// its platform got.
 	//
@@ -122,6 +127,21 @@ type SyncExportView struct {
 	Bundle      string   `json:"bundle,omitempty" doc:"Base64-encoded git bundle of commits between base_commit and head_commit"`
 	WorktreeTar string   `json:"worktree_tar,omitempty" doc:"Base64-encoded gzipped tar of modified, staged and untracked non-ignored files"`
 	Deleted     []string `json:"deleted,omitempty" doc:"Tracked repository-relative paths deleted in the working tree or index"`
+}
+
+// SessionRoutedCredentialView is one routed credential a session's proxy
+// holds: its name, whose it is and its route, never its secret.
+//
+// @decision(DL-077)
+type SessionRoutedCredentialView struct {
+	Name   string   `json:"name"`
+	Tier   string   `json:"tier" enum:"user,org" doc:"Whose credential it is: the user's own, or the organisation's"`
+	Hosts  []string `json:"hosts"`
+	Paths  []string `json:"paths,omitempty" doc:"The path prefixes it is set on; every path when absent"`
+	Scheme string   `json:"scheme" enum:"bearer,basic,header"`
+	User   string   `json:"user,omitempty" doc:"The Basic username"`
+	Header string   `json:"header,omitempty" doc:"The header it is set in"`
+	Preset string   `json:"preset,omitempty"`
 }
 
 // SandboxCredentialView is one platform's credential kind: `renewed` is a GitHub
@@ -219,6 +239,14 @@ type SessionRequest struct {
 	GitAccessPreferred bool            `json:"git_access_preferred,omitempty" doc:"The git access is a saved preference, such as the CLI's config: a platform that cannot have all gets repos rather than refusing the launch"`
 	// @decision(DL-042)
 	CredentialPreference map[string]string `json:"credential_preference,omitempty" doc:"Per configured platform, the credential tried first: user (your own, the default) or org (the organisation's); the other is used only when that one is absent"`
+	// Credentials, NoCredentials, CredentialsPreferred and Needs say
+	// which routed credentials the launch attaches.
+	//
+	// @decision(DL-075)
+	Credentials          []string `json:"credentials,omitempty" maxItems:"96" doc:"Attach exactly these routed credentials, asked-only ones included"`
+	NoCredentials        bool     `json:"no_credentials,omitempty" doc:"Attach no routed credential"`
+	CredentialsPreferred []string `json:"credentials_preferred,omitempty" maxItems:"96" doc:"The configuration's narrowing: keep only these of the default, or none for none; it never adds one"`
+	Needs                []string `json:"needs,omitempty" maxItems:"16" doc:"Hosts the project needs; the launch notes any no routed credential covers"`
 	// Addons and Apt ask for an image variant: curated add-ons as
 	// `name[@version]`, and extra Debian packages. Neither combines with
 	// Image.
@@ -256,7 +284,9 @@ func (r SessionRequest) toStore() (store.SessionRequest, error) {
 		GitAccess: r.GitAccess, GitAccessPreferred: r.GitAccessPreferred,
 		// @decision(DL-042)
 		CredentialPreference: r.CredentialPreference,
-		Addons:               r.Addons, Apt: r.Apt,
+		// @decision(DL-075)
+		Routed: routedRequest(r.Credentials, r.NoCredentials, r.CredentialsPreferred, r.Needs),
+		Addons: r.Addons, Apt: r.Apt,
 		// @decision(DL-027)
 		Sync: sync,
 	}, nil
@@ -300,8 +330,10 @@ func viewOf(s store.Session, now time.Time) SessionView {
 		BootedImage: s.Booted.Image, InstalledAddons: s.Booted.Addons,
 		CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt, StoppedAt: s.StoppedAt,
 		Credentials: credentialViews(s.Credentials),
-		GitAccess:   s.Request.GitAccess,
-		Sync:        syncView,
+		// @decision(DL-077)
+		RoutedCredentials: routedViews(s.RoutedCredentials),
+		GitAccess:         s.Request.GitAccess,
+		Sync:              syncView,
 		EstimatedCost: round2(sandbox.EstimatedCost(
 			s.Request.Sandbox.CPU, s.Request.Sandbox.MemoryMiB,
 			// The session's whole billable life: the same helper the
@@ -310,6 +342,20 @@ func viewOf(s store.Session, now time.Time) SessionView {
 			billableWithin(s, s.CreatedAt, now),
 		)),
 	}
+}
+
+// routedViews projects a session's recorded routed credentials.
+//
+// @decision(DL-077)
+func routedViews(rs []store.SessionRoutedCredential) []SessionRoutedCredentialView {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]SessionRoutedCredentialView, len(rs))
+	for i, r := range rs {
+		out[i] = SessionRoutedCredentialView(r)
+	}
+	return out
 }
 
 // credentialViews projects a session's stored credential kinds.

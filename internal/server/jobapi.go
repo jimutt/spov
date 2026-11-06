@@ -91,6 +91,14 @@ type JobRequest struct {
 	GitAccessPreferred bool            `json:"git_access_preferred,omitempty" doc:"The git access is a saved preference, such as the CLI's config: a platform that cannot have all gets repos rather than refusing the job"`
 	// @decision(DL-042)
 	CredentialPreference map[string]string `json:"credential_preference,omitempty" doc:"Per configured platform, the credential tried first: user (your own, the default) or org (the organisation's)"`
+	// Credentials, NoCredentials, CredentialsPreferred and Needs say
+	// which routed credentials the launch attaches.
+	//
+	// @decision(DL-075)
+	Credentials          []string `json:"credentials,omitempty" maxItems:"96" doc:"Attach exactly these routed credentials, asked-only ones included"`
+	NoCredentials        bool     `json:"no_credentials,omitempty" doc:"Attach no routed credential"`
+	CredentialsPreferred []string `json:"credentials_preferred,omitempty" maxItems:"96" doc:"The configuration's narrowing: keep only these of the default, or none for none; it never adds one"`
+	Needs                []string `json:"needs,omitempty" maxItems:"16" doc:"Hosts the project needs; the launch notes any no routed credential covers"`
 }
 
 // JobView is a job as the API shows it.

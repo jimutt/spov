@@ -178,6 +178,16 @@ type Sandbox struct {
 	// @decision(DL-043)
 	GitAccess    string `koanf:"git_access"`
 	JobGitAccess string `koanf:"job_git_access"`
+	// Credentials and JobCredentials narrow which routed credentials
+	// `spov fly` and `spov jobs create` attach: names, or [none]. A job never
+	// takes Credentials. They only narrow; naming one never attaches it.
+	// Needs are hosts the project needs, which a launch says when no
+	// routed credential covers.
+	//
+	// @decision(DL-075)
+	Credentials    []string `koanf:"credentials"`
+	JobCredentials []string `koanf:"job_credentials"`
+	Needs          []string `koanf:"needs"`
 	// JobMaxDuration is the wall clock `spov jobs create` asks for when no
 	// flag names one. The server treats it as a preference and clamps it
 	// to the caller's limit.

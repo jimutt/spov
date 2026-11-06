@@ -113,6 +113,10 @@ func (p Platform) allowsGitLabAPI(segs []string, method string) bool {
 	if len(segs) == 2 && segs[0] == "personal_access_tokens" && segs[1] == "self" {
 		return read
 	}
+	// @decision(DL-078)
+	if handled, allowed := p.allowsGitLabPackages(segs, method); handled {
+		return allowed
+	}
 	if len(segs) < 2 || segs[0] != "projects" || !p.hasProject(segs[1]) {
 		return false
 	}
