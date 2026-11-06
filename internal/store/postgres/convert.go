@@ -86,6 +86,15 @@ func sessionFromRow(r sqlcgen.Session) (store.Session, error) {
 	if len(s.Credentials) == 0 {
 		s.Credentials = nil
 	}
+	// @decision(DL-075)
+	if len(r.RoutedCredentials) > 0 {
+		if err := json.Unmarshal(r.RoutedCredentials, &s.RoutedCredentials); err != nil {
+			return store.Session{}, fmt.Errorf("store: decode routed credentials for session %s: %w", r.ID, err)
+		}
+	}
+	if len(s.RoutedCredentials) == 0 {
+		s.RoutedCredentials = nil
+	}
 	// @decision(DL-033)
 	if len(r.Booted) > 0 {
 		if err := json.Unmarshal(r.Booted, &s.Booted); err != nil {
@@ -129,6 +138,20 @@ func sessionJSON(s store.Session) (request, clones, credentials []byte, err erro
 		return nil, nil, nil, fmt.Errorf("store: encode credentials: %w", err)
 	}
 	return request, clones, credentials, nil
+}
+
+// routedJSON encodes the routed_credentials column, never null.
+//
+// @decision(DL-075)
+func routedJSON(s store.Session) ([]byte, error) {
+	if s.RoutedCredentials == nil {
+		return []byte("[]"), nil
+	}
+	b, err := json.Marshal(s.RoutedCredentials)
+	if err != nil {
+		return nil, fmt.Errorf("store: encode routed credentials: %w", err)
+	}
+	return b, nil
 }
 
 // bootedJSON encodes the booted column.
@@ -245,6 +268,7 @@ func credentialFromRow(r sqlcgen.UserCredential) store.UserCredential {
 		VerifiedAs: r.VerifiedAs,
 		Scopes:     nilIfEmpty(r.Scopes),
 		ExpiresAt:  goTime(r.ExpiresAt),
+		Route:      r.Route,
 		CreatedAt:  goTime(r.CreatedAt),
 		UpdatedAt:  goTime(r.UpdatedAt),
 	}

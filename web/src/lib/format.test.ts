@@ -1,5 +1,7 @@
 import { describe, expect, it, test } from 'vitest';
 import {
+  routedCredentialLine,
+  routedCredentialTag,
   CREDENTIAL_LINES,
   IN_SANDBOX_NOTE,
   PAT_GRAPHQL_NOTE,
@@ -628,5 +630,23 @@ describe('a partial success', () => {
       job: { id: 'j', kind: 'report', state: 'succeeded', partial: true },
     } as unknown as Session;
     expect(listState(s)).toMatchObject({ mark: 'part', word: 'Succeeded, partly' });
+  });
+});
+
+// @decision(DL-077)
+describe("routedCredentialLine", () => {
+  it("writes the hosts, paths and how the secret is sent", () => {
+    expect(routedCredentialLine({ hosts: ["npm.acme.com"], scheme: "bearer" })).toBe("npm.acme.com, as a bearer");
+    expect(
+      routedCredentialLine({ hosts: ["repo.acme.com", "cdn.acme.com"], paths: ["/libs/"], scheme: "basic", user: "ci" }),
+    ).toBe("repo.acme.com, cdn.acme.com /libs/, Basic as ci");
+    expect(routedCredentialLine({ hosts: ["jfrog.acme.com"], scheme: "header", header: "X-JFrog-Art-Api" })).toBe(
+      "jfrog.acme.com, in X-JFrog-Art-Api",
+    );
+  });
+  it("tags whose it is and its preset", () => {
+    expect(routedCredentialTag("user")).toBe("routed, your own");
+    expect(routedCredentialTag("org", "npm")).toBe("npm, routed, the organisation's");
+    expect(routedCredentialTag()).toBe("routed");
   });
 });

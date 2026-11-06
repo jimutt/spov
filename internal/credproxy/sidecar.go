@@ -65,6 +65,42 @@ func MainEnv() map[string]string {
 	return env
 }
 
+// JavaTrustStore is the PKCS#12 trust store every JVM in the main
+// container reads, built from SystemBundle by the entrypoint, and
+// JavaTrustPassword its password, which guards nothing: the store holds
+// only public certificates.
+//
+// @decision(DL-076)
+const (
+	JavaTrustStore    = "/etc/spov/java-truststore.p12"
+	JavaTrustPassword = "spov-trust"
+)
+
+// JavaTrustCommand builds JavaTrustStore from SystemBundle, marking each
+// certificate trusted as the JDK needs (openssl 3.2's -jdktrust, which
+// the base image's Debian release has).
+//
+// @decision(DL-076)
+func JavaTrustCommand() string {
+	return "mkdir -p '" + path.Dir(JavaTrustStore) + "' && openssl pkcs12 -export -nokeys -in '" + SystemBundle +
+		"' -jdktrust anyExtendedKeyUsage -passout pass:" + JavaTrustPassword + " -out '" + JavaTrustStore + ".tmp' && mv '" +
+		JavaTrustStore + ".tmp' '" + JavaTrustStore + "'"
+}
+
+// JavaToolOptions points every JVM at JavaTrustStore and the proxy,
+// which Java does not find through HTTPS_PROXY.
+//
+// @decision(DL-076)
+func JavaToolOptions() string {
+	return strings.Join([]string{
+		"-Djavax.net.ssl.trustStore=" + JavaTrustStore, "-Djavax.net.ssl.trustStoreType=PKCS12",
+		"-Djavax.net.ssl.trustStorePassword=" + JavaTrustPassword,
+		"-Dhttps.proxyHost=" + SidecarName, "-Dhttps.proxyPort=" + strconv.Itoa(Port),
+		"-Dhttp.proxyHost=" + SidecarName, "-Dhttp.proxyPort=" + strconv.Itoa(Port),
+		"-Dhttp.nonProxyHosts=localhost|127.0.0.1|main",
+	}, " ")
+}
+
 // InstallCACommand is the exec that makes the main container trust a new
 // sidecar's CA, with the certificate on stdin: it replaces MainCAFile and
 // adds the certificate to SystemBundle. A process already running keeps
@@ -73,7 +109,10 @@ func MainEnv() map[string]string {
 // @decision(DL-034)
 func InstallCACommand() []string {
 	return []string{"sh", "-c", "mkdir -p '" + path.Dir(MainCAFile) + "' && cat > '" + MainCAFile +
-		"' && cat '" + MainCAFile + "' >> '" + SystemBundle + "'"}
+		"' && cat '" + MainCAFile + "' >> '" + SystemBundle + "'" +
+		// The Java trust store follows the bundle, for JVMs started later.
+		// @decision(DL-076)
+		" && { ! command -v openssl >/dev/null || " + JavaTrustCommand() + "; }"}
 }
 
 // SetTokenCommand is the exec a re-mint runs in the sidecar, with the

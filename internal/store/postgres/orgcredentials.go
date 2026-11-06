@@ -48,6 +48,22 @@ func (p pgOrgCredentials) Get(ctx context.Context, orgID, platform string) (stor
 	}, nil
 }
 
+func (p pgOrgCredentials) List(ctx context.Context, orgID string) ([]store.OrgCredential, error) {
+	rows, err := p.s.q.ListOrgCredentials(ctx, orgID)
+	if err != nil {
+		return nil, mapErr("list org credentials", err)
+	}
+	var out []store.OrgCredential
+	for _, r := range rows {
+		out = append(out, store.OrgCredential{
+			ID: r.ID, OrgID: r.OrgID, Platform: r.Platform,
+			Ciphertext: r.Ciphertext, Nonce: r.Nonce, KeyVersion: int(r.KeyVersion),
+			Meta: r.Meta, UpdatedBy: r.UpdatedBy, CreatedAt: goTime(r.CreatedAt), UpdatedAt: goTime(r.UpdatedAt),
+		})
+	}
+	return out, nil
+}
+
 func (p pgOrgCredentials) Delete(ctx context.Context, orgID, platform string) error {
 	n, err := p.s.q.DeleteOrgCredential(ctx, sqlcgen.DeleteOrgCredentialParams{OrgID: orgID, Platform: platform})
 	if err != nil {

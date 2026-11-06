@@ -183,6 +183,10 @@ func New(deps Deps, addr string) (*Server, error) {
 	//
 	// @decision(DL-008)
 	s.registerCredentials()
+	// @decision(DL-073)
+	s.registerRoutedCredentials()
+	// @decision(DL-074)
+	s.registerOrgRoutedCredentials()
 	s.registerOpenCodeConsole()
 	s.registerModels()
 	// Per-user quotas, usage and the admin view of both.

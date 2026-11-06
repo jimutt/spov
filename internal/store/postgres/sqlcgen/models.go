@@ -214,6 +214,7 @@ type Session struct {
 	GitTokenExpiresAt pgtype.Timestamptz
 	OpencodeGrant     int32
 	Booted            []byte
+	RoutedCredentials []byte
 }
 
 type SessionProxyCa struct {
@@ -257,6 +258,7 @@ type UserCredential struct {
 	UpdatedAt  pgtype.Timestamptz
 	Scopes     []string
 	ExpiresAt  pgtype.Timestamptz
+	Route      []byte
 }
 
 type WebSession struct {

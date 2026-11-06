@@ -374,6 +374,8 @@ func (p pgCredentials) Put(ctx context.Context, c store.UserCredential) error {
 		UpdatedAt:  ts(c.UpdatedAt),
 		Scopes:     nonNilStrings(c.Scopes),
 		ExpiresAt:  ts(c.ExpiresAt),
+		// @decision(DL-073)
+		Route: c.Route,
 	}))
 }
 
