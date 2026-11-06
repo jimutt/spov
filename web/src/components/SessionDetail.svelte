@@ -35,6 +35,7 @@
     stateWord,
     verdictSummary,
     wallClock,
+    envRows,
   } from '../lib/format';
   import {
     CollapseFrom,
@@ -491,6 +492,7 @@
   const goalClip = $derived(clip(job?.goal ?? '', GoalLimit));
   let goalOpen = $state(false);
   let costOpen = $state(false);
+  let envOpen = $state(false);
   const credentialNotes = new SvelteSet<string>();
 
   // The job's inventory, by kind. Bodies are never in it.
@@ -1316,6 +1318,26 @@
             <dd class="m-0 text-right">{sentence(s.egress)}</dd>
           {/if}
         </dl>
+        <!-- The session's own variables, beside spov's; not secret, so
+             shown as they are. @decision(DL-096) @decision(DL-057) -->
+        {#if envRows(s.env).length}
+          <h3 class="m-0 mt-3 mb-1 flex items-center gap-1 text-sm font-semibold">
+            Environment
+            <InfoToggle label="About the environment variables" controls="env-note" bind:open={envOpen} />
+          </h3>
+          {#if envOpen}
+            <p id="env-note" class="mt-0 mb-1.5 text-sm leading-snug text-soft">
+              Set in the sandbox from sandbox.env and --env, beside spov's own. They are not secret: anyone who can
+              read this session sees them. A token belongs in a routed credential.
+            </p>
+          {/if}
+          <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1" data-testid="session-env">
+            {#each envRows(s.env) as row (row.name)}
+              <dt class="font-mono text-soft [overflow-wrap:anywhere]">{row.name}</dt>
+              <dd class="m-0 text-right font-mono whitespace-pre-wrap [overflow-wrap:anywhere]">{row.value}</dd>
+            {/each}
+          </dl>
+        {/if}
       </details>
 
       {#if repoNames(s).length || s.landing || s.credentials?.length || s.routed_credentials?.length}

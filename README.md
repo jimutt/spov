@@ -146,6 +146,7 @@ repository's default branch instead, without syncing back.
 | `--plain` | Report progress as plain lines instead of the full-screen launch view |
 | `--git-name`, `--git-email` | Identity for commits made in the sandbox; defaults to your local `git config` |
 | `--git-access repos\|all` | Whether the sandbox's git credentials reach only this session's repositories (the default) or every repository they can |
+| `--env KEY=VALUE` | An environment variable in the sandbox, over `sandbox.env`; repeatable. Not for secrets (see [Inside the sandbox](#inside-the-sandbox)) |
 | `--sync`, `--no-sync` | Whether to seed the sandbox from your current clean local branch and sync its changes back when the session closes. Inside a checkout with no `--repo` it does by default; `--sync` also syncs a `--repo` that is the checkout's, `--no-sync` launches without the checkout (see [Choosing repositories](#choosing-repositories)) |
 | `--allow-version-mismatch` | Attach even if the local and sandbox OpenCode versions differ |
 
@@ -240,7 +241,7 @@ spov jobs create --kind report --repo acme/app --goal-file audit.md
 | `--check <command>` | A command that verifies the work, run at `/workspace`. Its exit status is one of the job's gates. |
 | `--max-duration 45m` | How long the job may run unattended. When unset: `sandbox.job_max_duration` in your config, then your default from Settings, then 1 h. Never more than your limit. |
 | `--model provider/model` | Model to run on; your account's default when unset |
-| `--repo`, `--landing`, `--git-access`, `--goal-file` | As for sessions, plus reading the goal from a file. A job takes its git access from `sandbox.job_git_access` and your Settings, never from the interactive default. |
+| `--repo`, `--landing`, `--git-access`, `--env`, `--goal-file` | As for sessions, plus reading the goal from a file. A job takes its git access from `sandbox.job_git_access` and your Settings, never from the interactive default. |
 
 The job outlives your terminal. `spov jobs` (or `spov jobs list`) lists jobs
 newest first, five a page (`-n`, `--page`), plus any unfinished job older than
@@ -562,6 +563,19 @@ files win inside it: `.nvmrc`, `.python-version`, `.tool-versions` and
 `mise.toml` through [mise](https://mise.jdx.dev), and `go.mod` through Go. A
 version that is not installed is downloaded on first use, which needs egress.
 The generated `/workspace/AGENTS.md` tells the agent what is installed.
+
+Environment variables for the sandbox go in `sandbox.env`, a map of name to
+value in your user file or a project's `.spov.yaml` (merged by name), or
+`--env KEY=VALUE` on `spov fly` and `spov jobs create`; quote a value YAML
+would read as a number or `true`. They reach every
+process in the sandbox, sessions and jobs alike, and are not secret: spov
+stores them with the session and shows them on its page. A token or a key
+goes in a routed credential instead (`spov credentials add <name> --host ...`;
+see [docs/configuration.md](docs/configuration.md#a-project-file-can-only-take-routed-credentials-away)).
+Names spov relies on, such
+as `PATH`, `GITHUB_TOKEN` or `OPENCODE_CONFIG`, are refused;
+[docs/configuration.md](docs/configuration.md#environment-variables-in-the-sandbox)
+lists them.
 
 More can be added per project with `sandbox.addons`, a list of `name` or
 `name@version`: `dotnet`, `java`, `php`, `playwright`, `postgres`, `redis`,

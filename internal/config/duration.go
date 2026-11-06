@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"reflect"
+	"slices"
 	"time"
 )
 
@@ -34,4 +36,25 @@ func durationHook(from, to reflect.Type, data any) (any, error) {
 	default:
 		return data, nil
 	}
+}
+
+// envMapHook refuses a sandbox.env value YAML read as something other
+// than text, which a weakly typed decode would otherwise rewrite: true
+// becomes "1" and 1.10 becomes "1.1". sandbox.env is the only
+// map[string]string in Config.
+//
+// @decision(DL-096)
+func envMapHook(_, to reflect.Type, data any) (any, error) {
+	m, ok := data.(map[string]any)
+	if to != reflect.TypeOf(map[string]string{}) || !ok {
+		return data, nil
+	}
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		if v := m[k]; v != nil {
+			if _, ok := v.(string); !ok {
+				return nil, fmt.Errorf("sandbox.env.%s is %v, which YAML reads as a %T rather than text; quote the value", k, v, v)
+			}
+		}
+	}
+	return data, nil
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/jimutt/spov/internal/store"
 	"github.com/jimutt/spov/internal/store/postgres"
 	"github.com/jimutt/spov/internal/telemetry"
+	"github.com/jimutt/spov/internal/toolchain"
 	"github.com/jimutt/spov/internal/version"
 	"github.com/jimutt/spov/internal/webui"
 )
@@ -703,6 +704,14 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 		launcher.Variants = &session.VariantBuilder{Builder: builder, Warn: warn}
 	}
 	sb := cfg.Sandbox
+	// Against every add-on, since a request's own add-ons replace the
+	// server's but its sandbox.env stays under them.
+	//
+	// @decision(DL-097)
+	if err := checkSandboxEnv(sb.Env, toolchain.Names(), "sandbox.env"); err != nil {
+		closeStore()
+		return server.Deps{}, nil, err
+	}
 	snapshots, err := snapshotSettings(cfg.Snapshots, journaled, launcher.ProxyImage != nil)
 	if err != nil {
 		closeStore()
@@ -748,6 +757,8 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 			BuildOnDemand: cfg.Modal.BuildOnDemand,
 			Addons:        sb.Addons,
 			Apt:           sb.Apt,
+			// @decision(DL-096)
+			Env: sb.Env,
 		},
 		// Per-user limits for a hosted server; local mode has one user
 		// and the defaults are generous enough to be invisible.

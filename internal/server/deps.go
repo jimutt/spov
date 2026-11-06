@@ -329,6 +329,11 @@ type Defaults struct {
 	// @decision(DL-033)
 	Addons []string
 	Apt    []string
+	// Env are the deployment's own environment variables, under every
+	// session's.
+	//
+	// @decision(DL-096)
+	Env map[string]string
 }
 
 // NewLaunch adapts a session.Launcher.

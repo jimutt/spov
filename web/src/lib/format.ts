@@ -731,3 +731,15 @@ export function routedCredentialTag(tier?: string, preset?: string): string {
   else if (tier === "user") tag += ", your own";
   return tag;
 }
+
+/**
+ * envRows are a session's own environment variables in name order, as
+ * the sidebar lists them.
+ *
+ * @decision(DL-096)
+ */
+export function envRows(env?: Record<string, string> | null): { name: string; value: string }[] {
+  return Object.keys(env ?? {})
+    .sort()
+    .map((name) => ({ name, value: env![name] }));
+}

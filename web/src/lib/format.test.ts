@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from 'vitest';
 import {
+  envRows,
   routedCredentialLine,
   routedCredentialTag,
   CREDENTIAL_LINES,
@@ -648,5 +649,19 @@ describe("routedCredentialLine", () => {
     expect(routedCredentialTag("user")).toBe("routed, your own");
     expect(routedCredentialTag("org", "npm")).toBe("npm, routed, the organisation's");
     expect(routedCredentialTag()).toBe("routed");
+  });
+});
+
+// @decision(DL-096)
+describe('envRows', () => {
+  it('lists a session\'s variables in name order, an empty value kept', () => {
+    expect(envRows({ NODE_ENV: 'test', A: '' })).toEqual([
+      { name: 'A', value: '' },
+      { name: 'NODE_ENV', value: 'test' },
+    ]);
+  });
+  it('lists nothing for a session with none', () => {
+    expect(envRows(undefined)).toEqual([]);
+    expect(envRows(null)).toEqual([]);
   });
 });

@@ -138,6 +138,8 @@ type shownSandbox struct {
 	//
 	// @decision(DL-095)
 	Sync *bool `json:"sync" yaml:"sync"`
+	// @decision(DL-096)
+	Env map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
 	// @decision(DL-033)
 	Addons []string `json:"addons,omitempty" yaml:"addons,omitempty"`
 	Apt    []string `json:"apt,omitempty" yaml:"apt,omitempty"`
@@ -218,6 +220,7 @@ func newShownConfig(res config.Result, credentialBackend string, stored *shownSt
 			Sync:               c.Sandbox.Sync,
 			Addons:             c.Sandbox.Addons,
 			Apt:                c.Sandbox.Apt,
+			Env:                c.Sandbox.Env,
 		},
 		Server: c.Server,
 		Quotas: shownQuotas{

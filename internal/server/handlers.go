@@ -44,6 +44,11 @@ type SessionView struct {
 	Image  string   `json:"image,omitempty"`
 	Addons []string `json:"addons,omitempty" doc:"The image's add-ons as asked for, as name@version"`
 	Apt    []string `json:"apt,omitempty" doc:"The image's extra Debian packages"`
+	// Env are the session's own environment variables, the deployment's
+	// included.
+	//
+	// @decision(DL-096)
+	Env map[string]string `json:"env,omitempty" doc:"The environment variables set in the sandbox beside spov's own, as name to value"`
 	// BootedImage and InstalledAddons are what the sandbox got, which
 	// can be an older build of the same add-ons than the newest.
 	//
@@ -260,6 +265,10 @@ type SessionRequest struct {
 	// @decision(DL-033)
 	Addons []string `json:"addons,omitempty" maxItems:"16" doc:"Curated add-ons as name or name@version, e.g. rust, java@21; the image is a variant of the base"`
 	Apt    []string `json:"apt,omitempty" maxItems:"32" doc:"Extra Debian packages for the image variant"`
+	// Env are the session's own environment variables.
+	//
+	// @decision(DL-096)
+	Env map[string]string `json:"env,omitempty" doc:"Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session"`
 	// Sync seeds the sandbox repository from a local git branch and
 	// commit (with an optional bundle of unpushed commits).
 	//
@@ -293,6 +302,8 @@ func (r SessionRequest) toStore() (store.SessionRequest, error) {
 		// @decision(DL-075)
 		Routed: routedRequest(r.Credentials, r.NoCredentials, r.CredentialsPreferred, r.Needs),
 		Addons: r.Addons, Apt: r.Apt,
+		// @decision(DL-096)
+		Env: r.Env,
 		// @decision(DL-027)
 		Sync: sync,
 	}, nil
@@ -332,7 +343,7 @@ func viewOf(s store.Session, now time.Time) SessionView {
 		Repos: repos, Clones: s.Clones, Landing: s.Landing, Error: s.Error,
 		Model: s.Request.Model,
 		Image: s.Request.Image, Sandbox: sandboxViewOf(s.Request.Sandbox), Egress: s.Request.Egress,
-		Addons: s.Request.Addons, Apt: s.Request.Apt,
+		Addons: s.Request.Addons, Apt: s.Request.Apt, Env: s.Request.Env,
 		BootedImage: s.Booted.Image, InstalledAddons: s.Booted.Addons,
 		CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt, StoppedAt: s.StoppedAt,
 		Credentials: credentialViews(s.Credentials),

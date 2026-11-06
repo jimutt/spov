@@ -29,8 +29,10 @@ func walkScalars(t reflect.Type, prefix string, keys map[string]bool) {
 			keys[name] = true
 		case f.Type.Kind() == reflect.Struct:
 			walkScalars(f.Type, name+delim, keys)
-		case f.Type.Kind() == reflect.Slice:
-			// Lists are not addressable through the environment.
+		case f.Type.Kind() == reflect.Slice, f.Type.Kind() == reflect.Map:
+			// Lists and maps are not addressable through the environment.
+			//
+			// @decision(DL-096)
 		default:
 			keys[name] = true
 		}

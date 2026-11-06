@@ -40,6 +40,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 		sync                 bool
 		noSync               bool
 		routed               routedFlags
+		envVars              []string
 	)
 	cmd := &cobra.Command{
 		Use:   "fly",
@@ -63,6 +64,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 				Identity:             git.Identity{Name: gitName, Email: gitEmail},
 				GitAccess:            gitAccess,
 				Routed:               routed,
+				Env:                  envVars,
 				Sync:                 sync,
 				// An explicit --sync=false turns sync off rather than
 				// leaving it to sandbox.sync.
@@ -91,6 +93,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 		"how far the sandbox's git credentials reach: repos (this session's) or all (every repository they can);"+
 			" sandbox.git_access, then your account default, when unset")
 	addRoutedFlags(cmd, &routed, "sandbox.credentials")
+	addEnvFlag(cmd, &envVars)
 	// @decision(DL-027)
 	// @decision(DL-095)
 	cmd.Flags().BoolVar(&sync, "sync", false,
@@ -106,7 +109,11 @@ func newFlyCmd(env *Env) *cobra.Command {
 
 type flyOptions struct {
 	// @decision(DL-075)
-	Routed               routedFlags
+	Routed routedFlags
+	// Env are --env KEY=VALUE.
+	//
+	// @decision(DL-096)
+	Env                  []string
 	Keep                 bool
 	Name                 string
 	AllowVersionMismatch bool
@@ -151,6 +158,11 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 		return err
 	}
 	cfg := res.Config
+	// @decision(DL-096)
+	vars, err := launchEnv(cfg.Sandbox.Env, opts.Env, cfg.Sandbox.Addons)
+	if err != nil {
+		return err
+	}
 
 	// @decision(DL-027) @decision(DL-095)
 	mode := flySyncMode(cfg, opts)
@@ -223,6 +235,7 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 
 	req := sessionRequest(cfg, opts, name, refs, identity)
 	req.Sync = syncReq
+	req.Env = vars
 	if syncMode && len(refs) == 1 {
 		repoDir := git.SingleRepoDir(refs[0].Owner, refs[0].Name)
 		if req.Landing == "" || req.Landing != repoDir {
