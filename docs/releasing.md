@@ -51,6 +51,9 @@ cask is not uploaded.
 
 ## Checking a release
 
+`cosign verify-blob` needs cosign v3, or v2.4.2 or newer: the workflow signs
+with cosign v3, whose bundle older versions cannot read.
+
 ```sh
 gh attestation verify spov_0.1.0_linux_amd64.tar.gz --repo jimutt/spov
 cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
