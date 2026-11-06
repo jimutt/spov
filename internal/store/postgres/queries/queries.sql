@@ -194,13 +194,13 @@ delete from device_codes where expires_at < $1;
 -- name: PutUserCredential :exec
 insert into user_credentials (id, org_id, user_id, platform, ciphertext, nonce,
                               key_version, verified_as, created_at, updated_at,
-                              scopes, expires_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                              scopes, expires_at, route)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 on conflict (org_id, user_id, platform) do update
 set ciphertext = excluded.ciphertext, nonce = excluded.nonce,
     key_version = excluded.key_version, verified_as = excluded.verified_as,
     updated_at = excluded.updated_at, scopes = excluded.scopes,
-    expires_at = excluded.expires_at;
+    expires_at = excluded.expires_at, route = excluded.route;
 
 -- name: GetUserCredential :one
 select * from user_credentials where org_id = $1 and user_id = $2 and platform = $3;

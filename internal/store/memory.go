@@ -989,6 +989,8 @@ func copyCredential(c UserCredential) UserCredential {
 	if len(c.Scopes) == 0 {
 		c.Scopes = nil
 	}
+	// @decision(DL-073)
+	c.Route = slices.Clone(c.Route)
 	return c
 }
 

@@ -3,10 +3,12 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/config"
 	"github.com/jimutt/spov/internal/console"
+	"github.com/jimutt/spov/internal/routedcred"
 	"github.com/jimutt/spov/internal/server"
 	"github.com/jimutt/spov/internal/version"
 )
@@ -29,6 +31,15 @@ func (e *Env) wireCredentials(deps *server.Deps, cfg config.Config, localMode bo
 		Now:    e.now,
 	}
 	deps.Verifier = &credentialVerifier{env: e, cfg: cfg}
+	// @decision(DL-073)
+	dir, dirErr := e.stateDir()
+	switch {
+	case localMode && e.Credentials != nil && dirErr == nil:
+		deps.RoutedCredentials = server.LocalRoutedCredentials{Local: &routedcred.Local{
+			Creds: e.Credentials, Path: filepath.Join(dir, routedcred.IndexName)}}
+	case sealer != nil:
+		deps.RoutedCredentials = &server.SealedRoutedCredentials{Store: deps.Store.Credentials(), Sealer: sealer, Now: e.now}
+	}
 	// The OpenCode sign-in lives where the server keeps credentials: the
 	// machine's own store locally, the sealed store when hosted.
 	//

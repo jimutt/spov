@@ -10,6 +10,7 @@ import (
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/git"
+	"github.com/jimutt/spov/internal/routedcred"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -276,6 +277,12 @@ func (c *CredentialStore) List(ctx context.Context, orgID, userID string) ([]Cre
 		//
 		// @decision(DL-015)
 		if isConsoleSlot(r.Platform) {
+			continue
+		}
+		// A routed credential has an endpoint of its own too.
+		//
+		// @decision(DL-073)
+		if routedcred.IsKey(r.Platform) {
 			continue
 		}
 		out = append(out, CredentialView{
