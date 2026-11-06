@@ -50,7 +50,16 @@ func addLocalPlatform(ctx context.Context, env *Env, name string, opts addOption
 	}
 
 	if !opts.NoVerify {
-		if err := verifyPlatform(ctx, env, p, secret); err != nil {
+		// gh's login is verified as the token it gives now.
+		//
+		// @decision(DL-083)
+		check := secret
+		if host, ok := ghLogin(secret); ok {
+			if check, err = env.ghToken(ctx, host); err != nil {
+				return err
+			}
+		}
+		if err := verifyPlatform(ctx, env, p, check); err != nil {
 			return err
 		}
 	}
@@ -74,6 +83,10 @@ func addLocalPlatform(ctx context.Context, env *Env, name string, opts addOption
 func platformSecret(env *Env, p config.Platform, opts addOptions) (string, error) {
 	switch p.Kind {
 	case config.KindForgejo, config.KindGitea, config.KindGitLab:
+		// @decision(DL-083)
+		if opts.FromGh {
+			return "", fmt.Errorf("platform %q is a %s platform; --from-gh is for GitHub", p.Name, p.Kind)
+		}
 		if opts.AppID != "" || opts.KeyFile != "" || opts.InstallationID != "" {
 			return "", fmt.Errorf("platform %q is a %s platform; --app-id, --key-file and --installation-id are for GitHub", p.Name, p.Kind)
 		}
@@ -92,6 +105,13 @@ func platformSecret(env *Env, p config.Platform, opts addOptions) (string, error
 		return requireNonEmpty(token, "token")
 
 	case config.KindGitHub:
+		// @decision(DL-083)
+		if opts.FromGh {
+			if opts.app() || opts.Token != "" {
+				return "", fmt.Errorf("--from-gh takes gh's login; it goes with no --token, --app-id or --key-file")
+			}
+			return ghLoginPrefix + ghHost(p), nil
+		}
 		return githubSecret(p, opts)
 
 	default:
@@ -504,8 +524,19 @@ func heldLocally(env *Env, warn io.Writer) ([]string, []server.CredentialView, e
 		if alias, ok := credentialPlatform(p); ok && alias != p.Name && len(aliasMatches(res.Config, alias)) == 1 {
 			line += "  (" + alias + ")"
 		}
+		view := server.CredentialView{Platform: p.Name, Present: true}
+		// A personal token whose origin is gh, which reaches what gh's
+		// grant does.
+		//
+		// @decision(DL-083)
+		if stored, _ := env.Credentials.Get(key); stored != "" {
+			if host, ok := ghLogin(stored); ok {
+				line += "  (gh's login on " + host + ", read at each launch; it reaches what gh's grant does)"
+				view.VerifiedAs = "gh's login on " + host
+			}
+		}
 		lines = append(lines, line)
-		views = append(views, server.CredentialView{Platform: p.Name, Present: true})
+		views = append(views, view)
 	}
 	vars := append([]string(nil), providerEnvVars...)
 	sort.Strings(vars)
