@@ -25,7 +25,7 @@ func (p pgConversations) UpsertConversation(ctx context.Context, c store.Convers
 	}
 	row, err := p.s.q.UpsertConversation(ctx, sqlcgen.UpsertConversationParams{
 		ID: c.ID, OrgID: c.OrgID, SessionID: c.SessionID, OpencodeID: c.OpenCodeID,
-		Title: c.Title, CreatedAt: ts(c.CreatedAt), UpdatedAt: ts(now),
+		Title: c.Title, CreatedAt: ts(c.CreatedAt), UpdatedAt: ts(now), Info: nonEmpty(c.Info),
 	})
 	if err != nil {
 		return store.Conversation{}, mapErr("upsert conversation", err)
@@ -212,6 +212,20 @@ func (p pgConversations) FindEvent(ctx context.Context, orgID, sessionID, name s
 		return store.Event{}, mapErr("find event", err)
 	}
 	return eventFromRow(row), nil
+}
+
+// SetSeqOffset implements store.ConversationStore.
+//
+// @decision(DL-089)
+func (p pgConversations) SetSeqOffset(ctx context.Context, orgID, conversationID string, base, after int64) error {
+	n, err := p.s.q.SetSeqOffset(ctx, sqlcgen.SetSeqOffsetParams{ID: conversationID, OrgID: orgID, SeqBase: base, SeqAfter: after})
+	if err != nil {
+		return mapErr("set seq offset", err)
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
 }
 
 // LastSeqs is each conversation's highest stored durable sequence.

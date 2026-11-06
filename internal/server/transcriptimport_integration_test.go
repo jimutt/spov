@@ -136,6 +136,46 @@ func TestIntegrationSTR1TranscriptImport(t *testing.T) {
 	if loB <= hiA {
 		t.Logf("the imported conversation's durable log starts again: seq %d after %d, so stored frames would collide (DL-017)", loB, hiA)
 	}
+
+	// spov's own import, as a transcript resume runs it: an info built
+	// from what the store holds when none was kept, and the log head it
+	// reads, which must be just before the next turn's first frame.
+	//
+	// @decision(DL-089)
+	workC := t.TempDir()
+	c := startProbeServerWith(ctx, t, bin, model.URL, workC, "")
+	if _, err := opencode.NewClient(c.URL, c.Password).WaitHealthy(ctx, 100*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	built := builtInfo(store.Conversation{OpenCodeID: id, Title: "built", CreatedAt: time.Now(), UpdatedAt: time.Now()}, workC)
+	head, err := importConversation(ctx, c, built, messages)
+	if err != nil {
+		t.Fatalf("spov's import with a built info: %v", err)
+	}
+	again = probeMessages(ctx, t, c, id)
+	t.Logf("spov's import with a built info: %d of %d messages, log head %d", len(again), len(stored), head)
+	if len(again) != len(stored) {
+		t.Errorf("spov's import kept %d of %d messages", len(again), len(stored))
+	}
+	seqC := watchSeqs(ctx, t, c, id)
+	model.reset()
+	if err := setConversationModel(ctx, c, id, "probe/m"); err != nil {
+		t.Fatal(err)
+	}
+	body, _ = json.Marshal(steerBody(MessageIDPrefix+"str1c", "And now?", "steer", ""))
+	if _, err := sandboxPostJSON(ctx, c, promptURL(c, id), body); err != nil {
+		t.Fatalf("prompting spov's import: %v", err)
+	}
+	probeWait(ctx, func() bool { return countRole(probeMessages(ctx, t, c, id), "assistant") > 1 })
+	time.Sleep(time.Second)
+	loC, hiC := seqC()
+	t.Logf("after spov's import: head %d, next turn %d..%d", head, loC, hiC)
+	if head == 0 || loC != head+1 {
+		t.Errorf("the head %d does not end where the next turn starts (%d), so the recorder's offset would be wrong", head, loC)
+	}
+	if !strings.Contains(model.last(), "PINEAPPLE") {
+		t.Errorf("the model was not sent the history imported with a built info")
+	}
 }
 
 // watchSeqs follows conn's event stream and reports the lowest and

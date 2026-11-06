@@ -134,6 +134,11 @@ func sessionWhere(sb *strings.Builder, sel, orgID string, f store.SessionFilter)
 		args = append(args, f.OwnerID)
 		fmt.Fprintf(sb, " and owner_id = $%d", len(args))
 	}
+	// @decision(DL-087)
+	if f.Name != "" {
+		args = append(args, f.Name)
+		fmt.Fprintf(sb, " and name = $%d", len(args))
+	}
 	if len(f.States) > 0 {
 		states := make([]string, len(f.States))
 		for i, st := range f.States {
@@ -345,6 +350,10 @@ func (p pgSessions) MarkStopped(ctx context.Context, orgID, id string, state sto
 	if n == 1 {
 		if err := p.s.q.DeleteSessionProxyCA(ctx, sqlcgen.DeleteSessionProxyCAParams{SessionID: id, OrgID: orgID}); err != nil {
 			return true, mapErr("forget session proxy CA", err)
+		}
+		// @decision(DL-085)
+		if err := p.s.q.EndCurrentRun(ctx, sqlcgen.EndCurrentRunParams{SessionID: id, OrgID: orgID, EndedAt: ts(at)}); err != nil {
+			return true, mapErr("end the session's run", err)
 		}
 	}
 	return n == 1, nil

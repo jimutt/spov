@@ -60,6 +60,9 @@ var Used = []Operation{
 	{"POST", "/api/session/{sessionID}/command"},
 	{"GET", "/api/fs/read/*"},
 	{"GET", "/api/fs/list"},
+	// @decision(DL-089)
+	{"POST", "/api/experimental/session/import"},
+	{"GET", "/api/experimental/session/{sessionID}/log"},
 }
 
 // Document is the parsed OpenAPI document, with the operations a

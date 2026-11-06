@@ -632,6 +632,10 @@ type fakeJobProvider struct {
 	err     error
 }
 
+func (f *fakeJobProvider) ExitSnapshot(context.Context, string, time.Duration) (string, error) {
+	return "", sandbox.ErrNoExitSnapshot
+}
+
 func (f *fakeJobProvider) Create(context.Context, sandbox.Spec) (sandbox.Handle, error) {
 	return nil, errors.New("the run loop must not create through the provider")
 }

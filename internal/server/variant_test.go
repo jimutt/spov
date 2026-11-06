@@ -230,7 +230,7 @@ func TestALaunchDerivesItsVariantFromTheCurrentRecipe(t *testing.T) {
 	if err := f.store.Sessions().Create(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
-	f.srv.svc.launch(context.Background(), sess, newLaunchLog(time.Now), telemetry.KindInteractive)
+	f.srv.svc.launch(context.Background(), sess, newLaunchLog(time.Now), telemetry.KindInteractive, runPlan{})
 	sel, _ := toolchain.Parse([]string{"rust@1.99.0"})
 	want := sandbox.ImageSpec{OpenCodeVersion: variantPin, Addons: sel}.Name()
 	if o := launched(); len(o) != 1 || o[0].Image != want || o[0].Variant == nil {
@@ -241,7 +241,7 @@ func TestALaunchDerivesItsVariantFromTheCurrentRecipe(t *testing.T) {
 	if err := f.store.Sessions().Create(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
-	f.srv.svc.launch(context.Background(), sess, newLaunchLog(time.Now), telemetry.KindInteractive)
+	f.srv.svc.launch(context.Background(), sess, newLaunchLog(time.Now), telemetry.KindInteractive, runPlan{})
 	got, _ := f.store.Sessions().Get(context.Background(), auth.LocalID, sess.ID)
 	if got.State != store.StateFailed || !strings.Contains(got.Error, "cannot be built by this server") || len(launched()) != 1 {
 		t.Errorf("unknown stored add-ons: state %s, error %q, %d launches", got.State, got.Error, len(launched()))

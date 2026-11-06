@@ -2,6 +2,16 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-093 | A local server prunes a stopped session's history 30 days after it stopped, configurable, and never while its snapshot is kept | accepted | server | local-history, retention, config |
+| DL-092 | The local journal is a directory per session: session.json rewritten whole, and transcript.jsonl appended record by record | accepted | server | local-history, store, format |
+| DL-091 | A local server keeps its sessions in a journal on disk, with the memory store as its engine | accepted | server | local-history, store, local-mode, snapshot-resume |
+| DL-090 | Resume is offered on a stopped session's page, in its composer, by spov resume and by spov attach, worded for what will come back | accepted | web | snapshot-resume, web, cli, composer, attach |
+| DL-089 | Without a snapshot, a resume clones as at launch and imports each conversation from the store | accepted | server | snapshot-resume, recorder, opencode, store |
+| DL-088 | A resume boots from the newest run's exit snapshot, waiting for one still being taken, and the entrypoint takes up the restored workspace | accepted | opencode | snapshot-resume, entrypoint, sandbox |
+| DL-087 | Resume reopens a stopped interactive session in a new sandbox, with its settings as launched and only the timeout to change | accepted | server | snapshot-resume, sessions, lifecycle, credentials |
+| DL-086 | Snapshot retention, a per-user cap and an off switch are deployment config, and a daily pass prunes past them | accepted | server | snapshot-resume, config, images, cost |
+| DL-085 | Each sandbox of a session is a run, and its exit snapshot is collected after it ends | accepted | server | snapshot-resume, store, reconciler, cost |
+| DL-084 | An interactive sandbox is created with an exit snapshot when the proxy holds its secrets | accepted | sandbox | snapshot-resume, sandbox, modal, lifecycle |
 | DL-083 | A local server can use the gh CLI's own login, opted into once and read again at each launch, and never on a hosted server | accepted | cli | distribution, credentials, gh, local |
 | DL-082 | Each release publishes a signed multi-architecture server image to ghcr.io, and the deployment examples pin it by digest | accepted | server | distribution, deployment, image, supply-chain |
 | DL-081 | A Homebrew tap carries a cask that goreleaser writes on each published release | accepted | cli | distribution, homebrew |

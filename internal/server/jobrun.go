@@ -79,7 +79,7 @@ func (s *Service) ProvisionJob(ctx context.Context, job store.Job) error {
 //
 // @decision(DL-045) @decision(DL-046)
 func (s *Service) launchJob(ctx context.Context, sess store.Session, job store.Job, log *launchLog) {
-	s.launch(ctx, sess, log, telemetry.KindJob, func(opts *session.Options) {
+	s.launch(ctx, sess, log, telemetry.KindJob, runPlan{}, func(opts *session.Options) {
 		opts.Job = &session.JobOptions{
 			ID:   job.ID,
 			Kind: string(job.Kind),
@@ -391,7 +391,16 @@ func (s *Service) AdoptJobSandbox(ctx context.Context, job store.Job, sandboxID 
 		sess.State = store.StateRunning
 		sess.Credentials = creds
 		adopted = true
-		return tx.Sessions().Update(ctx, sess)
+		if err := tx.Sessions().Update(ctx, sess); err != nil {
+			return err
+		}
+		// @decision(DL-085)
+		now := s.deps.Now()
+		return recordRun(ctx, tx, store.Run{
+			OrgID: sess.OrgID, SessionID: sess.ID, OwnerID: sess.OwnerID, N: 1, SandboxID: sandboxID,
+			OpenCode: s.deps.Defaults.OpenCodeVersion, Origin: store.RunFromLaunch,
+			StartedAt: sess.CreatedAt, RunningAt: &now, SnapshotState: store.SnapshotNone,
+		})
 	})
 	// The launch that minted the sandbox's token is gone, and with it
 	// the token's expiry, so a renewable one is marked due now: the job is

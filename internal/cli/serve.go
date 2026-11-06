@@ -520,6 +520,10 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 			//
 			// @decision(DL-016)
 			wg.Go(func() { srv.Service().RunImagePrune(ctx) })
+			// Collecting and pruning exit snapshots, the same way.
+			//
+			// @decision(DL-085) @decision(DL-086)
+			wg.Go(func() { srv.Service().RunSnapshots(ctx) })
 			// Shared state is reported only while this replica holds
 			// the lock, and withdrawn when it stops holding it.
 			//
@@ -672,7 +676,7 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 	// about every listing.
 	//
 	// @decision(DL-010) @decision(DL-003)
-	st, closeStore, err := e.openStore(ctx, localMode)
+	st, closeStore, journaled, err := e.openStore(ctx, localMode, cfg, warnTo(e))
 	if err != nil {
 		return server.Deps{}, nil, err
 	}
@@ -699,7 +703,16 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 		launcher.Variants = &session.VariantBuilder{Builder: builder, Warn: warn}
 	}
 	sb := cfg.Sandbox
+	snapshots, err := snapshotSettings(cfg.Snapshots, journaled, launcher.ProxyImage != nil)
+	if err != nil {
+		closeStore()
+		return server.Deps{}, nil, err
+	}
 	return server.Deps{
+		// @decision(DL-084) @decision(DL-086)
+		Snapshots: snapshots,
+		// @decision(DL-087) @decision(DL-091)
+		Persistent: journaled,
 		// @decision(DL-033) @decision(DL-016)
 		Images:   images,
 		Resolver: e.addonResolver(stateFile, warn),
@@ -766,6 +779,26 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 	}, closeStore, nil
 }
 
+// snapshotSettings is the server's snapshot setting: nil, taking none,
+// unless snapshots are enabled, the proxy holds the secrets and the
+// sessions are kept (in Postgres or the local journal), where a resume
+// can find them.
+//
+// @decision(DL-084) @decision(DL-086) @decision(DL-091)
+func snapshotSettings(c config.Snapshots, persistent bool, proxy bool) (*server.SnapshotSettings, error) {
+	if !c.Enabled {
+		return nil, nil
+	}
+	s := server.SnapshotSettings{Retention: c.Retention, MaxPerUser: c.MaxPerUser}
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+	if !persistent || !proxy {
+		return nil, nil
+	}
+	return &s, nil
+}
+
 // newSupervisor builds the job supervisor, or nil where there is no
 // database to run a queue on.
 //
@@ -806,7 +839,7 @@ func (e *Env) reconcilerRunner(local bool, warn func(string)) func(context.Conte
 // every local run — gives the memory store, which needs no closing.
 //
 // @decision(DL-010)
-func (e *Env) openStore(ctx context.Context, local bool) (store.Store, func(), error) {
+func (e *Env) openStore(ctx context.Context, local bool, cfg config.Config, warn func(string)) (store.Store, func(), bool, error) {
 	// Local mode never opens a database, whatever the environment says:
 	// an exported SPOV_DATABASE_URL is a hosted deployment's variable,
 	// not an instruction to the server someone's CLI just spawned.
@@ -814,13 +847,43 @@ func (e *Env) openStore(ctx context.Context, local bool) (store.Store, func(), e
 	// @decision(DL-003)
 	url := e.Environ.Getenv(DatabaseURLEnvVar)
 	if url == "" || local {
-		return store.NewMemory(), func() {}, nil
+		mem := store.NewMemory()
+		// A local server keeps its sessions in the journal; one with no
+		// data directory to keep them in runs on memory alone.
+		//
+		// @decision(DL-091) @decision(DL-093)
+		dir := e.historyDir()
+		if !local || dir == "" {
+			return mem, func() {}, false, nil
+		}
+		j, err := store.OpenJournal(dir, mem, store.JournalOptions{Retention: cfg.History.Retention, Now: e.now, Warn: warn})
+		if err != nil {
+			return nil, nil, false, err
+		}
+		return mem, func() { _ = j.Close() }, true, nil
 	}
 	pg, err := postgres.Open(ctx, url)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	return pg, pg.Close, nil
+	return pg, pg.Close, true, nil
+}
+
+// historyDir is where a local server keeps its sessions:
+// $XDG_DATA_HOME/spov/sessions, or "" with no data directory.
+//
+// @decision(DL-091)
+func (e *Env) historyDir() string {
+	dir := e.dataDir()
+	if dir == "" {
+		return ""
+	}
+	return dir + "/sessions"
+}
+
+// warnTo is the server's warning line on e's error stream.
+func warnTo(e *Env) func(string) {
+	return func(msg string) { _, _ = fmt.Fprintln(e.Err, "spov serve: "+msg) }
 }
 
 // configForge resolves repositories on the configured platforms. It is

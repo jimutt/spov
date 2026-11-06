@@ -32,6 +32,11 @@ type Connection struct {
 	//
 	// @decision(DL-030)
 	IdleTimeout time.Duration
+	// sandbox is the sandbox the connection reaches, so a cached one is
+	// never used for a resumed session's next sandbox.
+	//
+	// @decision(DL-085)
+	sandbox string
 }
 
 const (
@@ -131,7 +136,7 @@ func (s *Service) Connect(ctx context.Context, p auth.Principal, ref string) (Co
 	}
 	return Connection{
 		URL: conn.URL, Token: conn.Token, User: opencode.BasicAuthUser, Password: password,
-		ExpiresAt: expires, IdleTimeout: sess.Request.Sandbox.IdleTimeout,
+		ExpiresAt: expires, IdleTimeout: sess.Request.Sandbox.IdleTimeout, sandbox: sess.SandboxID,
 	}, nil
 }
 
@@ -166,6 +171,18 @@ func (s *Service) connectReusing(ctx context.Context, p auth.Principal, sess sto
 	}
 	if cur.State != store.StateRunning || cur.SandboxID == "" {
 		return Connection{}, fmt.Errorf("%w (state %s)", ErrSessionNotRunning, cur.State)
+	}
+	// A connection to an earlier run's sandbox reaches nothing.
+	//
+	// @decision(DL-085)
+	if conn.sandbox != "" && conn.sandbox != cur.SandboxID {
+		s.conns.forgetIf(sess.ID, conn.Token)
+		fresh, err := s.Connect(ctx, p, sess.ID)
+		if err != nil {
+			return Connection{}, err
+		}
+		s.conns.put(sess.ID, fresh)
+		return fresh, nil
 	}
 	return conn, nil
 }
@@ -265,7 +282,7 @@ func (s *Service) password(ctx context.Context, sess store.Session, h sandbox.Ha
 	if live != nil && live.Password != "" {
 		return live.Password, nil
 	}
-	if pw, ok := s.passwords.get(sess.ID); ok {
+	if pw, ok := s.passwords.getFor(sess.ID, sess.SandboxID); ok {
 		return pw, nil
 	}
 
@@ -273,7 +290,7 @@ func (s *Service) password(ctx context.Context, sess store.Session, h sandbox.Ha
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrPasswordUnavailable, err)
 	}
-	s.passwords.put(sess.ID, pw)
+	s.passwords.putFor(sess.ID, sess.SandboxID, pw)
 	return pw, nil
 }
 

@@ -66,7 +66,9 @@ func awaitJoinable(ctx context.Context, env *Env, c *client.Client, view server.
 			return view, "", fmt.Errorf("%s cannot be attached to yet: %s\nleave out --no-wait to wait until it can", viewName(view), wait)
 		}
 		if wait != last {
-			if last == "" {
+			if last == "" && opts.StopsOnCancel {
+				_, _ = fmt.Fprintf(env.Err, "Waiting for %s (Ctrl-C stops it).\n", viewName(view))
+			} else if last == "" {
 				_, _ = fmt.Fprintf(env.Err, "Waiting for %s (Ctrl-C stops waiting; it keeps going).\n", viewName(view))
 			}
 			_, _ = fmt.Fprintf(env.Err, "  %s\n", wait)

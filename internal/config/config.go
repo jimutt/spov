@@ -52,6 +52,17 @@ type Config struct {
 	//
 	// @decision(DL-009)
 	Quotas Quotas `koanf:"quotas"`
+	// Snapshots is how a hosted server keeps interactive sandboxes'
+	// exit snapshots, for resume. It means nothing to the CLI; `spov
+	// serve` is what reads it.
+	//
+	// @decision(DL-086)
+	Snapshots Snapshots `koanf:"snapshots"`
+	// History is how long a local server keeps a stopped session's
+	// history. It means nothing to a hosted server or the CLI.
+	//
+	// @decision(DL-093)
+	History History `koanf:"history"`
 	// Prep configures the control plane's own model call, which
 	// prepares a job's goal before its sandbox exists. Empty means the
 	// provider is detected from the environment, which is what a
@@ -103,6 +114,29 @@ type Quotas struct {
 	// MaxCPU and MaxMemoryMiB bound requested resources.
 	MaxCPU       float64 `koanf:"max_cpu" json:"max_cpu,omitempty" yaml:"max_cpu,omitempty"`
 	MaxMemoryMiB int     `koanf:"max_memory_mib" json:"max_memory_mib,omitempty" yaml:"max_memory_mib,omitempty"`
+}
+
+// Snapshots configures exit snapshots, which only a hosted server under
+// the credential proxy takes.
+//
+// @decision(DL-086)
+type Snapshots struct {
+	Enabled bool `koanf:"enabled" json:"enabled" yaml:"enabled"`
+	// Retention is how long after its sandbox ended a snapshot is kept,
+	// 1h to 720h.
+	Retention time.Duration `koanf:"retention" json:"retention" yaml:"retention"`
+	// MaxPerUser caps one user's kept snapshots, oldest pruned first;
+	// 0 is no cap.
+	MaxPerUser int `koanf:"max_per_user" json:"max_per_user" yaml:"max_per_user"`
+}
+
+// History configures a local server's session journal.
+//
+// @decision(DL-093)
+type History struct {
+	// Retention is how long after it stopped a session's history is
+	// kept; 0 keeps it forever.
+	Retention time.Duration `koanf:"retention" json:"retention" yaml:"retention"`
 }
 
 // Server is where the CLI finds its spov server. Empty means none is

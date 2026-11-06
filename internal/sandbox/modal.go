@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	modal "github.com/modal-labs/modal-client/go"
@@ -37,6 +38,11 @@ type ModalProvider struct {
 
 	mu     sync.Mutex
 	images map[string]*modal.Image
+
+	warn func(string)
+	// noExitSnapshots is set once Modal refuses the exit-snapshot
+	// option, so later creates do not ask again.
+	noExitSnapshots atomic.Bool
 }
 
 // ModalConfig configures a ModalProvider.
@@ -52,6 +58,11 @@ type ModalConfig struct {
 	//
 	// @decision(DL-010)
 	Credentials ModalCredentials
+	// Warn reports something an operator should hear about once, such
+	// as Modal refusing exit snapshots. Nil discards it.
+	//
+	// @decision(DL-084)
+	Warn func(string)
 }
 
 // ModalCredentials is a Modal API token. It is passed in rather than
@@ -110,6 +121,7 @@ func NewModalProvider(ctx context.Context, cfg ModalConfig) (*ModalProvider, err
 		app:    app,
 		env:    cfg.Environment,
 		images: make(map[string]*modal.Image),
+		warn:   cfg.Warn,
 	}, nil
 }
 
@@ -133,7 +145,7 @@ func (p *ModalProvider) Create(ctx context.Context, spec Spec) (Handle, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
-	image, err := p.image(ctx, spec.Image)
+	image, err := p.bootImage(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +155,17 @@ func (p *ModalProvider) Create(ctx context.Context, spec Spec) (Handle, error) {
 	}
 
 	sb, err := p.client.Sandboxes.ExperimentalCreate(ctx, p.app, image, params)
+	// An experimental option Modal no longer takes must not block a
+	// launch: create once more without it, and never ask again.
+	//
+	// @decision(DL-084)
+	if err != nil && params.ExperimentalOptions[exitSnapshotOption] != nil && exitSnapshotRefused(err) {
+		if p.noExitSnapshots.CompareAndSwap(false, true) && p.warn != nil {
+			p.warn(fmt.Sprintf("Modal refused exit snapshots (%s); sandboxes are created without them until this server restarts, so sessions resume from their transcripts", err))
+		}
+		delete(params.ExperimentalOptions, exitSnapshotOption)
+		sb, err = p.client.Sandboxes.ExperimentalCreate(ctx, p.app, image, params)
+	}
 	if err != nil {
 		var exists modal.AlreadyExistsError
 		if errors.As(err, &exists) || status.Code(err) == codes.AlreadyExists {
@@ -178,6 +201,74 @@ func (p *ModalProvider) Create(ctx context.Context, spec Spec) (Handle, error) {
 		}
 	}
 	return h, nil
+}
+
+// exitSnapshotOption is Modal's experimental create option.
+//
+// @decision(DL-084)
+const exitSnapshotOption = "enable_exit_snapshot"
+
+// exitSnapshotRefused reports whether a create failed because Modal
+// does not take the exit-snapshot option.
+func exitSnapshotRefused(err error) bool {
+	var invalid modal.InvalidError
+	if !errors.As(err, &invalid) && status.Code(err) != codes.InvalidArgument {
+		return false
+	}
+	return strings.Contains(err.Error(), exitSnapshotOption)
+}
+
+// bootImage is the image a sandbox boots: a snapshot by its ID, else
+// the published image by name.
+//
+// @decision(DL-088)
+func (p *ModalProvider) bootImage(ctx context.Context, spec Spec) (*modal.Image, error) {
+	if spec.ImageID == "" {
+		return p.image(ctx, spec.Image)
+	}
+	img, err := p.client.Images.FromID(ctx, spec.ImageID, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return nil, &ImageNotFoundError{Name: spec.ImageID, Err: err}
+		}
+		return nil, fmt.Errorf("sandbox: resolve image %s: %w", spec.ImageID, err)
+	}
+	return img, nil
+}
+
+// ExitSnapshot implements Provider, from the sandbox ID alone, so a
+// server that did not create the sandbox can still collect it.
+//
+// @decision(DL-084) @decision(DL-085)
+func (p *ModalProvider) ExitSnapshot(ctx context.Context, sandboxID string, wait time.Duration) (string, error) {
+	sb, err := p.client.Sandboxes.FromID(ctx, sandboxID, nil)
+	if err != nil {
+		if isNotFound(err) {
+			return "", fmt.Errorf("sandbox %s: %w", sandboxID, ErrNotFound)
+		}
+		return "", fmt.Errorf("sandbox %s: %w", sandboxID, err)
+	}
+	img, err := sb.ExperimentalGetExitSnapshot(ctx, &modal.SandboxExperimentalGetExitSnapshotParams{Timeout: &wait})
+	if err == nil {
+		return img.ImageID, nil
+	}
+	var (
+		invalid  modal.InvalidError
+		timeout  modal.TimeoutError
+		creation modal.SnapshotCreationError
+		missing  modal.NotFoundError
+	)
+	switch {
+	case errors.As(err, &invalid):
+		return "", fmt.Errorf("sandbox %s: %w", sandboxID, ErrNoExitSnapshot)
+	case errors.As(err, &timeout):
+		return "", fmt.Errorf("sandbox %s: %w", sandboxID, ErrSnapshotPending)
+	case errors.As(err, &creation):
+		return "", fmt.Errorf("sandbox %s: %w: %w", sandboxID, ErrSnapshotFailed, err)
+	case errors.As(err, &missing):
+		return "", fmt.Errorf("sandbox %s: %w", sandboxID, ErrNotFound)
+	}
+	return "", fmt.Errorf("sandbox %s: exit snapshot: %w", sandboxID, err)
 }
 
 // cleanupAfterFailedStart terminates a sandbox that never became ready and
@@ -253,6 +344,10 @@ func (p *ModalProvider) createParams(ctx context.Context, spec Spec) (*modal.San
 			return nil, fmt.Errorf("sandbox: create secret: %w", err)
 		}
 		params.Secrets = []*modal.Secret{secret}
+	}
+	// @decision(DL-084)
+	if spec.ExitSnapshot && !p.noExitSnapshots.Load() {
+		params.ExperimentalOptions = map[string]any{exitSnapshotOption: true}
 	}
 	return params, nil
 }
@@ -625,3 +720,8 @@ var (
 	_ ProxyImageBuilder = (*ModalProvider)(nil)
 	_ Handle            = (*modalHandle)(nil)
 )
+
+// ModalProvider deletes pruned snapshots as it deletes images.
+//
+// @decision(DL-086)
+var _ ImageDeleter = (*ModalProvider)(nil)

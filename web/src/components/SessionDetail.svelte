@@ -3,7 +3,7 @@
   // Reads from the store, not the sandbox.
   //
   // @decision(DL-058) @decision(DL-018) @decision(DL-057)
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { api, unwrap } from '../lib/api/client';
   import { logStream, type LogEvent } from '../lib/api/live';
@@ -89,6 +89,14 @@
     ended,
   } from '../lib/jobcontrols';
   import { askStates, pendingAsks } from '../lib/asks';
+  import {
+    ResumeWatchEvery,
+    followsAResume,
+    resumed,
+    resumeOffered,
+    resumeQuestion,
+    watchesForAResume,
+  } from '../lib/resume';
   import { currentModel } from '../lib/modelpick';
   import AskCard from './AskCard.svelte';
   import Composer from './Composer.svelte';
@@ -96,6 +104,7 @@
   import Icon from './Icon.svelte';
   import InfoToggle from './InfoToggle.svelte';
   import Problem from './Problem.svelte';
+  import ResumeComposer from './ResumeComposer.svelte';
   import StateMark from './StateMark.svelte';
   import { primary, secondary, secondarySmall, textButton } from './ui';
 
@@ -221,12 +230,18 @@
     }, 0) as unknown as number;
   }
 
+  // Bumped when a resumed session's log is reopened; the stream starts
+  // again after the last position the page holds. @decision(DL-090)
+  let streamEpoch = $state(0);
   $effect(() => {
     if (!ref) return;
+    void streamEpoch;
+    const after = untrack(() => activity.at(-1)?.pos);
     const ctl = new AbortController();
     void (async () => {
       for await (const ev of logStream(ref, {
         signal: ctl.signal,
+        after,
         onConnected: (c) => (connected = c),
         onGap: () => {
           // @decision(DL-058)
@@ -508,6 +523,43 @@
       await reread();
     }
   }
+  // Resume, from this page or from anywhere else. A stopped session that
+  // can resume is read again every 30 s, a store read; once it is
+  // starting or running again the transcript and the log are reopened.
+  //
+  // @decision(DL-090) @decision(DL-018)
+  let resumeFailure = $state<unknown>(undefined);
+  async function resumeSession(): Promise<void> {
+    resumeFailure = undefined;
+    try {
+      await resumed((body) => api.POST('/api/v1/sessions/{ref}/resume', { params: { path: { ref } }, body }));
+    } catch (err) {
+      resumeFailure = err;
+    } finally {
+      await reread();
+    }
+  }
+  const watching = $derived(watchesForAResume(s?.state, s?.resume));
+  $effect(() => {
+    if (!watching) return;
+    const t = setInterval(() => void session.refresh(), ResumeWatchEvery);
+    return () => clearInterval(t);
+  });
+  let sawStopped = $state(false);
+  $effect(() => {
+    if (s?.state === 'stopped' || s?.state === 'failed') sawStopped = true;
+  });
+  $effect(() => {
+    if (!followsAResume(tailEnded, sawStopped, s?.state)) return;
+    tailEnded = false;
+    sawStopped = false;
+    tailError = undefined;
+    untrack(() => {
+      streamEpoch++;
+      const ctl = new AbortController();
+      void loadTranscript(ctl.signal);
+    });
+  });
   async function endSession(): Promise<void> {
     endFailure = undefined;
     try {
@@ -973,6 +1025,8 @@
           onEcho={track}
           onJobChanged={() => void jobs.refresh()}
         />
+      {:else if s.resume && resumeOffered(s.state, s.resume) && !job}
+        <ResumeComposer {ref} resume={s.resume} onResumed={reread} />
       {/if}
     </div>
 
@@ -1036,6 +1090,23 @@
         {/if}
         {#if endFailure}
           <div class="mt-3"><Problem error={endFailure} what="ending the session" /></div>
+        {/if}
+        <!-- @decision(DL-090) -->
+        {#if s.resume && resumeOffered(s.state, s.resume)}
+          <div class="mt-3">
+            <ConfirmAct
+              label="Resume"
+              question={resumeQuestion(s.resume)}
+              yes="Resume"
+              no="Not now"
+              tone="safe"
+              run={resumeSession}
+              testid="resume-session"
+            />
+          </div>
+        {/if}
+        {#if resumeFailure}
+          <div class="mt-3"><Problem error={resumeFailure} what="resuming the session" /></div>
         {/if}
       </section>
 

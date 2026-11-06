@@ -45,6 +45,9 @@ type Conversation struct {
 	Title      string
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	Info       []byte
+	SeqBase    int64
+	SeqAfter   int64
 }
 
 type DeviceCode struct {
@@ -224,6 +227,25 @@ type SessionProxyCa struct {
 	Nonce      []byte
 	KeyVersion int32
 	CreatedAt  pgtype.Timestamptz
+}
+
+type SessionRun struct {
+	SessionID     string
+	OrgID         string
+	OwnerID       string
+	N             int32
+	SandboxID     string
+	Booted        string
+	BootedImageID string
+	Opencode      string
+	Origin        string
+	StartedAt     pgtype.Timestamptz
+	RunningAt     pgtype.Timestamptz
+	EndedAt       pgtype.Timestamptz
+	Snapshot      string
+	SnapshotState string
+	SnapshotAt    pgtype.Timestamptz
+	FirstMessage  []byte
 }
 
 type User struct {

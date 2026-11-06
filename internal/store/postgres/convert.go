@@ -306,8 +306,17 @@ func mapErr(op string, err error) error {
 func conversationFromRow(r sqlcgen.Conversation) store.Conversation {
 	return store.Conversation{
 		ID: r.ID, OrgID: r.OrgID, SessionID: r.SessionID, OpenCodeID: r.OpencodeID, Title: r.Title,
-		CreatedAt: goTime(r.CreatedAt), UpdatedAt: goTime(r.UpdatedAt),
+		Info: r.Info, SeqBase: r.SeqBase, SeqAfter: r.SeqAfter, CreatedAt: goTime(r.CreatedAt), UpdatedAt: goTime(r.UpdatedAt),
 	}
+}
+
+// nonEmpty is b, or nil when it is empty, so an upsert's coalesce keeps
+// what is stored.
+func nonEmpty(b []byte) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
 }
 
 func messageFromRow(r sqlcgen.Message) store.Message {

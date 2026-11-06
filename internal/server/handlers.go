@@ -74,6 +74,12 @@ type SessionView struct {
 	//
 	// @decision(DL-060) @decision(DL-025)
 	Job *SessionJobView `json:"job,omitempty"`
+	// Resume says how a stopped session would resume, for its owner
+	// only; absent when it cannot be resumed or the caller is not its
+	// owner.
+	//
+	// @decision(DL-088)
+	Resume *ResumeView `json:"resume,omitempty"`
 	// Credentials names what the sandbox was given for each platform:
 	// the kind of credential, never anything about the secret.
 	//
@@ -339,7 +345,7 @@ func viewOf(s store.Session, now time.Time) SessionView {
 			// The session's whole billable life: the same helper the
 			// monthly total uses, with the period opened at its own
 			// creation.
-			billableWithin(s, s.CreatedAt, now),
+			billableWithin(s, nil, s.CreatedAt, now),
 		)),
 	}
 }
@@ -390,6 +396,7 @@ func (s *Server) viewsOf(ctx context.Context, p auth.Principal, sessions []store
 	if len(ids) == 0 {
 		return out
 	}
+	s.withRuns(ctx, p, sessions, out, now)
 	last, err := s.deps.Store.Conversations().LastMessages(ctx, p.OrgID, ids)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -421,6 +428,49 @@ func (s *Server) viewsOf(ctx context.Context, p auth.Principal, sessions []store
 		}
 	}
 	return out
+}
+
+// withRuns decorates views from their sessions' runs and jobs, read in
+// one query each: the cost of a resumed session counts only the time a
+// sandbox ran, and a stopped session's owner is told how it would
+// resume. A failed read is warned about and leaves the session's own
+// figures.
+//
+// @decision(DL-085) @decision(DL-088)
+func (s *Server) withRuns(ctx context.Context, p auth.Principal, sessions []store.Session, views []SessionView, now time.Time) {
+	ids := make([]string, len(sessions))
+	for i, sess := range sessions {
+		ids[i] = sess.ID
+	}
+	runs, err := s.deps.Store.Runs().List(ctx, p.OrgID, ids)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.deps.Warn(fmt.Sprintf("runs: %s", redact.Error(err)))
+		}
+		return
+	}
+	jobs, err := s.deps.Store.Jobs().BySessions(ctx, p.OrgID, ids)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.deps.Warn(fmt.Sprintf("jobs by session: %s", redact.Error(err)))
+		}
+		return
+	}
+	for i, sess := range sessions {
+		rs := runs[sess.ID]
+		if len(rs) == 0 {
+			continue
+		}
+		views[i].EstimatedCost = round2(sandbox.EstimatedCost(
+			sess.Request.Sandbox.CPU, sess.Request.Sandbox.MemoryMiB, billableWithin(sess, rs, sess.CreatedAt, now)))
+		_, isJob := jobs[sess.ID]
+		if p.UserID != sess.OwnerID {
+			continue
+		}
+		if choice, _, ok := s.svc.resumeChoice(sess, rs, isJob, now); ok {
+			views[i].Resume = &choice
+		}
+	}
 }
 
 // sessionJob is the job driving one session, as the listing decorates
@@ -465,6 +515,11 @@ func (s *Server) decorationStamp(ctx context.Context, p auth.Principal, sessions
 	if err != nil {
 		return "?"
 	}
+	// @decision(DL-088)
+	runs, err := s.deps.Store.Runs().List(ctx, p.OrgID, ids)
+	if err != nil {
+		return "?"
+	}
 	// The hash of nothing, so a session with neither decoration is
 	// skipped rather than contributing a constant line to every stamp.
 	empty := fnv.New64a().Sum64()
@@ -486,6 +541,13 @@ func (s *Server) decorationStamp(ctx context.Context, p auth.Principal, sessions
 			// @decision(DL-060)
 			v := sessionJobView(j)
 			_, _ = fmt.Fprintf(h, "\x00job\x00%s\x00%s\x00%s\x00%t", v.ID, v.Kind, v.State, v.Partial)
+		}
+		// What the resume choice is read from.
+		//
+		// @decision(DL-088)
+		if rs := runs[id]; len(rs) > 0 {
+			last := rs[len(rs)-1]
+			_, _ = fmt.Fprintf(h, "\x00run\x00%d\x00%s\x00%t", last.N, last.SnapshotState, last.Ran())
 		}
 		if sum := h.Sum64(); sum != empty {
 			fmt.Fprintf(&b, "%s:%x\n", id, sum)
@@ -764,7 +826,10 @@ func (s *Server) registerSessions() {
 		if err != nil {
 			return nil, toHumaError(err)
 		}
-		view := viewOf(sess, s.deps.Now())
+		now := s.deps.Now()
+		views := []SessionView{viewOf(sess, now)}
+		s.withRuns(ctx, principal(ctx), []store.Session{sess}, views, now)
+		view := views[0]
 		view.Job = s.sessionJob(ctx, sess)
 		return &sessionOutput{Body: view}, nil
 	})

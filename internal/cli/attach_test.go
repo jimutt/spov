@@ -83,10 +83,10 @@ func TestAttachRejectsStoppedSession(t *testing.T) {
 	if _, _, err := runWith(t, f.env, "stop", "old"); err != nil {
 		t.Fatal(err)
 	}
-	// A name resolves only among live sessions, so by name it is simply
-	// gone; by ID it is found and refused for what it is.
+	// A name no live session holds finds the caller's stopped session of
+	// that name (DL-087), which is refused for what it is, as by ID.
 	_, _, err := runWith(t, f.env, "attach", "old")
-	if err == nil || !strings.Contains(err.Error(), "spov ls") {
+	if err == nil || !strings.Contains(err.Error(), "stopped") {
 		t.Errorf("by name: err = %v", err)
 	}
 	_, _, err = runWith(t, f.env, "attach", f.session("old").ID)

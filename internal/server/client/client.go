@@ -275,6 +275,15 @@ func (c *Client) Conversations(ctx context.Context, ref string) ([]server.Conver
 	return out.Conversations, err
 }
 
+// Resume reopens a stopped session in a new sandbox.
+//
+// @decision(DL-087)
+func (c *Client) Resume(ctx context.Context, ref string, req server.ResumeRequest) (server.SessionView, error) {
+	var out server.SessionView
+	err := c.do(ctx, http.MethodPost, "sessions/"+url.PathEscape(ref)+"/resume", req, &out)
+	return out, err
+}
+
 // DeleteSession terminates a session's sandbox. A session that is already
 // stopped is not an error.
 func (c *Client) DeleteSession(ctx context.Context, ref string) error {

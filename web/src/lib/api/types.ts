@@ -615,6 +615,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{ref}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reopen a stopped session in a new sandbox */
+        post: operations["resume-session"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{ref}/sync-export": {
         parameters: {
             query?: never;
@@ -1470,6 +1487,31 @@ export interface components {
             repos: components["schemas"]["RepoView"][] | null;
             warnings?: string[] | null;
         };
+        ResumeRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ResumeRequest.json
+             */
+            readonly $schema?: string;
+            /** @description A message to send once the session runs */
+            message?: components["schemas"]["SteerRequest"];
+            /**
+             * Format: int64
+             * @description The resumed sandbox's lifetime in seconds; omitted takes the one the session was launched with
+             */
+            timeout_secs?: number;
+        };
+        ResumeView: {
+            /**
+             * @description snapshot brings the workspace back as it was; transcript clones the repositories fresh and restores the conversation
+             * @enum {string}
+             */
+            mode: "snapshot" | "transcript";
+            pending?: boolean;
+            /** Format: date-time */
+            until?: string;
+        };
         Route: {
             /** @enum {string} */
             attach?: "always" | "asked";
@@ -1677,6 +1719,7 @@ export interface components {
             name: string;
             owner_id: string;
             repos: components["schemas"]["RepoRef"][] | null;
+            resume?: components["schemas"]["ResumeView"];
             /** @description The routed credentials the proxy holds for this session, with their hosts */
             routed_credentials?: components["schemas"]["SessionRoutedCredentialView"][] | null;
             sandbox: components["schemas"]["SandboxConfigView"];
@@ -5000,6 +5043,69 @@ export interface operations {
             };
             /** @description Too Many Requests */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "resume-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session ID or name */
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResumeRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"strconv"
 	"time"
 
 	"github.com/jimutt/spov/internal/auth"
@@ -154,7 +155,7 @@ func (r *Reconciler) Once(ctx context.Context) error {
 		//
 		// @decision(DL-004)
 		starting := sess.State == store.StateStarting
-		orphaned := starting && now.Sub(sess.CreatedAt) > r.launchTimeout()+orphanGrace
+		orphaned := starting && now.Sub(r.launchStart(ctx, sess)) > r.launchTimeout()+orphanGrace
 		// A stop goes through MarkStopped, so a session Delete stopped
 		// in the meantime is neither overwritten nor counted twice.
 		//
@@ -217,6 +218,9 @@ func (r *Reconciler) Once(ctx context.Context) error {
 			known.StoppedAt = nil
 			if err := r.Store.Sessions().Update(ctx, known); err != nil {
 				r.warn("reconcile: resurrect %s: %v", known.ID, err)
+			} else if err := r.Store.Runs().Reopen(ctx, known.OrgID, known.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+				// @decision(DL-085)
+				r.warn("reconcile: reopen the run of %s: %v", known.ID, err)
 			}
 			continue
 		case !errors.Is(err, store.ErrNotFound):
@@ -235,7 +239,16 @@ func (r *Reconciler) Once(ctx context.Context) error {
 		// the sandbox to that launch.
 		//
 		// @decision(DL-004)
-		if r.launchInFlight(ctx, r.orgOf(info), info.Name) {
+		if r.launchInFlight(ctx, r.orgOf(info), sessionNameOf(info)) {
+			continue
+		}
+		// A later run's sandbox belongs to a session that exists and has
+		// moved on: its resume failed before recording it. Adopting it
+		// would make a second session of one.
+		//
+		// @decision(DL-087) @decision(DL-004)
+		if runOfSandbox(info) > 1 {
+			r.endStrayRun(ctx, info)
 			continue
 		}
 		if err := r.adopt(ctx, info, now); err != nil {
@@ -359,6 +372,52 @@ func (r *Reconciler) orgFromTag(v string) bool {
 // launch's session lives in, not the reconciler's default.
 //
 // @decision(DL-004)
+// launchStart is when the session's current launch began: a resume's
+// run start, else the session's creation. A transcript resume's import
+// budget is added, since its launch may run that much longer.
+//
+// @decision(DL-087) @decision(DL-089)
+func (r *Reconciler) launchStart(ctx context.Context, sess store.Session) time.Time {
+	run, err := r.Store.Runs().Current(ctx, sess.OrgID, sess.ID)
+	switch {
+	case err != nil || run.N < 2:
+		return sess.CreatedAt
+	case run.Origin == store.RunFromTranscript:
+		return run.StartedAt.Add(ImportBudget)
+	}
+	return run.StartedAt
+}
+
+// sessionNameOf is the session a sandbox was launched for: its name
+// tag, which a later run's sandbox name does not carry alone.
+//
+// @decision(DL-087)
+func sessionNameOf(info sandbox.Info) string {
+	if name := info.Tags[sandbox.TagName]; name != "" {
+		return name
+	}
+	return info.Name
+}
+
+// runOfSandbox is the run tag's number, or 0.
+func runOfSandbox(info sandbox.Info) int {
+	n, _ := strconv.Atoi(info.Tags[sandbox.TagRun])
+	return n
+}
+
+// endStrayRun terminates a later run's sandbox no session records.
+//
+// @decision(DL-087)
+func (r *Reconciler) endStrayRun(ctx context.Context, info sandbox.Info) {
+	h, err := r.Provider.Get(ctx, info.ID)
+	if err == nil {
+		err = h.Terminate(ctx)
+	}
+	if err != nil {
+		r.warn("reconcile: end the stray run %s of %s: %v", info.ID, sessionNameOf(info), err)
+	}
+}
+
 func (r *Reconciler) launchInFlight(ctx context.Context, org, name string) bool {
 	if name == "" {
 		return false

@@ -255,6 +255,139 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 	},
 	// @decision(DL-034)
+	// @decision(DL-085)
+	"a session's runs: inserted, updated, ended with the session, listed and reopened": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		in := session(store.NewID(t0), "org", "u1", "runs", store.StateRunning)
+		if err := s.Sessions().Create(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Runs().Current(ctx, "org", in.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("before any run: %v", err)
+		}
+		running := t0.Add(time.Minute)
+		one := store.Run{OrgID: "org", SessionID: in.ID, OwnerID: "u1", N: 1, SandboxID: "sb-1", Booted: "img",
+			OpenCode: "2.0.22", Origin: store.RunFromLaunch, StartedAt: t0, RunningAt: &running, SnapshotState: store.SnapshotPending}
+		if err := s.Runs().Insert(ctx, one); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Runs().Insert(ctx, one); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a second run 1: %v", err)
+		}
+		if err := s.Runs().Insert(ctx, store.Run{OrgID: "other", SessionID: in.ID, N: 2, Origin: store.RunFromLaunch,
+			StartedAt: t0, SnapshotState: store.SnapshotNone}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("another org's run: %v", err)
+		}
+		// A pending run still live is not a snapshot to collect.
+		if got, _ := s.Runs().Snapshots(ctx, store.SnapshotPending); len(got) != 0 {
+			t.Errorf("a live run was offered for collection: %+v", got)
+		}
+		stopped := t0.Add(time.Hour)
+		if ok, err := s.Sessions().MarkStopped(ctx, "org", in.ID, store.StateStopped, stopped, ""); !ok || err != nil {
+			t.Fatalf("stop: %v %v", ok, err)
+		}
+		cur, err := s.Runs().Current(ctx, "org", in.ID)
+		if err != nil || cur.EndedAt == nil || !cur.EndedAt.Equal(stopped) || cur.SandboxID != "sb-1" || !cur.Ran() {
+			t.Fatalf("the stop did not end the run: %+v, %v", cur, err)
+		}
+		if got, _ := s.Runs().Snapshots(ctx, store.SnapshotPending); len(got) != 1 || got[0].N != 1 {
+			t.Errorf("the ended run is not offered for collection: %+v", got)
+		}
+		at := stopped.Add(10 * time.Second)
+		cur.Snapshot, cur.SnapshotState, cur.SnapshotAt = "im-1", store.SnapshotKept, &at
+		cur.OwnerID, cur.StartedAt = "someone else", t0.Add(time.Hour)
+		if err := s.Runs().Update(ctx, cur); err != nil {
+			t.Fatal(err)
+		}
+		kept, _ := s.Runs().Current(ctx, "org", in.ID)
+		if kept.Snapshot != "im-1" || kept.SnapshotState != store.SnapshotKept || kept.OwnerID != "u1" || !kept.StartedAt.Equal(t0) {
+			t.Errorf("update: %+v", kept)
+		}
+		if err := s.Runs().Update(ctx, store.Run{OrgID: "org", SessionID: in.ID, N: 9, Origin: store.RunFromLaunch,
+			SnapshotState: store.SnapshotNone}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a missing run: %v", err)
+		}
+		two := store.Run{OrgID: "org", SessionID: in.ID, OwnerID: "u1", N: 2, Origin: store.RunFromSnapshot,
+			BootedImageID: "im-1", StartedAt: t0.Add(2 * time.Hour), SnapshotState: store.SnapshotFailed}
+		if err := s.Runs().Insert(ctx, two); err != nil {
+			t.Fatal(err)
+		}
+		end := t0.Add(3 * time.Hour)
+		two.EndedAt = &end
+		if err := s.Runs().Update(ctx, two); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Runs().Reopen(ctx, "org", in.ID); err != nil {
+			t.Fatal(err)
+		}
+		reopened, _ := s.Runs().Current(ctx, "org", in.ID)
+		if reopened.N != 2 || reopened.EndedAt != nil || reopened.SnapshotState != store.SnapshotPending {
+			t.Errorf("reopen: %+v", reopened)
+		}
+		other := session(store.NewID(t0.Add(time.Second)), "org", "u1", "norun", store.StateRunning)
+		if err := s.Sessions().Create(ctx, other); err != nil {
+			t.Fatal(err)
+		}
+		all, err := s.Runs().List(ctx, "org", []string{in.ID, other.ID})
+		if err != nil || len(all) != 1 || len(all[in.ID]) != 2 || all[in.ID][0].N != 1 || all[in.ID][1].N != 2 {
+			t.Errorf("list: %+v, %v", all, err)
+		}
+		if none, _ := s.Runs().List(ctx, "other", []string{in.ID}); len(none) != 0 {
+			t.Errorf("another org listed the runs: %+v", none)
+		}
+		if kept, _ := s.Runs().Snapshots(ctx, store.SnapshotKept); len(kept) != 1 || kept[0].Snapshot != "im-1" {
+			t.Errorf("kept snapshots: %+v", kept)
+		}
+		if got := (store.Run{StartedAt: t0, EndedAt: &stopped}).Stretch(t0.Add(30*time.Minute), t0.Add(5*time.Hour)); got != 30*time.Minute {
+			t.Errorf("stretch = %s", got)
+		}
+	},
+	// @decision(DL-085)
+	"a rolled-back run is gone, and runs ended together sort by session and number": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		a := session(store.NewID(t0), "org", "u1", "ra", store.StateStopped)
+		b := session(store.NewID(t0.Add(time.Millisecond)), "org", "u1", "rb", store.StateStopped)
+		for _, in := range []store.Session{a, b} {
+			if err := s.Sessions().Create(ctx, in); err != nil {
+				t.Fatal(err)
+			}
+		}
+		end := t0.Add(time.Hour)
+		run := func(sess string, n int) store.Run {
+			return store.Run{OrgID: "org", SessionID: sess, OwnerID: "u1", N: n, Origin: store.RunFromLaunch,
+				StartedAt: t0, EndedAt: &end, SnapshotState: store.SnapshotKept, Snapshot: "im"}
+		}
+		boom := errors.New("roll back")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Runs().Insert(ctx, run(a.ID, 1)); err != nil {
+				return err
+			}
+			return boom
+		}); !errors.Is(err, boom) {
+			t.Fatalf("tx: %v", err)
+		}
+		if _, err := s.Runs().Current(ctx, "org", a.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a rolled-back run survived: %v", err)
+		}
+		for _, r := range []store.Run{run(b.ID, 2), run(a.ID, 1), run(b.ID, 1)} {
+			if err := s.Runs().Insert(ctx, r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := s.Runs().Snapshots(ctx, store.SnapshotKept)
+		if err != nil || len(got) != 3 {
+			t.Fatalf("snapshots: %+v, %v", got, err)
+		}
+		if got[0].SessionID != a.ID || got[1].SessionID != b.ID || got[1].N != 1 || got[2].N != 2 {
+			t.Errorf("order: %+v", got)
+		}
+		if err := s.Runs().Reopen(ctx, "org", "nope"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("reopen a session with no runs: %v", err)
+		}
+		if d := (store.Run{}).Stretch(t0, end); d != 0 {
+			t.Errorf("a run with no start ran %s", d)
+		}
+	},
 	"a session's sealed proxy CA is kept apart and replaced whole": func(t *testing.T, s store.Store) {
 		ctx := context.Background()
 		in := session(store.NewID(t0), "org", "u1", "gamma", store.StateRunning)
@@ -1601,6 +1734,20 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		})
 		if err != nil || blank.Title != "hello" {
 			t.Errorf("an empty title overwrote a known one: %+v, %v", blank, err)
+		}
+		// The info is kept whole and, like the title, only replaced by
+		// one that says something. @decision(DL-089)
+		info := []byte(`{"id":"ses_1","time":{"created":1,"updated":2}}`)
+		withInfo, err := cs.UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, OpenCodeID: "ses_1", Info: info,
+		})
+		if err != nil || string(withInfo.Info) != string(info) || withInfo.Title != "hello" {
+			t.Errorf("the info was not kept: %+v, %v", withInfo, err)
+		}
+		if kept, err := cs.UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, OpenCodeID: "ses_1",
+		}); err != nil || string(kept.Info) != string(info) {
+			t.Errorf("an upsert with no info dropped the stored one: %q, %v", kept.Info, err)
 		}
 		list, err := cs.ListConversations(ctx, "org", sess.ID)
 		if err != nil || len(list) != 1 {

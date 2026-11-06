@@ -47,6 +47,10 @@ type Store interface {
 	//
 	// @decision(DL-045)
 	Jobs() JobStore
+	// Runs is each sandbox a session had.
+	//
+	// @decision(DL-085)
+	Runs() RunStore
 	// Tx runs fn atomically where the backend can. The memory store
 	// serialises transactions with a mutex so the semantics hold there
 	// too. fn must not call back into the outer store, must not retain
@@ -110,7 +114,8 @@ type SessionStore interface {
 	// @decision(DL-003)
 	CancelRequested(ctx context.Context, orgID, id string) (bool, error)
 	// MarkStopped moves a live session to state (stopped or failed) at
-	// at, with errText, and reports whether this call made the move. A
+	// at, with errText, and reports whether this call made the move. The
+	// same write ends the session's current run (DL-085). A
 	// session no longer live, or not this org's, is left alone and
 	// reports false, so of two callers stopping the same session exactly
 	// one sees true.
@@ -468,6 +473,11 @@ type SessionFilter struct {
 	States []SessionState
 	// OwnerID, when set, keeps only this owner's sessions.
 	OwnerID string
+	// Name, when set, keeps only sessions of exactly this name, which a
+	// stopped session shares with later ones.
+	//
+	// @decision(DL-087)
+	Name string
 	// Before, when set, keeps only sessions with an ID below it: the
 	// page after the one that ended with that ID. Count ignores it.
 	//
@@ -482,6 +492,9 @@ type SessionFilter struct {
 
 func (f SessionFilter) matches(s Session) bool {
 	if f.OwnerID != "" && s.OwnerID != f.OwnerID {
+		return false
+	}
+	if f.Name != "" && s.Name != f.Name {
 		return false
 	}
 	if f.Before != "" && s.ID >= f.Before {
@@ -851,8 +864,22 @@ type Conversation struct {
 	// OpenCodeID is the session id OpenCode gave it (ses_…).
 	OpenCodeID string
 	Title      string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// Info is OpenCode's Session.Info for it, whole, as the sandbox's
+	// listing last gave it, or empty when it never did. A transcript
+	// resume imports it.
+	//
+	// @decision(DL-089)
+	Info []byte
+	// SeqBase and SeqAfter map a conversation imported by a transcript
+	// resume onto its stored sequence: a durable frame at seq is stored
+	// at SeqBase + seq - SeqAfter, and one at or before SeqAfter is the
+	// import's own echo. Both are 0 for a conversation never imported.
+	//
+	// @decision(DL-089)
+	SeqBase   int64
+	SeqAfter  int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Message is one thing said in a conversation: the reply, not the parts
@@ -920,8 +947,8 @@ type Event struct {
 // @decision(DL-017)
 type ConversationStore interface {
 	// UpsertConversation keys on (SessionID, OpenCodeID). An existing
-	// row keeps its ID and CreatedAt; its title changes only when the
-	// new one is non-empty. The stored row is returned. A session that
+	// row keeps its ID and CreatedAt; its title and its info change only
+	// when the new one is non-empty. The stored row is returned. A session that
 	// does not exist in the org is ErrNotFound.
 	UpsertConversation(ctx context.Context, c Conversation) (Conversation, error)
 	ListConversations(ctx context.Context, orgID, sessionID string) ([]Conversation, error)
@@ -961,6 +988,11 @@ type ConversationStore interface {
 	//
 	// @decision(DL-017)
 	LastSeqs(ctx context.Context, orgID, sessionID string) (map[string]int64, error)
+	// SetSeqOffset records how an imported conversation's durable log
+	// continues its stored one (Conversation.SeqBase and SeqAfter).
+	//
+	// @decision(DL-089)
+	SetSeqOffset(ctx context.Context, orgID, conversationID string, base, after int64) error
 	// LastEventExcept is LastEvent passing over the named events, so a
 	// marker written after real activity cannot hide it.
 	//

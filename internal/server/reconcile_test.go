@@ -647,3 +647,87 @@ func TestReconcileStillAdoptsAnUntaggedSandbox(t *testing.T) {
 		t.Fatalf("an ordinary unknown sandbox was not adopted (%v): DL-004's backstop is gone", err)
 	}
 }
+
+// A session brought back from a listing miss has its run reopened, and a
+// resume still starting is judged by when its run began, not by when
+// the session was created.
+//
+// @decision(DL-085) @decision(DL-087)
+func TestReconcileFollowsTheCurrentRun(t *testing.T) {
+	r, fake, mem, _ := fixture(t)
+	ctx := context.Background()
+	h := create(t, fake, "alpha", nil)
+	info, _ := h.Info(ctx)
+	stopped := t0
+	in := store.Session{ID: store.NewID(t0), OrgID: "org", OwnerID: "u1", Name: "alpha", State: store.StateStopped, SandboxID: info.ID, StoppedAt: &stopped}
+	if err := mem.Sessions().Create(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.Runs().Insert(ctx, store.Run{OrgID: "org", SessionID: in.ID, OwnerID: "u1", N: 1, SandboxID: info.ID,
+		Origin: store.RunFromLaunch, StartedAt: t0, EndedAt: &stopped, SnapshotState: store.SnapshotFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if run, _ := mem.Runs().Current(ctx, "org", in.ID); run.EndedAt != nil || run.SnapshotState != store.SnapshotPending {
+		t.Errorf("the revived session's run = %+v", run)
+	}
+
+	// A resume of an old session, started a moment ago, is in flight.
+	old := t0.Add(-72 * time.Hour)
+	resumed := store.Session{ID: store.NewID(old), OrgID: "org", OwnerID: "u1", Name: "beta", State: store.StateStarting, CreatedAt: old}
+	if err := mem.Sessions().Create(ctx, resumed); err != nil {
+		t.Fatal(err)
+	}
+	ended := old.Add(time.Hour)
+	for _, run := range []store.Run{
+		{OrgID: "org", SessionID: resumed.ID, OwnerID: "u1", N: 1, Origin: store.RunFromLaunch, StartedAt: old, EndedAt: &ended, SnapshotState: store.SnapshotKept},
+		{OrgID: "org", SessionID: resumed.ID, OwnerID: "u1", N: 2, Origin: store.RunFromSnapshot, StartedAt: t0, SnapshotState: store.SnapshotPending},
+	} {
+		if err := mem.Runs().Insert(ctx, run); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mem.Sessions().Get(ctx, "org", resumed.ID); got.State != store.StateStarting {
+		t.Errorf("a resume just begun was concluded: %s", got.State)
+	}
+}
+
+// A later run's sandbox that no session records is ended, never adopted
+// as a second session; one whose resume is in flight is left to it.
+//
+// @decision(DL-087) @decision(DL-004)
+func TestReconcileEndsAStrayRunAndLeavesAnInFlightOne(t *testing.T) {
+	r, fake, mem, _ := fixture(t)
+	ctx := context.Background()
+	mk := func(session string) sandbox.Handle {
+		h, err := fake.Create(ctx, sandbox.Spec{Name: session + "-run2", Image: "img", Command: []string{"x"}, CPU: 0.5, MemoryMiB: 2048,
+			Timeout: time.Hour, IdleTimeout: 10 * time.Minute, Egress: sandbox.EgressOpen(),
+			Tags: sandbox.BuildTags(sandbox.TagSet{Name: session, User: "u1", Org: "org", CreatedAt: t0, Run: 2})})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	stray, flying := mk("gone"), mk("flying")
+	in := store.Session{ID: store.NewID(t0), OrgID: "org", OwnerID: "u1", Name: "flying", State: store.StateStarting, CreatedAt: t0}
+	if err := mem.Sessions().Create(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !stray.(*sandbox.FakeHandle).WasTerminated() {
+		t.Error("a stray later run was not ended")
+	}
+	if flying.(*sandbox.FakeHandle).WasTerminated() {
+		t.Error("an in-flight resume's sandbox was ended")
+	}
+	if all, _ := mem.Sessions().List(ctx, "org", store.SessionFilter{}); len(all) != 1 {
+		t.Errorf("%d sessions: a later run was adopted", len(all))
+	}
+}

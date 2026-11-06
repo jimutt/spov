@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -124,9 +125,10 @@ type Recorder struct {
 	// @decision(DL-017)
 	runCtx   context.Context
 	captures map[string]context.CancelFunc
-	// abandoned holds sessions whose redial budget ran out. Never
-	// retried while this process leads; a new leader starts afresh.
-	abandoned map[string]bool
+	// abandoned holds sessions whose redial budget ran out, with the
+	// sandbox given up on. Never retried while this process leads; a new
+	// leader starts afresh, and a resumed session's next sandbox too.
+	abandoned map[string]string
 	wg        sync.WaitGroup
 }
 
@@ -162,7 +164,7 @@ func NewRecorder(svc *Service, st store.Store, now func() time.Time, warn func(s
 		backoff:   RecorderBackoff,
 		sleep:     sleepFor,
 		captures:  map[string]context.CancelFunc{},
-		abandoned: map[string]bool{},
+		abandoned: map[string]string{},
 	}
 }
 
@@ -184,7 +186,7 @@ func (r *Recorder) Run(ctx context.Context) {
 	// A new term starts the redial budget afresh, whichever process
 	// leads it.
 	r.mu.Lock()
-	r.abandoned = map[string]bool{}
+	r.abandoned = map[string]string{}
 	r.runCtx = ctx
 	r.mu.Unlock()
 	for {
@@ -218,7 +220,7 @@ func (r *Recorder) Sync(ctx context.Context) error {
 			continue
 		}
 		running[sess.ID] = true
-		if _, on := r.captures[sess.ID]; on || r.abandoned[sess.ID] {
+		if _, on := r.captures[sess.ID]; on || r.gaveUpOn(sess) {
 			continue
 		}
 		r.startCaptureLocked(ctx, sess)
@@ -262,7 +264,7 @@ func (r *Recorder) Wake(sess store.Session) {
 		// is what local mode and most tests use.
 		return
 	}
-	if _, on := r.captures[sess.ID]; on || r.abandoned[sess.ID] {
+	if _, on := r.captures[sess.ID]; on || r.gaveUpOn(sess) {
 		return
 	}
 	r.startCaptureLocked(r.runCtx, sess)
@@ -327,7 +329,7 @@ func (r *Recorder) record(ctx context.Context, sess store.Session) {
 				r.warn(fmt.Sprintf("recorder %s: %s", sess.ID, merr))
 			}
 			r.mu.Lock()
-			r.abandoned[sess.ID] = true
+			r.abandoned[sess.ID] = sess.SandboxID
 			r.mu.Unlock()
 			return
 		}
@@ -595,6 +597,16 @@ func (r *Recorder) gapCheck(ctx context.Context, c *capture, conversation string
 	return nil
 }
 
+// gaveUpOn reports whether the recorder abandoned this run of the
+// session; a resumed session's next sandbox gets a budget of its own.
+// The caller holds r.mu.
+//
+// @decision(DL-085) @decision(DL-017)
+func (r *Recorder) gaveUpOn(sess store.Session) bool {
+	sandbox, ok := r.abandoned[sess.ID]
+	return ok && sandbox == sess.SandboxID
+}
+
 // catchUp reads every conversation in the sandbox once and upserts what
 // it finds. An unreadable conversation is skipped with a warning; a
 // store write failure ends the span.
@@ -605,14 +617,14 @@ func (r *Recorder) catchUp(ctx context.Context, c *capture) error {
 	if err != nil {
 		return fmt.Errorf("list conversations: %w", err)
 	}
-	ids, titles := conversations(listed)
+	ids, titles, infos := conversations(listed)
 	// The count comes from the sandbox; see MaxConversations.
 	if len(ids) > MaxConversations {
 		r.warn(fmt.Sprintf("recorder %s: the sandbox lists %d conversations; reading the first %d", c.sess.ID, len(ids), MaxConversations))
 		ids = ids[:MaxConversations]
 	}
 	for _, id := range ids {
-		conv, err := r.conversation(ctx, c, id, titles[id])
+		conv, err := r.conversationWith(ctx, c, id, titles[id], infos[id])
 		if err != nil {
 			return err
 		}
@@ -626,11 +638,19 @@ func (r *Recorder) catchUp(ctx context.Context, c *capture) error {
 // conversation resolves an OpenCode session to its stored row, creating
 // it on first sight.
 func (r *Recorder) conversation(ctx context.Context, c *capture, opencodeID, title string) (store.Conversation, error) {
-	if conv, ok := c.convs[opencodeID]; ok && (title == "" || conv.Title == title) {
+	return r.conversationWith(ctx, c, opencodeID, title, nil)
+}
+
+// conversationWith is conversation that also keeps the listing's
+// Session.Info, when there is one and it changed.
+//
+// @decision(DL-089)
+func (r *Recorder) conversationWith(ctx context.Context, c *capture, opencodeID, title string, info []byte) (store.Conversation, error) {
+	if conv, ok := c.convs[opencodeID]; ok && (title == "" || conv.Title == title) && (len(info) == 0 || bytes.Equal(conv.Info, info)) {
 		return conv, nil
 	}
 	conv, err := r.store.Conversations().UpsertConversation(ctx, store.Conversation{
-		ID: store.NewID(r.now()), OrgID: c.sess.OrgID, SessionID: c.sess.ID, OpenCodeID: opencodeID, Title: title,
+		ID: store.NewID(r.now()), OrgID: c.sess.OrgID, SessionID: c.sess.ID, OpenCodeID: opencodeID, Title: title, Info: info,
 	})
 	if err != nil {
 		return store.Conversation{}, fmt.Errorf("write the store: %w", err)
@@ -768,6 +788,17 @@ func (r *Recorder) frame(ctx context.Context, c *capture, raw string) error {
 	conv, err := r.conversation(ctx, c, ev.Session, "")
 	if err != nil {
 		return err
+	}
+	// An imported conversation's log started again: its echo of the
+	// import is already stored, and later frames continue the stored
+	// sequence.
+	//
+	// @decision(DL-089)
+	if source == store.SourceOpenCode && conv.SeqAfter > 0 {
+		if seq <= conv.SeqAfter {
+			return nil
+		}
+		seq = conv.SeqBase + seq - conv.SeqAfter
 	}
 	// Durable frames only: an ephemeral frame has seq 0 and would spend
 	// the conversation's one check.

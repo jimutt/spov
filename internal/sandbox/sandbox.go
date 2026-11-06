@@ -29,6 +29,17 @@ type Spec struct {
 	Name string
 	// Image identifies the pre-published image to boot.
 	Image string
+	// ImageID, when set, is the image to boot instead, an exit snapshot
+	// by its ID. Image then only names what the sandbox is recorded
+	// against and is not resolved.
+	//
+	// @decision(DL-084) @decision(DL-088)
+	ImageID string
+	// ExitSnapshot asks the provider to keep a snapshot of the main
+	// container's filesystem when the sandbox ends, however it ends.
+	//
+	// @decision(DL-084)
+	ExitSnapshot bool
 	// Command is the entrypoint, passed without a shell wrapper.
 	Command []string
 	// Env are non-secret environment variables for the entrypoint.
@@ -178,7 +189,25 @@ type Provider interface {
 	Get(ctx context.Context, ref string) (Handle, error)
 	// List returns sandboxes matching every tag in tags.
 	List(ctx context.Context, tags map[string]string) ([]Info, error)
+	// ExitSnapshot is the image ID of the exit snapshot of the sandbox
+	// with this ID, waiting at most wait for it. A sandbox created
+	// without one answers ErrNoExitSnapshot, one still being taken
+	// ErrSnapshotPending, one whose snapshot will never exist
+	// ErrSnapshotFailed, and one the provider no longer knows
+	// ErrNotFound.
+	//
+	// @decision(DL-084)
+	ExitSnapshot(ctx context.Context, sandboxID string, wait time.Duration) (string, error)
 }
+
+// The outcomes of ExitSnapshot that are not an image.
+//
+// @decision(DL-084)
+var (
+	ErrNoExitSnapshot  = errors.New("sandbox: created without an exit snapshot")
+	ErrSnapshotPending = errors.New("sandbox: the exit snapshot is still being taken")
+	ErrSnapshotFailed  = errors.New("sandbox: the exit snapshot was not taken")
+)
 
 // ImageBuilder is a provider that can build and publish the base image.
 // It is kept out of Provider because a launch never builds an image; the
@@ -206,6 +235,15 @@ type ImageBuilder interface {
 	// running from it keeps running.
 	//
 	// @decision(DL-016)
+	DeleteImage(ctx context.Context, id string) error
+}
+
+// ImageDeleter deletes an image by its ID, an exit snapshot included.
+// ImageBuilder has the same method; this is the part pruning snapshots
+// needs.
+//
+// @decision(DL-086)
+type ImageDeleter interface {
 	DeleteImage(ctx context.Context, id string) error
 }
 

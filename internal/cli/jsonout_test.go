@@ -32,7 +32,7 @@ func decodeOnly(t *testing.T, out string, v any) {
 func TestTheReadAndCreateCommandsTakeJSON(t *testing.T) {
 	want := map[string]bool{}
 	for _, path := range []string{
-		"ls", "jobs", "jobs list", "jobs show", "jobs create", "credentials", "credentials list", "whoami",
+		"ls", "jobs", "jobs list", "jobs show", "jobs create", "credentials", "credentials list", "whoami", "resume",
 	} {
 		want["spov "+path] = true
 	}

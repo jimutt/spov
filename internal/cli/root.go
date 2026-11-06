@@ -147,6 +147,11 @@ type Env struct {
 	// PromptSecret reads a secret without echoing it. Nil reads from the
 	// terminal; tests substitute it.
 	PromptSecret func(prompt string) (string, error)
+	// Confirm asks a yes-or-no question, defaulting to no. Nil asks on
+	// the terminal, and answers no where there is none.
+	//
+	// @decision(DL-090)
+	Confirm func(prompt string) (bool, error)
 	// LookPath finds an executable. Nil means exec.LookPath.
 	//
 	// @decision(DL-025)
@@ -239,6 +244,8 @@ func (e *Env) defaultProvider(ctx context.Context, cfg config.Config) (sandbox.P
 		AppName:     cfg.Modal.App,
 		Environment: cfg.Modal.Environment,
 		Credentials: e.modalCredentials(),
+		// @decision(DL-084)
+		Warn: func(msg string) { _, _ = fmt.Fprintln(e.Err, "spov serve: "+msg) },
 	})
 }
 
@@ -422,6 +429,8 @@ func NewRoot(env Env) *cobra.Command {
 	root.AddCommand(newConfigCmd(e))
 	root.AddCommand(newFlyCmd(e))
 	root.AddCommand(newAttachCmd(e))
+	// @decision(DL-090)
+	root.AddCommand(newResumeCmd(e))
 	root.AddCommand(newLoginCmd(e))
 	root.AddCommand(newLogoutCmd(e))
 	root.AddCommand(newWhoamiCmd(e))

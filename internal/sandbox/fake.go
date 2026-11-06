@@ -72,6 +72,14 @@ type Fake struct {
 	// for after a failed start, as Modal holds it briefly (spike S-I4).
 	NameHeldFor int
 	held        map[string]int
+	// SnapshotErrs fails ExitSnapshot for a sandbox ID, and
+	// RefuseExitSnapshots makes Create answer as Modal does when it no
+	// longer takes the option. DeletedImages records DeleteImage.
+	//
+	// @decision(DL-084)
+	SnapshotErrs        map[string]error
+	RefuseExitSnapshots bool
+	DeletedImages       []string
 
 	byID   map[string]*FakeHandle
 	byName map[string]*FakeHandle
@@ -153,7 +161,8 @@ func (f *Fake) Create(ctx context.Context, spec Spec) (Handle, error) {
 	}
 
 	h := &FakeHandle{
-		provider: f,
+		provider:     f,
+		exitSnapshot: spec.ExitSnapshot && !f.RefuseExitSnapshots,
 		info: Info{
 			ID:        id,
 			Name:      spec.Name,
@@ -264,11 +273,12 @@ type FakeHandle struct {
 	info     Info
 	tunnels  map[int]string
 
-	terminated bool
-	detached   bool
-	execs      [][]string
-	inputs     [][]byte
-	egress     []EgressPolicy
+	terminated   bool
+	detached     bool
+	exitSnapshot bool
+	execs        [][]string
+	inputs       [][]byte
+	egress       []EgressPolicy
 
 	sidecar      string
 	sidecarExecs []SidecarExec
@@ -601,6 +611,63 @@ func (h *FakeHandle) Detach() error {
 	return nil
 }
 
+// ID is the sandbox's ID.
+func (h *FakeHandle) ID() string {
+	h.provider.mu.Lock()
+	defer h.provider.mu.Unlock()
+	return h.info.ID
+}
+
+// End stops the sandbox as its idle or hard timeout would, with no
+// Terminate.
+func (h *FakeHandle) End() {
+	h.provider.mu.Lock()
+	defer h.provider.mu.Unlock()
+	h.info.State = StateStopped
+	code := 0
+	h.info.ExitCode = &code
+}
+
+// ExitSnapshot implements Provider: a sandbox created with one that has
+// stopped has the image "im-snap-<id>".
+//
+// @decision(DL-084)
+func (f *Fake) ExitSnapshot(ctx context.Context, sandboxID string, _ time.Duration) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.SnapshotErrs[sandboxID]; err != nil {
+		return "", err
+	}
+	h, ok := f.byID[sandboxID]
+	switch {
+	case !ok:
+		return "", fmt.Errorf("sandbox %s: %w", sandboxID, ErrNotFound)
+	case !h.exitSnapshot:
+		return "", fmt.Errorf("sandbox %s: %w", sandboxID, ErrNoExitSnapshot)
+	case h.info.State == StateRunning:
+		return "", fmt.Errorf("sandbox %s: %w", sandboxID, ErrSnapshotPending)
+	}
+	return "im-snap-" + sandboxID, nil
+}
+
+// DeleteImage records the deletion, as ImageDeleter.
+func (f *Fake) DeleteImage(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.DeletedImages = append(f.DeletedImages, id)
+	return nil
+}
+
+// Deleted is a copy of DeletedImages.
+func (f *Fake) Deleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.DeletedImages)
+}
+
 // Reattach makes every detached, unterminated handle usable again, as a
 // new server process's Get of a running sandbox returns a live handle
 // where the old process's had been detached on its way out.
@@ -618,5 +685,6 @@ func (f *Fake) Reattach() {
 var (
 	_ Provider          = (*Fake)(nil)
 	_ ProxyImageBuilder = (*Fake)(nil)
+	_ ImageDeleter      = (*Fake)(nil)
 	_ Handle            = (*FakeHandle)(nil)
 )

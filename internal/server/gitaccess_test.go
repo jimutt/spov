@@ -185,7 +185,7 @@ func TestAnExplicitAllThatCannotApplyAtLaunchFails(t *testing.T) {
 	log := newLaunchLog(f.srv.svc.deps.Now)
 	stored := f.session(sess.ID)
 	stored.State = store.StateStarting
-	f.srv.svc.launch(context.Background(), stored, log, telemetry.KindInteractive)
+	f.srv.svc.launch(context.Background(), stored, log, telemetry.KindInteractive, runPlan{})
 	if got := f.session(sess.ID); got.State != store.StateFailed || !strings.Contains(got.Error, "cannot apply to fake") {
 		t.Errorf("the launch ended %s: %q", got.State, got.Error)
 	}

@@ -217,7 +217,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 			delete(s.launches, sess.ID)
 			s.mu.Unlock()
 		}()
-		s.launch(launchCtx, sess, log, telemetry.KindInteractive)
+		s.launch(launchCtx, sess, log, telemetry.KindInteractive, runPlan{})
 	}()
 	return sess, nil
 }
@@ -476,7 +476,7 @@ func (s *Service) validateRequest(req store.SessionRequest) error {
 // JobOptions, and an ordinary session passes none.
 //
 // @decision(DL-005) @decision(DL-045)
-func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog, kind telemetry.SessionKind, with ...func(*session.Options)) {
+func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog, kind telemetry.SessionKind, plan runPlan, with ...func(*session.Options)) {
 	// The store is written from a context that no request owns.
 	storeCtx := context.WithoutCancel(ctx)
 	// @decision(DL-011)
@@ -517,6 +517,7 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		if uerr := s.deps.Store.Sessions().Update(storeCtx, sess); uerr != nil {
 			s.deps.Warn(fmt.Sprintf("launch %s: record failure: %v", sess.ID, uerr))
 		}
+		s.endFailedRun(storeCtx, sess, plan, t)
 		s.forgetSession(sess.ID)
 		log.fail(ProblemView{Title: "Launch failed", Status: 502, Detail: msg})
 	}
@@ -717,6 +718,9 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 			Dir:        dir,
 		}
 	}
+	// @decision(DL-084) @decision(DL-085)
+	opts.Run = plan.number()
+	opts.ExitSnapshot = kind != telemetry.KindJob && s.deps.Snapshots != nil
 	for _, fn := range with {
 		fn(&opts)
 	}
@@ -728,6 +732,13 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	if live == nil {
 		fail(errors.New("the launcher returned no session"))
 		return
+	}
+	// A transcript resume imports the session's conversations through
+	// the launcher's own connection, before the session is running.
+	//
+	// @decision(DL-089)
+	if plan.origin() == store.RunFromTranscript {
+		s.importConversations(ctx, sess, live, log)
 	}
 	// The launcher's proxy proved the path; the client that attaches
 	// runs its own.
@@ -758,7 +769,8 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	if len(live.ProxiedKeys) > 0 {
 		log.Note(ProxiedKeysNote(live.ProxiedKeys))
 	}
-	cancelled, err := s.commitLaunch(storeCtx, sess)
+	run := s.runOf(sess, plan, live.Info.ID, pick.image, live.ExitSnapshot)
+	cancelled, err := s.commitLaunch(storeCtx, sess, run)
 	if err != nil {
 		s.deps.Warn(fmt.Sprintf("launch %s: record success: %v", sess.ID, err))
 	}
@@ -822,6 +834,10 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	// @decision(DL-011)
 	s.deps.Metrics.SessionLaunched(storeCtx, kind, true, "", s.deps.Now().Sub(started))
 	log.ready(viewOf(sess, s.deps.Now()))
+	// @decision(DL-087)
+	if plan.number() > 1 {
+		s.deliverFirstMessage(storeCtx, sess)
+	}
 }
 
 // commitLaunch records a finished launch as running, unless a delete
@@ -830,7 +846,7 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 // launch was cancelled rather than committed.
 //
 // @decision(DL-003)
-func (s *Service) commitLaunch(ctx context.Context, sess store.Session) (bool, error) {
+func (s *Service) commitLaunch(ctx context.Context, sess store.Session, run store.Run) (bool, error) {
 	var cancelled bool
 	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
 		var err error
@@ -840,7 +856,11 @@ func (s *Service) commitLaunch(ctx context.Context, sess store.Session) (bool, e
 		if cancelled {
 			return nil
 		}
-		return tx.Sessions().Update(ctx, sess)
+		if err := tx.Sessions().Update(ctx, sess); err != nil {
+			return err
+		}
+		// @decision(DL-085)
+		return recordRun(ctx, tx, run)
 	})
 	return cancelled, err
 }
@@ -856,6 +876,15 @@ func (s *Service) Log(id string) (*launchLog, bool) {
 // Get resolves a session the principal may see.
 func (s *Service) Get(ctx context.Context, p auth.Principal, ref string) (store.Session, error) {
 	sess, err := s.deps.Store.Sessions().Get(ctx, p.OrgID, ref)
+	// A name no live session holds is the caller's newest stopped
+	// session of that name, so a stopped one can be found to resume.
+	//
+	// @decision(DL-087)
+	if errors.Is(err, store.ErrNotFound) && !store.ValidID(ref) {
+		if found, ferr := s.deps.Store.Sessions().List(ctx, p.OrgID, store.SessionFilter{Name: ref, OwnerID: p.UserID, Limit: 1}); ferr == nil && len(found) == 1 {
+			sess, err = found[0], nil
+		}
+	}
 	if err != nil {
 		return store.Session{}, err
 	}

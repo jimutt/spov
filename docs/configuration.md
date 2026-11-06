@@ -113,6 +113,14 @@ quotas:                             # per-user defaults; 0 means the built-in de
   max_cpu: 4
   max_memory_mib: 16384
 
+snapshots:                          # exit snapshots for resume; servers under the credential proxy that keep their sessions
+  enabled: true                     # false takes no new snapshots; those kept age out
+  retention: 168h                   # 1h to 720h (Modal keeps one 30 days)
+  max_per_user: 20                  # oldest pruned first; 0 means no cap
+
+history:                            # a local server's session history, under $XDG_DATA_HOME/spov/sessions
+  retention: 720h                   # kept this long after a session stopped; 0 keeps it forever
+
 metrics:                            # see docs/metrics.md; OTLP is configured by OTEL_EXPORTER_OTLP_* instead
   prometheus_listen: 127.0.0.1:9464 # serves GET /metrics on its own listener, unauthenticated; empty serves none
 

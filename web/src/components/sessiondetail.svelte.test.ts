@@ -45,6 +45,8 @@ const stub = vi.hoisted(() => {
   let jobs: Record<string, unknown>[] = [];
   let jobsAnswer = true;
   let credentials: Record<string, unknown>[] | undefined;
+  let resume: Record<string, unknown> | undefined;
+  let logOpens = 0;
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -77,6 +79,12 @@ const stub = vi.hoisted(() => {
       // stub's.
       const raw = await req.text();
       bodies.push((raw ? JSON.parse(raw) : {}) as Record<string, unknown>);
+      // A session's resume answers with the session, now starting.
+      if (url.pathname.startsWith("/api/v1/sessions/") && url.pathname.endsWith("/resume")) {
+        state = "starting";
+        resume = undefined;
+        return json({ ...SESSION, state }, 202);
+      }
       if (url.pathname.endsWith("/resume")) return new Response(null, { status: 204 });
       if (url.pathname.endsWith("/interrupt")) {
         return json({ interrupted: true, conversation: "ses_1" }, 200);
@@ -84,6 +92,7 @@ const stub = vi.hoisted(() => {
       return json(answer, status);
     }
     if (url.pathname.endsWith("/log")) {
+      logOpens++;
       // Never closes, so the page stays live for the whole test and the
       // test decides what it is told.
       return new Response(
@@ -114,7 +123,7 @@ const stub = vi.hoisted(() => {
       if (!jobsAnswer) return new Promise<Response>(() => {});
       return json({ jobs });
     }
-    if (url.pathname.startsWith("/api/v1/sessions/")) return json({ ...SESSION, state, credentials });
+    if (url.pathname.startsWith("/api/v1/sessions/")) return json({ ...SESSION, state, credentials, resume });
     return new Response(null, { status: 404 });
   });
   globalThis.fetch = fetched as unknown as typeof globalThis.fetch;
@@ -140,7 +149,11 @@ const stub = vi.hoisted(() => {
       deleteAnswer = { status: 204 };
       jobReads = 0;
       credentials = undefined;
+      resume = undefined;
+      logOpens = 0;
     },
+    withResume: (r: Record<string, unknown>) => (resume = r),
+    logOpens: () => logOpens,
     setAnswer: (a: Record<string, unknown>) => (answer = a),
     refuse: (s: number, problem: Record<string, unknown>) => {
       status = s;
@@ -726,5 +739,37 @@ describe("a long transcript", () => {
     expect(drawn()).toBe(250);
     expect(page.control("transcript-earlier")).toBeNull();
     page.done();
+  });
+});
+
+// A stopped session the server says can resume offers Resume, worded by
+// what comes back; resuming reopens the log where the page left off.
+//
+// @decision(DL-090)
+describe("resuming a stopped session", () => {
+  it("offers Resume and follows the resumed session", async () => {
+    stub.sessionState("stopped");
+    stub.withResume({ mode: "snapshot", until: "2026-11-13T09:00:00Z" });
+    const target = document.createElement("div");
+    document.body.append(target);
+    history.replaceState(null, "", "/session/?id=ses_1");
+    const c = mount(SessionDetail, { target });
+    await settle();
+    stub.endTheStream();
+    await settle();
+    const opener = target.querySelector('[data-testid="resume-session"]') as HTMLButtonElement | null;
+    expect(opener, "no Resume offered").not.toBeNull();
+    opener!.click();
+    await settle();
+    expect(target.textContent).toContain("uncommitted changes included");
+    const opens = stub.logOpens();
+    (target.querySelector('[data-testid="resume-session-yes"]') as HTMLButtonElement).click();
+    await settle();
+    await settle();
+    expect(stub.posted()).toContain("/api/v1/sessions/ses_1/resume");
+    expect(stub.logOpens(), "the log was not reopened").toBeGreaterThan(opens);
+    expect(target.querySelector('[data-testid="resume-session"]')).toBeNull();
+    unmount(c);
+    target.remove();
   });
 });

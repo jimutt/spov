@@ -46,6 +46,12 @@ func recordStop(ctx context.Context, m *telemetry.Metrics, st store.Store, sess 
 	// The row is written; a caller that has gone does not undo it.
 	ctx = context.WithoutCancel(ctx)
 	kind, from := telemetry.KindInteractive, sess.CreatedAt
+	// A resumed session's lifetime is its run's.
+	//
+	// @decision(DL-085)
+	if run, err := st.Runs().Current(ctx, sess.OrgID, sess.ID); err == nil && run.N > 1 {
+		from = run.StartedAt
+	}
 	if job, err := st.Jobs().BySession(ctx, sess.OrgID, sess.ID); err == nil {
 		kind, from = telemetry.KindJob, time.Time{}
 		if job.StartedAt != nil {

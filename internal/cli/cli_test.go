@@ -230,7 +230,7 @@ func TestRootHasNoUnexpectedCommands(t *testing.T) {
 	root := NewRoot(Env{Out: &bytes.Buffer{}, Err: &bytes.Buffer{}})
 	want := map[string]bool{
 		"version": true, "config": true, "help": true, "completion": true,
-		"fly": true, "ls": true, "stop": true, "attach": true,
+		"fly": true, "ls": true, "stop": true, "attach": true, "resume": true,
 		"login": true, "logout": true, "serve": true, "whoami": true,
 		"credentials": true,
 		// @decision(DL-045) @decision(DL-023)

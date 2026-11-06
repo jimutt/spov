@@ -246,12 +246,13 @@ select count(*) from allowlist_entries where org_id = $1 and admin;
 select pg_advisory_xact_lock(hashtext($1), hashtext('spov:allowlist'));
 
 -- name: UpsertConversation :one
--- An existing row keeps its id and created_at; the title changes only
--- when the new one says something.
-insert into conversations (id, org_id, session_id, opencode_id, title, created_at, updated_at)
-values ($1, $2, $3, $4, $5, $6, $7)
+-- An existing row keeps its id and created_at; the title and the info
+-- change only when the new one says something.
+insert into conversations (id, org_id, session_id, opencode_id, title, created_at, updated_at, info)
+values ($1, $2, $3, $4, $5, $6, $7, $8)
 on conflict (session_id, opencode_id) do update
 set title      = case when excluded.title = '' then conversations.title else excluded.title end,
+    info       = coalesce(excluded.info, conversations.info),
     updated_at = excluded.updated_at
 returning *;
 
@@ -312,6 +313,10 @@ order by pos desc limit 1;
 select * from events where org_id = $1 and session_id = $2 and name = $3
   and position(@contains::bytea in raw) > 0
 order by pos desc limit 1;
+
+-- name: SetSeqOffset :execrows
+-- @decision(DL-089)
+update conversations set seq_base = $3, seq_after = $4 where id = $1 and org_id = $2;
 
 -- name: LastSeqs :many
 -- One index probe per conversation, on events_opencode_seq.
@@ -531,3 +536,45 @@ values ($1, $2, $3, $4, $5, $6);
 
 -- name: ListAdminEvents :many
 select * from admin_events where org_id = $1 order by at desc, id desc limit $2;
+
+-- name: InsertRun :execrows
+-- @decision(DL-085)
+insert into session_runs (session_id, org_id, owner_id, n, sandbox_id, booted, booted_image_id, opencode,
+                          origin, started_at, running_at, ended_at, snapshot, snapshot_state, snapshot_at, first_message)
+select s.id, s.org_id, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+from sessions s where s.id = $1 and s.org_id = $2;
+
+-- name: UpdateRun :execrows
+-- @decision(DL-085)
+update session_runs
+set sandbox_id = $4, booted = $5, booted_image_id = $6, opencode = $7, origin = $8,
+    running_at = $9, ended_at = $10, snapshot = $11, snapshot_state = $12, snapshot_at = $13, first_message = $14
+where session_id = $1 and org_id = $2 and n = $3;
+
+-- name: CurrentRun :one
+-- @decision(DL-085)
+select * from session_runs where session_id = $1 and org_id = $2 order by n desc limit 1;
+
+-- name: ListRuns :many
+-- @decision(DL-085)
+select * from session_runs where org_id = $1 and session_id = any($2::text[]) order by session_id, n;
+
+-- name: SnapshotRuns :many
+-- @decision(DL-085)
+select * from session_runs
+where ended_at is not null and snapshot_state = any($1::text[])
+order by ended_at, session_id, n;
+
+-- name: EndCurrentRun :exec
+-- @decision(DL-085)
+update session_runs u set ended_at = $3
+where u.session_id = $1 and u.org_id = $2 and u.ended_at is null
+  and u.n = (select max(r.n) from session_runs r where r.session_id = u.session_id);
+
+-- name: ReopenCurrentRun :execrows
+-- @decision(DL-085)
+update session_runs u
+set ended_at = null,
+    snapshot_state = case when u.snapshot_state = 'failed' then 'pending' else u.snapshot_state end
+where u.session_id = $1 and u.org_id = $2
+  and u.n = (select max(r.n) from session_runs r where r.session_id = u.session_id);

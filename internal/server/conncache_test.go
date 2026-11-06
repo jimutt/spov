@@ -620,3 +620,26 @@ func TestASecondRefusalDropsTheFreshConnection(t *testing.T) {
 		t.Error("a known-refused credential stayed cached")
 	}
 }
+
+// A connection cached for an earlier run's sandbox, or its password, is
+// never used for the session's next sandbox.
+//
+// @decision(DL-085)
+func TestACachedConnectionIsForOneSandbox(t *testing.T) {
+	f := newAPIFixture(t)
+	sess := runningSession(t, f)
+	svc := f.srv.Service()
+	p := sessionPrincipal(sess)
+	svc.conns.put(sess.ID, Connection{Token: "earlier-run", ExpiresAt: time.Now().Add(time.Hour), sandbox: "sb-earlier"})
+	got, err := svc.connectReusing(context.Background(), p, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Token == "earlier-run" || got.sandbox != sess.SandboxID {
+		t.Errorf("served %+v for sandbox %s", got, sess.SandboxID)
+	}
+	svc.passwords.putFor(sess.ID, "sb-earlier", "old-password")
+	if _, ok := svc.passwords.getFor(sess.ID, sess.SandboxID); ok {
+		t.Error("an earlier sandbox's password was offered for the next one")
+	}
+}

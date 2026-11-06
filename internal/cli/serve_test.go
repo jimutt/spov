@@ -336,7 +336,7 @@ func TestLocalModeIgnoresAConfiguredDatabase(t *testing.T) {
 		}},
 		Workdir: t.TempDir(),
 	}
-	st, closeStore, err := env.openStore(context.Background(), true)
+	st, closeStore, _, err := env.openStore(context.Background(), true, config.Defaults(), func(string) {})
 	if err != nil {
 		t.Fatalf("local mode tried to open the database: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestAConfiguredDatabaseIsOpenedInHostedMode(t *testing.T) {
 	}
 	// The database is unreachable, so opening it must fail rather than
 	// silently falling back to memory.
-	if _, _, err := env.openStore(context.Background(), false); err == nil {
+	if _, _, _, err := env.openStore(context.Background(), false, config.Defaults(), func(string) {}); err == nil {
 		t.Fatal("hosted mode fell back to the memory store instead of failing")
 	}
 }
@@ -372,7 +372,7 @@ func TestAConfiguredDatabaseIsOpenedInHostedMode(t *testing.T) {
 // @decision(DL-010)
 func TestNoDatabaseGivesTheMemoryStore(t *testing.T) {
 	env := Env{Environ: config.MapEnv{Vars: map[string]string{}}, Workdir: t.TempDir()}
-	st, closeStore, err := env.openStore(context.Background(), false)
+	st, closeStore, _, err := env.openStore(context.Background(), false, config.Defaults(), func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}

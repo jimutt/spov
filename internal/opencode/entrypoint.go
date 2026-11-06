@@ -111,7 +111,28 @@ type Entrypoint struct {
 	//
 	// @decision(DL-076)
 	Files []routedcred.File
+	// Resume is how a resumed session's sandbox starts: ResumeSnapshot
+	// takes up the restored workspace instead of cloning, and
+	// ResumeTranscript clones afresh and says so in the guide. Empty is
+	// a first launch.
+	//
+	// @decision(DL-088) @decision(DL-089)
+	Resume string
 }
+
+// The entrypoint's resume modes.
+//
+// @decision(DL-088) @decision(DL-089)
+const (
+	ResumeSnapshot   = "snapshot"
+	ResumeTranscript = "transcript"
+)
+
+// SnapshotMismatchExitCode is the entrypoint's exit code when a restored
+// snapshot lacks a clone the run recorded.
+//
+// @decision(DL-088)
+const SnapshotMismatchExitCode = 96
 
 // ProxyWaitExitCode is the entrypoint's exit code when the proxy sidecar
 // never answers, so a failed launch says which part failed.
@@ -160,7 +181,14 @@ func (e Entrypoint) Script() (string, error) {
 	e.writeGitCredentials(&b)
 	e.writeGitIdentity(&b)
 
-	e.writeClones(&b)
+	// A restored workspace keeps its clones and their uncommitted work.
+	//
+	// @decision(DL-088)
+	if e.Resume == ResumeSnapshot {
+		e.writeRestoredCheck(&b)
+	} else {
+		e.writeClones(&b)
+	}
 
 	// The reports' directory exists from the start, so a listing that
 	// fails at delivery is a broken read and not an empty job.
@@ -244,7 +272,10 @@ func (e Entrypoint) writeGitCredentials(b *strings.Builder) {
 	}
 	b.WriteString("mkdir -p /root\n")
 	b.WriteString("git config --global credential.helper 'store --file=/root/.git-credentials'\n")
-	b.WriteString("touch /root/.git-credentials && chmod 600 /root/.git-credentials\n")
+	// Emptied first: a restored snapshot already holds the last run's.
+	//
+	// @decision(DL-088)
+	b.WriteString(": > /root/.git-credentials && chmod 600 /root/.git-credentials\n")
 	for _, l := range e.Logins {
 		// The token is expanded by the shell from the environment, so it
 		// never appears in the script itself.
@@ -264,7 +295,17 @@ func (e Entrypoint) writeProxyWait(b *strings.Builder) {
 	}
 	fmt.Fprintf(b, "mkdir -p %s\n", shellQuote(path.Dir(credproxy.MainCAFile)))
 	fmt.Fprintf(b, "printf '%%s\\n' \"$%s\" > %s\n", credproxy.EnvMainCA, shellQuote(credproxy.MainCAFile))
-	fmt.Fprintf(b, "cat %s >> %s\n", shellQuote(credproxy.MainCAFile), shellQuote(credproxy.SystemBundle))
+	// A restored bundle trusts the last run's CA, so it is rebuilt from
+	// the system's certificates rather than added to.
+	//
+	// @decision(DL-088)
+	if e.Resume == ResumeSnapshot {
+		fmt.Fprintf(b, "update-ca-certificates --fresh >/dev/null 2>&1 || "+
+			"{ echo 'spov: could not rebuild the trust store; the previous CA stays trusted' >&2; cat %s >> %s; }\n",
+			shellQuote(credproxy.MainCAFile), shellQuote(credproxy.SystemBundle))
+	} else {
+		fmt.Fprintf(b, "cat %s >> %s\n", shellQuote(credproxy.MainCAFile), shellQuote(credproxy.SystemBundle))
+	}
 	// Every JVM reads the trust store and the proxy from
 	// JAVA_TOOL_OPTIONS, exported only once the store exists: a JVM told
 	// to read a missing store trusts nothing at all.
@@ -277,6 +318,18 @@ func (e Entrypoint) writeProxyWait(b *strings.Builder) {
 	fmt.Fprintf(b, "spov_i=0; until (exec 3<>/dev/tcp/%s/%d) 2>/dev/null; do "+
 		"spov_i=$((spov_i+1)); if [ \"$spov_i\" -ge %d ]; then echo 'spov: the proxy sidecar never answered' >&2; exit %d; fi; sleep 0.1; done\n",
 		credproxy.SidecarName, credproxy.Port, proxyWaitTenths, ProxyWaitExitCode)
+}
+
+// writeRestoredCheck fails a snapshot resume whose workspace lacks a
+// clone the run recorded.
+//
+// @decision(DL-088)
+func (e Entrypoint) writeRestoredCheck(b *strings.Builder) {
+	for _, c := range e.Clones {
+		dir := path.Join(WorkspaceRoot, c.Dir)
+		fmt.Fprintf(b, "[ -d %s ] || { echo %s >&2; exit %d; }\n", shellQuote(dir),
+			shellQuote("spov: the snapshot has no "+dir), SnapshotMismatchExitCode)
+	}
 }
 
 // fileMarker ends each preset file's heredoc.
@@ -314,10 +367,26 @@ func (e Entrypoint) writeWorkspaceGuide(b *strings.Builder) {
 	}
 	fmt.Fprintf(b, "cat > %s <<'SPOV_AGENTS_EOF'\n", AgentsFile)
 	b.WriteString(AgentsMarkdown(e.Workspace, kind))
+	// @decision(DL-089)
+	if e.Resume == ResumeTranscript {
+		b.WriteString("\n" + TranscriptResumeNote)
+	}
 	// @decision(DL-033)
 	b.WriteString("\n" + toolchain.Guide(e.Addons))
 	b.WriteString("SPOV_AGENTS_EOF\n")
 }
+
+// TranscriptResumeNote is the generated guide's section for a session
+// resumed from its transcript.
+//
+// @decision(DL-089)
+const TranscriptResumeNote = `## This session was resumed from its transcript
+
+The conversation is restored, but the workspace is a fresh clone of the
+repositories as the session was launched. Uncommitted changes, installed
+packages and files earlier runs wrote are gone; commits that were pushed
+are on the forge.
+`
 
 // writeAddons starts the add-ons' services in the background without
 // waiting, so they boot while the clones run. Their environment is the
