@@ -376,7 +376,7 @@ sandbox:
   # image: my-custom-image     # an image spov did not build; no addons or apt
 
 opencode:
-  version: 2.0.22
+  version: 2.2.5
   port: 4096
 
 modal:

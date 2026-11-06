@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	modal "github.com/modal-labs/modal-client/go"
+
+	"github.com/jimutt/spov/internal/prep"
 )
 
 // These are the phase-0 spikes of the control plane. They record no
@@ -149,6 +152,40 @@ func startOpenCodeSandboxEnv(t *testing.T, ctx context.Context, p *ModalProvider
 	return startOpenCodeSandboxOn(t, ctx, p, nil, prefix, idle, files, extraEnv, nil)
 }
 
+// spikeConfigPath is OpenCode's global config file in a spike's sandbox.
+const spikeConfigPath = "/root/.config/opencode/opencode.json"
+
+// withSpikeModel gives a spike's OpenCode the model SPOV_SPIKE_MODEL
+// names (`provider/model`, e.g. `openrouter/z-ai/glm-5.3-flash`) and that
+// provider's key from this process's environment. Unset, OpenCode runs a
+// turn on its own default, which works without a key only while OpenCode
+// offers a free one. A spike that writes its own config keeps it.
+func withSpikeModel(t *testing.T, env, files map[string]string) map[string]string {
+	t.Helper()
+	ref := os.Getenv("SPOV_SPIKE_MODEL")
+	if ref == "" {
+		return files
+	}
+	if _, ok := files[spikeConfigPath]; ok {
+		return files
+	}
+	provider, _, err := prep.LookupModel(ref)
+	if err != nil {
+		t.Fatalf("SPOV_SPIKE_MODEL: %v", err)
+	}
+	key := os.Getenv(provider.KeyEnv)
+	if key == "" {
+		t.Fatalf("SPOV_SPIKE_MODEL names %s, whose key %s is not set", provider.ID, provider.KeyEnv)
+	}
+	env[provider.KeyEnv] = key
+	out := maps.Clone(files)
+	if out == nil {
+		out = map[string]string{}
+	}
+	out[spikeConfigPath] = fmt.Sprintf(`{"model":%q}`, ref)
+	return out
+}
+
 // startOpenCodeSandboxOn is startOpenCodeSandboxEnv booted from image
 // (the base image when nil), with Modal's experimental create options.
 func startOpenCodeSandboxOn(t *testing.T, ctx context.Context, p *ModalProvider, from *modal.Image, prefix string, idle time.Duration, files, extraEnv map[string]string, options map[string]any) (*modal.Sandbox, *modal.SandboxCreateConnectCredentials, string) {
@@ -160,6 +197,7 @@ func startOpenCodeSandboxOn(t *testing.T, ctx context.Context, p *ModalProvider,
 		"HOME":              "/root",
 		"PATH":              "/root/.opencode/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
+	files = withSpikeModel(t, env, files)
 	maps.Copy(env, extraEnv)
 	// Seeded through the environment, not the command line: the content
 	// is base64 so nothing in it can end a shell word, and the paths are

@@ -42,7 +42,7 @@ sandbox:
   # apt: [libvips-dev]
 
 opencode:
-  version: 2.0.22
+  version: 2.2.5
   port: 4096
 
 modal:
