@@ -68,6 +68,10 @@ func TestValidateRejects(t *testing.T) {
 			c.Sandbox.IdleTimeout = 2 * time.Hour
 		}, "exceeds sandbox.timeout"},
 		{"no opencode version", func(c *Config) { c.OpenCode.Version = "" }, "opencode.version"},
+		// @decision(DL-075)
+		{"a bad routed name", func(c *Config) { c.Sandbox.Credentials = []string{"Bad_Name"} }, "sandbox.credentials"},
+		{"none beside others", func(c *Config) { c.Sandbox.JobCredentials = []string{"none", "a"} }, "sandbox.job_credentials"},
+		{"a wildcard need", func(c *Config) { c.Sandbox.Needs = []string{"*.acme.com"} }, "sandbox.needs"},
 		// @decision(DL-043)
 		{"unknown git access", func(c *Config) { c.Sandbox.GitAccess = "everything" }, "sandbox.git_access"},
 		{"unknown job git access", func(c *Config) { c.Sandbox.JobGitAccess = "All" }, "sandbox.job_git_access"},

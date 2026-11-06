@@ -320,26 +320,28 @@ func (q *Queries) CreateMint(ctx context.Context, arg CreateMintParams) error {
 
 const createSession = `-- name: CreateSession :exec
 insert into sessions (id, org_id, owner_id, name, state, sandbox_id, request, clones,
-                      landing, error, created_at, updated_at, stopped_at, credentials, booted)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                      landing, error, created_at, updated_at, stopped_at, credentials, booted,
+                      routed_credentials)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 `
 
 type CreateSessionParams struct {
-	ID          string
-	OrgID       string
-	OwnerID     string
-	Name        string
-	State       string
-	SandboxID   string
-	Request     []byte
-	Clones      []byte
-	Landing     string
-	Error       string
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-	StoppedAt   pgtype.Timestamptz
-	Credentials []byte
-	Booted      []byte
+	ID                string
+	OrgID             string
+	OwnerID           string
+	Name              string
+	State             string
+	SandboxID         string
+	Request           []byte
+	Clones            []byte
+	Landing           string
+	Error             string
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	StoppedAt         pgtype.Timestamptz
+	Credentials       []byte
+	Booted            []byte
+	RoutedCredentials []byte
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
@@ -359,6 +361,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 		arg.StoppedAt,
 		arg.Credentials,
 		arg.Booted,
+		arg.RoutedCredentials,
 	)
 	return err
 }
@@ -909,7 +912,7 @@ func (q *Queries) GetJobForUpdate(ctx context.Context, arg GetJobForUpdateParams
 }
 
 const getLiveSessionByName = `-- name: GetLiveSessionByName :one
-select id, org_id, owner_id, name, state, sandbox_id, request, clones, landing, error, created_at, updated_at, stopped_at, cancel_requested_at, credentials, git_token_minted_at, git_token_expires_at, opencode_grant, booted from sessions
+select id, org_id, owner_id, name, state, sandbox_id, request, clones, landing, error, created_at, updated_at, stopped_at, cancel_requested_at, credentials, git_token_minted_at, git_token_expires_at, opencode_grant, booted, routed_credentials from sessions
 where org_id = $1 and name = $2 and state in ('starting', 'running')
 `
 
@@ -941,6 +944,7 @@ func (q *Queries) GetLiveSessionByName(ctx context.Context, arg GetLiveSessionBy
 		&i.GitTokenExpiresAt,
 		&i.OpencodeGrant,
 		&i.Booted,
+		&i.RoutedCredentials,
 	)
 	return i, err
 }
@@ -973,7 +977,7 @@ func (q *Queries) GetOrgCredential(ctx context.Context, arg GetOrgCredentialPara
 }
 
 const getSessionByID = `-- name: GetSessionByID :one
-select id, org_id, owner_id, name, state, sandbox_id, request, clones, landing, error, created_at, updated_at, stopped_at, cancel_requested_at, credentials, git_token_minted_at, git_token_expires_at, opencode_grant, booted from sessions where id = $1 and org_id = $2
+select id, org_id, owner_id, name, state, sandbox_id, request, clones, landing, error, created_at, updated_at, stopped_at, cancel_requested_at, credentials, git_token_minted_at, git_token_expires_at, opencode_grant, booted, routed_credentials from sessions where id = $1 and org_id = $2
 `
 
 type GetSessionByIDParams struct {
@@ -1004,12 +1008,13 @@ func (q *Queries) GetSessionByID(ctx context.Context, arg GetSessionByIDParams) 
 		&i.GitTokenExpiresAt,
 		&i.OpencodeGrant,
 		&i.Booted,
+		&i.RoutedCredentials,
 	)
 	return i, err
 }
 
 const getSessionBySandbox = `-- name: GetSessionBySandbox :one
-select id, org_id, owner_id, name, state, sandbox_id, request, clones, landing, error, created_at, updated_at, stopped_at, cancel_requested_at, credentials, git_token_minted_at, git_token_expires_at, opencode_grant, booted from sessions where sandbox_id = $1 and sandbox_id <> ''
+select id, org_id, owner_id, name, state, sandbox_id, request, clones, landing, error, created_at, updated_at, stopped_at, cancel_requested_at, credentials, git_token_minted_at, git_token_expires_at, opencode_grant, booted, routed_credentials from sessions where sandbox_id = $1 and sandbox_id <> ''
 `
 
 func (q *Queries) GetSessionBySandbox(ctx context.Context, sandboxID string) (Session, error) {
@@ -1035,6 +1040,7 @@ func (q *Queries) GetSessionBySandbox(ctx context.Context, sandboxID string) (Se
 		&i.GitTokenExpiresAt,
 		&i.OpencodeGrant,
 		&i.Booted,
+		&i.RoutedCredentials,
 	)
 	return i, err
 }
@@ -1852,7 +1858,7 @@ func (q *Queries) ListLiveJobs(ctx context.Context) ([]Job, error) {
 }
 
 const listLiveSessions = `-- name: ListLiveSessions :many
-select id, org_id, owner_id, name, state, sandbox_id, request, clones, landing, error, created_at, updated_at, stopped_at, cancel_requested_at, credentials, git_token_minted_at, git_token_expires_at, opencode_grant, booted from sessions where state in ('starting', 'running') order by id
+select id, org_id, owner_id, name, state, sandbox_id, request, clones, landing, error, created_at, updated_at, stopped_at, cancel_requested_at, credentials, git_token_minted_at, git_token_expires_at, opencode_grant, booted, routed_credentials from sessions where state in ('starting', 'running') order by id
 `
 
 func (q *Queries) ListLiveSessions(ctx context.Context) ([]Session, error) {
@@ -1884,6 +1890,7 @@ func (q *Queries) ListLiveSessions(ctx context.Context) ([]Session, error) {
 			&i.GitTokenExpiresAt,
 			&i.OpencodeGrant,
 			&i.Booted,
+			&i.RoutedCredentials,
 		); err != nil {
 			return nil, err
 		}
@@ -2807,25 +2814,27 @@ func (q *Queries) UpdateJob(ctx context.Context, arg UpdateJobParams) (int64, er
 const updateSession = `-- name: UpdateSession :execrows
 update sessions
 set owner_id = $3, name = $4, state = $5, sandbox_id = $6, request = $7, clones = $8,
-    landing = $9, error = $10, updated_at = $11, stopped_at = $12, credentials = $13, booted = $14
+    landing = $9, error = $10, updated_at = $11, stopped_at = $12, credentials = $13, booted = $14,
+    routed_credentials = $15
 where id = $1 and org_id = $2
 `
 
 type UpdateSessionParams struct {
-	ID          string
-	OrgID       string
-	OwnerID     string
-	Name        string
-	State       string
-	SandboxID   string
-	Request     []byte
-	Clones      []byte
-	Landing     string
-	Error       string
-	UpdatedAt   pgtype.Timestamptz
-	StoppedAt   pgtype.Timestamptz
-	Credentials []byte
-	Booted      []byte
+	ID                string
+	OrgID             string
+	OwnerID           string
+	Name              string
+	State             string
+	SandboxID         string
+	Request           []byte
+	Clones            []byte
+	Landing           string
+	Error             string
+	UpdatedAt         pgtype.Timestamptz
+	StoppedAt         pgtype.Timestamptz
+	Credentials       []byte
+	Booted            []byte
+	RoutedCredentials []byte
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (int64, error) {
@@ -2844,6 +2853,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) (i
 		arg.StoppedAt,
 		arg.Credentials,
 		arg.Booted,
+		arg.RoutedCredentials,
 	)
 	if err != nil {
 		return 0, err

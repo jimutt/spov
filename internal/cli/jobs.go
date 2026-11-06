@@ -42,6 +42,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		clock    string
 		access   string
 		asJSON   bool
+		routed   routedFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "create [goal]",
@@ -57,7 +58,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 			}
 			return createJob(cmd.Context(), env, createOptions{
 				Goal: goal, Kind: kind, Repos: repos, Landing: landing, Check: check,
-				Model: model, MaxDuration: clock, GitAccess: access, JSON: asJSON,
+				Model: model, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
 			})
 		},
 	}
@@ -85,11 +86,14 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 	cmd.Flags().StringVar(&access, "git-access", "",
 		"how far the sandbox's git credentials reach: repos (the job's) or all (every repository they can);"+
 			" sandbox.job_git_access, then your account's job default, then repos, when unset")
+	addRoutedFlags(cmd, &routed, "sandbox.job_credentials")
 	jsonFlag(cmd, &asJSON)
 	return cmd
 }
 
 type createOptions struct {
+	// @decision(DL-075)
+	Routed  routedFlags
 	Goal    string
 	Kind    string
 	Model   string
@@ -195,6 +199,11 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		GitAccessPreferred: opts.GitAccess == "" && sb.JobGitAccess != "",
 		// @decision(DL-042)
 		CredentialPreference: credentialPreference(cfg),
+		// A job never takes sandbox.credentials.
+		//
+		// @decision(DL-075)
+		Credentials: opts.Routed.Names, NoCredentials: opts.Routed.None,
+		CredentialsPreferred: sb.JobCredentials, Needs: sb.Needs,
 	})
 	if err != nil {
 		return jobError(err)

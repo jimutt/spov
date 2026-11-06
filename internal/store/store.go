@@ -225,6 +225,11 @@ type Session struct {
 	//
 	// @decision(DL-043)
 	Credentials []SessionCredential
+	// RoutedCredentials are the routed credentials the launch attached,
+	// never a secret. Written by the launch, with Clones.
+	//
+	// @decision(DL-075)
+	RoutedCredentials []SessionRoutedCredential
 	// GitTokenMintedAt and GitTokenExpiresAt are the session's current
 	// renewable git token: when it was minted and when it lapses. Never
 	// the token. Written only by SetGitToken; Update keeps the stored
@@ -254,6 +259,34 @@ type Session struct {
 type BootedImage struct {
 	Image  string   `json:"image,omitempty"`
 	Addons []string `json:"addons,omitempty"`
+}
+
+// SessionRoutedCredential is one routed credential a session holds: its
+// name, the tier it came from, and its route as the launch resolved it.
+//
+// @decision(DL-075)
+type SessionRoutedCredential struct {
+	Name   string   `json:"name"`
+	Tier   string   `json:"tier"`
+	Hosts  []string `json:"hosts"`
+	Paths  []string `json:"paths,omitempty"`
+	Scheme string   `json:"scheme"`
+	User   string   `json:"user,omitempty"`
+	Header string   `json:"header,omitempty"`
+	Preset string   `json:"preset,omitempty"`
+}
+
+// RoutedRequest is which routed credentials a launch asks for: its own
+// list (Names, or None for none), the narrowing its configuration sent
+// (Preferred, where "none" alone means none), and the hosts its project
+// says it needs.
+//
+// @decision(DL-075)
+type RoutedRequest struct {
+	Names     []string `json:",omitempty"`
+	None      bool     `json:",omitempty"`
+	Preferred []string `json:",omitempty"`
+	Needs     []string `json:",omitempty"`
 }
 
 // CredentialKind is what a sandbox holds for one platform.
@@ -377,6 +410,10 @@ type SessionRequest struct {
 	//
 	// @decision(DL-042)
 	CredentialPreference map[string]string `json:",omitempty"`
+	// Routed is which routed credentials the launch asks for.
+	//
+	// @decision(DL-075)
+	Routed RoutedRequest `json:",omitzero"`
 	// Addons and Apt make Image a variant of the base: curated add-ons
 	// in canonical `name@version` form, and extra Debian packages,
 	// resolved before the row is written.

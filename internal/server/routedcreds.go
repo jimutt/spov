@@ -43,6 +43,14 @@ type RoutedCredentialSource interface {
 	Open(ctx context.Context, orgID, userID string) ([]HeldRoute, error)
 }
 
+// OrgRoutedCredentialSource keeps the organisation's routed credentials.
+//
+// @decision(DL-074)
+type OrgRoutedCredentialSource interface {
+	// Open is every one, with its secret.
+	Open(ctx context.Context, orgID string) ([]HeldRoute, error)
+}
+
 // HeldRoute is a routed credential with its secret, in memory only while
 // a launch resolves it.
 //
@@ -245,6 +253,10 @@ var errInvalidRoute = errors.New("invalid routed credential")
 //
 // @decision(DL-072) @decision(DL-073)
 func checkRoutedCredential(r routedcred.Route, secret string) error {
+	// @decision(DL-075)
+	if r.Name == NoCredentials {
+		return fmt.Errorf("%w: %s is reserved: it is how a configuration attaches no routed credential", errInvalidRoute, NoCredentials)
+	}
 	if err := r.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", errInvalidRoute, err)
 	}
