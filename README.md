@@ -38,6 +38,22 @@ dashboard and jobs need, not a remote host.
 
 ## Install
 
+On Linux or macOS (Windows: inside WSL), from a published release:
+
+```sh
+curl -fsSLO https://github.com/jimutt/spov/releases/latest/download/install.sh
+less install.sh                  # read it first
+sh install.sh --with-opencode    # spov to ~/.local/bin, OpenCode at the pin
+```
+
+or, trusting it unread, `curl -fsSL https://github.com/jimutt/spov/releases/latest/download/install.sh | sh`.
+The script checks the archive against the release's `checksums.txt` before
+unpacking it, and the checksums' signature when `cosign` is installed.
+`SPOV_VERSION=0.1.0` pins a release, and running it again updates spov. With
+Homebrew: `brew install jimutt/tap/spov`.
+
+### From source
+
 spov needs Go 1.26 or newer. The dashboard is built with Bun:
 
 ```sh
@@ -395,6 +411,13 @@ storing it, and prompts without echo so it stays out of your shell history.
 `spov credentials` lists what is stored and `spov credentials remove <name>`
 removes one. A name is a platform from config (or `github`, or
 `forgejo:<host>`, `gitea:<host>` or `gitlab:<host>`), or a provider's variable such as `ANTHROPIC_API_KEY`.
+
+If `gh` is signed in on this machine, `spov credentials add github --from-gh`
+uses its login instead of a stored token: spov keeps only a note that the
+platform's credential is gh's, and asks `gh auth token` again at each launch, so
+`gh auth logout` or a re-login takes effect at once. The token reaches what gh's
+grant does (usually `repo`, often `workflow`); the credential proxy narrows what a
+sandbox can do with it, as for any stored token. A hosted server refuses it.
 
 **Hosted.** Each user's credentials are stored on the server, encrypted, and
 used for that user's sessions and jobs. Store them from the dashboard's Settings
