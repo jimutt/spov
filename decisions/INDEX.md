@@ -2,6 +2,13 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-078 | A forge token also reads its forge's package registry, for the session's own namespaces | proposed | git | routed-credentials, git, credentials, proxy, packages |
+| DL-077 | A server without the proxy refuses to attach a routed credential, and the session page names each one with its hosts | proposed | server | routed-credentials, credentials, security, web |
+| DL-076 | Presets for npm, Maven, NuGet and PyPI fill in a routed credential's scheme and write the client's config, and Java trusts the sandbox's CA | proposed | sandbox | routed-credentials, sandbox, presets, toolchain |
+| DL-075 | Every session gets the routed credentials it can by default, narrowed by the credential, the project file or the launch, with a default of its own for jobs | proposed | server | routed-credentials, credentials, config, jobs |
+| DL-074 | An admin defines the organisation's routed credentials, sealed under the organisation's AAD and audited | proposed | server | routed-credentials, credentials, admin, security |
+| DL-073 | A user stores a routed credential with spov credentials add, sealed with its route when hosted and in the keyring with an index file locally | proposed | server | routed-credentials, credentials, security, cli |
+| DL-072 | A routed credential is a secret plus a route, and the proxy sidecar sets it only on the route's hosts and paths | proposed | sandbox | routed-credentials, sandbox, proxy, credentials, security |
 | DL-071 | A long session costs no scan in the memory store, and its transcript and log are gzipped | accepted | server | server, store, performance, compression |
 | DL-070 | The transcript draws a window of its newest 200 blocks, and the tail latch releases only when the reader scrolls up | accepted | web | web, transcript, performance, tail |
 | DL-069 | The recorder reads a conversation's messages page by page, newest first, until a page changes nothing in the store | accepted | server | server, recorder |
