@@ -14,9 +14,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/jimutt/spov/internal/config"
 )
 
 // tarGz packs files, name to contents, each executable.
@@ -222,5 +225,46 @@ func TestInstallScriptFetchesThePinnedOpenCode(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".local", "share", "spov", "bin", "2.0.22", "opencode")); err == nil {
 		t.Error("a bad OpenCode download was installed")
+	}
+}
+
+// The real binary reads every SPOV_* variable as config, so the script
+// must not hand it its own: SPOV_VERSION is also the config's version
+// field, and spov config show then fails, leaving --with-opencode with no
+// pin. The stub cannot show this.
+//
+// @decision(DL-080)
+func TestTheRealBinaryNeverSeesTheScriptsVariables(t *testing.T) {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("the fake release is linux/amd64")
+	}
+	if testing.Short() {
+		t.Skip("builds spov")
+	}
+	bin := filepath.Join(t.TempDir(), "spov")
+	build := exec.Command("go", "build", "-o", bin, "../cmd/spov")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	real, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease(t)
+	r.mu.Lock()
+	r.archive = tarGz(t, map[string]string{"spov": string(real)})
+	sum := sha256.Sum256(r.archive)
+	r.checksums = hex.EncodeToString(sum[:]) + "  spov_1.2.3_linux_amd64.tar.gz\n"
+	r.mu.Unlock()
+
+	home := t.TempDir()
+	out, err := r.install(t, home, []string{"--with-opencode"}, "SPOV_VERSION=1.2.3")
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	want := filepath.Join(home, ".local", "share", "spov", "bin", config.DefaultOpenCodeVersion, "opencode")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("OpenCode is not at the binary's own default %s:\n%s", config.DefaultOpenCodeVersion, out)
 	}
 }

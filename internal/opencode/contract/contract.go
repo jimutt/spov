@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 //go:embed openapi.json
@@ -330,7 +331,7 @@ func (d *Document) checkBody(op operation, body []byte) error {
 // TestTheValidatorKnowsEveryKeywordTheDocumentUses.
 var (
 	Keywords = []string{"$ref", "type", "enum", "pattern", "properties", "required", "additionalProperties",
-		"items", "prefixItems", "minItems", "anyOf", "allOf", "minimum", "maximum", "exclusiveMinimum"}
+		"items", "prefixItems", "minItems", "anyOf", "allOf", "not", "minimum", "maximum", "exclusiveMinimum", "minLength"}
 	Ignored = []string{"description", "format", "contentEncoding", "contentMediaType", "title", "default", "examples"}
 )
 
@@ -394,6 +395,9 @@ func (d *Document) validate(v any, schema map[string]any, at string) error {
 			}
 		}
 	}
+	if not, ok := schema["not"].(map[string]any); ok && d.validate(v, not, at) == nil {
+		return fmt.Errorf("%s: %s matches a schema it must not", at, literal(v))
+	}
 	if _, ok := schema["type"]; ok && !typeMatches(v, schema) {
 		return fmt.Errorf("%s: %s is not of type %v", at, jsonType(v), schema["type"])
 	}
@@ -409,6 +413,12 @@ func (d *Document) validate(v any, schema map[string]any, at string) error {
 			if !re.MatchString(s) {
 				return fmt.Errorf("%s: %q does not match %s", at, s, p)
 			}
+		}
+	}
+	if min, ok := number(schema["minLength"]); ok {
+		// JSON Schema counts a string's length in code points.
+		if s, ok := v.(string); ok && float64(utf8.RuneCountInString(s)) < min {
+			return fmt.Errorf("%s: %q is shorter than %v", at, s, min)
 		}
 	}
 	if err := checkBounds(v, schema, at); err != nil {

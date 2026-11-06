@@ -3948,7 +3948,7 @@ export interface operations {
                          */
                         event: "end";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     } | {
@@ -3959,7 +3959,7 @@ export interface operations {
                          */
                         event: "error";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     } | {
@@ -3970,7 +3970,7 @@ export interface operations {
                          */
                         event: "sessions";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     })[];
@@ -4225,7 +4225,7 @@ export interface operations {
                          */
                         event: "error";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     } | {
@@ -4236,7 +4236,7 @@ export interface operations {
                          */
                         event: "note";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     } | {
@@ -4247,7 +4247,7 @@ export interface operations {
                          */
                         event: "ready";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     } | {
@@ -4258,7 +4258,7 @@ export interface operations {
                          */
                         event: "step";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     })[];
@@ -4595,7 +4595,7 @@ export interface operations {
                          */
                         event: "end";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     } | {
@@ -4606,7 +4606,7 @@ export interface operations {
                          */
                         event: "error";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     } | {
@@ -4617,7 +4617,7 @@ export interface operations {
                          */
                         event: "log";
                         /** @description The event ID. */
-                        id?: number;
+                        id?: number | string;
                         /** @description The retry time in milliseconds. */
                         retry?: number;
                     })[];

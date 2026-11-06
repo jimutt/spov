@@ -12,7 +12,7 @@
 # multi-architecture build emulates nothing.
 #
 # @decision(DL-082)
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.0 AS web
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.4 AS web
 WORKDIR /web
 COPY web/package.json web/bun.lock ./
 # Frozen installs are not automatic in CI the way npm's are.

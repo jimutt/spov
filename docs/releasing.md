@@ -8,7 +8,24 @@ A release is a tag. `.github/workflows/release.yml` turns it into a
 git tag v0.1.0 && git push origin v0.1.0
 ```
 
-The workflow:
+## Before tagging
+
+- **Refresh the model list the binary ships.** A server reads models.dev's
+  live list within its first hour and keeps it fresh, but it falls back
+  to the embedded snapshot until then and whenever models.dev is out of
+  reach (DL-013). Nothing refreshes the snapshot automatically:
+
+  ```sh
+  scripts/model-snapshot.sh
+  ```
+
+  Review the diff in `internal/modelcat/snapshot.json`, and merge it before
+  the tag. `TestTheSnapshotHoldsEveryRung` fails if a prep pass's model
+  family has dropped out of the list (DL-047).
+- **Write the release notes by hand.** goreleaser's changelog lists every
+  commit since the last tag. Replace it in the draft before publishing.
+
+## What the workflow does
 
 1. builds this platform's binary as the release does and runs
    `scripts/release-check.sh` on it. The release stops if the binary lacks
