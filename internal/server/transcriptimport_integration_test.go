@@ -3,6 +3,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -52,6 +53,7 @@ func TestIntegrationSTR1TranscriptImport(t *testing.T) {
 	if err := setConversationModel(ctx, a, id, "probe/m"); err != nil {
 		t.Fatal(err)
 	}
+	seqA := watchSeqs(ctx, t, a, id)
 	body, _ := json.Marshal(steerBody(MessageIDPrefix+"str1a", "Remember the word PINEAPPLE.", "steer", ""))
 	if _, err := sandboxPostJSON(ctx, a, promptURL(a, id), body); err != nil {
 		t.Fatalf("prompting: %v", err)
@@ -109,6 +111,7 @@ func TestIntegrationSTR1TranscriptImport(t *testing.T) {
 	if err := setConversationModel(ctx, b, newID, "probe/m"); err != nil {
 		t.Fatal(err)
 	}
+	seqB := watchSeqs(ctx, t, b, newID)
 	body, _ = json.Marshal(steerBody(MessageIDPrefix+"str1b", "Which word did I ask you to remember?", "steer", ""))
 	if _, err := sandboxPostJSON(ctx, b, promptURL(b, newID), body); err != nil {
 		t.Fatalf("prompting the imported conversation: %v", err)
@@ -121,6 +124,54 @@ func TestIntegrationSTR1TranscriptImport(t *testing.T) {
 	} else {
 		t.Log("the model was sent the imported history on the next turn")
 	}
+	// The recorder keys a conversation's durable frames by seq and
+	// marks a gap against the last one stored (DL-017): does the
+	// imported conversation's log continue the first server's, or
+	// start again?
+	probeWait(ctx, func() bool { return countRole(probeMessages(ctx, t, b, newID), "assistant") > 1 })
+	time.Sleep(time.Second)
+	loA, hiA := seqA()
+	loB, hiB := seqB()
+	t.Logf("durable seq: the first server's turn %d..%d; the imported conversation's next turn %d..%d", loA, hiA, loB, hiB)
+	if loB <= hiA {
+		t.Logf("the imported conversation's durable log starts again: seq %d after %d, so stored frames would collide (DL-017)", loB, hiA)
+	}
+}
+
+// watchSeqs follows conn's event stream and reports the lowest and
+// highest durable seq seen on conversation id.
+func watchSeqs(ctx context.Context, t *testing.T, conn Connection, id string) func() (int64, int64) {
+	t.Helper()
+	body, err := openSandboxEvents(ctx, conn)
+	if err != nil {
+		t.Fatalf("event stream: %v", err)
+	}
+	t.Cleanup(func() { _ = body.Close() })
+	var mu sync.Mutex
+	var lo, hi int64
+	go func() {
+		sc := bufio.NewScanner(body)
+		sc.Buffer(make([]byte, 1<<20), 16<<20)
+		for sc.Scan() {
+			line, ok := strings.CutPrefix(sc.Text(), "data: ")
+			if !ok || !strings.Contains(line, id) {
+				continue
+			}
+			var frame map[string]any
+			if json.Unmarshal([]byte(line), &frame) != nil {
+				continue
+			}
+			if seq := durableSeq(frame); seq > 0 {
+				mu.Lock()
+				if lo == 0 || seq < lo {
+					lo = seq
+				}
+				hi = max(hi, seq)
+				mu.Unlock()
+			}
+		}
+	}()
+	return func() (int64, int64) { mu.Lock(); defer mu.Unlock(); return lo, hi }
 }
 
 func countRole(msgs []store.Message, role string) int {
