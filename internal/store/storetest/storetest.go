@@ -342,6 +342,52 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("stretch = %s", got)
 		}
 	},
+	// @decision(DL-085)
+	"a rolled-back run is gone, and runs ended together sort by session and number": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		a := session(store.NewID(t0), "org", "u1", "ra", store.StateStopped)
+		b := session(store.NewID(t0.Add(time.Millisecond)), "org", "u1", "rb", store.StateStopped)
+		for _, in := range []store.Session{a, b} {
+			if err := s.Sessions().Create(ctx, in); err != nil {
+				t.Fatal(err)
+			}
+		}
+		end := t0.Add(time.Hour)
+		run := func(sess string, n int) store.Run {
+			return store.Run{OrgID: "org", SessionID: sess, OwnerID: "u1", N: n, Origin: store.RunFromLaunch,
+				StartedAt: t0, EndedAt: &end, SnapshotState: store.SnapshotKept, Snapshot: "im"}
+		}
+		boom := errors.New("roll back")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Runs().Insert(ctx, run(a.ID, 1)); err != nil {
+				return err
+			}
+			return boom
+		}); !errors.Is(err, boom) {
+			t.Fatalf("tx: %v", err)
+		}
+		if _, err := s.Runs().Current(ctx, "org", a.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a rolled-back run survived: %v", err)
+		}
+		for _, r := range []store.Run{run(b.ID, 2), run(a.ID, 1), run(b.ID, 1)} {
+			if err := s.Runs().Insert(ctx, r); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := s.Runs().Snapshots(ctx, store.SnapshotKept)
+		if err != nil || len(got) != 3 {
+			t.Fatalf("snapshots: %+v, %v", got, err)
+		}
+		if got[0].SessionID != a.ID || got[1].SessionID != b.ID || got[1].N != 1 || got[2].N != 2 {
+			t.Errorf("order: %+v", got)
+		}
+		if err := s.Runs().Reopen(ctx, "org", "nope"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("reopen a session with no runs: %v", err)
+		}
+		if d := (store.Run{}).Stretch(t0, end); d != 0 {
+			t.Errorf("a run with no start ran %s", d)
+		}
+	},
 	"a session's sealed proxy CA is kept apart and replaced whole": func(t *testing.T, s store.Store) {
 		ctx := context.Background()
 		in := session(store.NewID(t0), "org", "u1", "gamma", store.StateRunning)

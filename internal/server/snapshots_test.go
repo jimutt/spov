@@ -279,3 +279,19 @@ func TestSnapshotSettingsAreBounded(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// The snapshot loop runs a pass at once and stops with its context.
+//
+// @decision(DL-085)
+func TestTheSnapshotLoopStopsWithItsContext(t *testing.T) {
+	f := newRecoverFixtureWith(t, withSnapshots)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { f.srv.svc.RunSnapshots(ctx); close(done) }()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunSnapshots did not stop")
+	}
+}

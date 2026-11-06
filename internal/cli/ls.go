@@ -118,8 +118,13 @@ func writeSessionTable(env *Env, sessions []server.SessionView, now time.Time) e
 		if repos == "" {
 			repos = "-"
 		}
+		// @decision(DL-090)
+		state := string(s.State)
+		if r := s.Resume; r != nil && r.Mode == server.ResumeSnapshot && r.Until != nil {
+			state += " (resumable until " + r.Until.Local().Format("Jan 2") + ")"
+		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			name, s.ID, s.State, formatAge(now.Sub(s.CreatedAt)), repos); err != nil {
+			name, s.ID, state, formatAge(now.Sub(s.CreatedAt)), repos); err != nil {
 			return err
 		}
 	}

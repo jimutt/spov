@@ -110,6 +110,7 @@ terminated.
 | `spov attach <name\|id>` | Join a session, waiting first if it is still starting |
 | `spov ls` (`list`) | List sessions, newest first: five a page (`-n`, `--page`), plus any live session older than that |
 | `spov stop <name\|id>` | Stop one session and terminate its sandbox; `--all` stops every running one. Stopping a job's session cancels the job. |
+| `spov resume <name\|id>` | Reopen a stopped session in a new sandbox and attach the TUI (hosted servers) |
 
 `spov fly` flags:
 
@@ -131,6 +132,25 @@ terminated.
 Attaching never terminates a session: quitting leaves the sandbox up, and
 `spov stop` ends it (`spov stop --sync` syncs back first). A sync that fails
 leaves the sandbox running, so the work is not lost.
+
+### Resuming a stopped session
+
+On a hosted server, a stopped interactive session can be reopened with
+`spov resume`, the session page's Resume button, or by writing in its
+composer ("Resume and send"). It is the same session, with its history, in
+a new sandbox, and it comes back one of two ways:
+
+- **From its snapshot**, when the server under the credential proxy kept
+  one: the workspace is as it was when the session stopped, uncommitted
+  changes and installed packages included. Snapshots are kept 7 days and
+  at most 20 per user by default (`snapshots` in the server's config).
+- **From its transcript** otherwise: the repositories are cloned fresh and
+  the conversation is restored, but uncommitted work is gone. The CLI asks
+  first; `--yes` skips the question.
+
+The settings are as launched; `--timeout` sets a new lifetime. Leaving the
+TUI stops the session again unless `--keep`. `spov attach` on a stopped
+session offers to resume it. A job is not resumed.
 
 A session that is still starting is waited on, with a line each time it
 moves on. A job's session is joined once the job has opened its

@@ -6,20 +6,27 @@
   //
   // @decision(DL-057) @decision(DL-056)
   import { tick } from 'svelte';
-  import { danger, dangerConfirm, secondary } from './ui';
+  import { danger, dangerConfirm, primary, secondary } from './ui';
 
+  // `tone` is "safe" for an act that costs money but destroys nothing,
+  // such as Resume, which is drawn as a primary button and backs out
+  // with `no`. @decision(DL-090)
   let {
     label,
     question,
     yes,
     run,
     testid,
+    tone = 'danger',
+    no = 'Keep it',
   }: {
     label: string;
     question: string;
     yes: string;
     run: () => Promise<void>;
     testid: string;
+    tone?: 'danger' | 'safe';
+    no?: string;
   } = $props();
 
   let asking = $state(false);
@@ -72,7 +79,7 @@
       <button
         type="button"
         data-testid={`${testid}-yes`}
-        class={dangerConfirm}
+        class={tone === 'safe' ? primary : dangerConfirm}
         disabled={pending}
         onkeydown={onKeydown}
         onclick={confirm}>{pending ? 'Working…' : yes}</button
@@ -84,7 +91,7 @@
         disabled={pending}
         bind:this={keep}
         onkeydown={onKeydown}
-        onclick={back}>Keep it</button
+        onclick={back}>{no}</button
       >
     </div>
   </div>
@@ -92,7 +99,7 @@
   <button
     type="button"
     data-testid={testid}
-    class={danger}
+    class={tone === 'safe' ? secondary : danger}
     bind:this={opener}
     onclick={ask}>{label}</button
   >

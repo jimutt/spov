@@ -80,6 +80,11 @@ type attachOptions struct {
 	//
 	// @decision(DL-027)
 	Sync bool
+	// StopsOnCancel says the wait's Ctrl-C ends the session, as `spov
+	// resume`'s does.
+	//
+	// @decision(DL-090)
+	StopsOnCancel bool
 }
 
 // runAttach resolves the session, waits until it can be joined, connects
@@ -102,6 +107,14 @@ func runAttach(ctx context.Context, env *Env, opts attachOptions) error {
 	view, err := c.GetSession(ctx, opts.Ref)
 	if err != nil {
 		return sessionError(opts.Ref, err)
+	}
+	// A stopped session can be resumed rather than only refused.
+	//
+	// @decision(DL-090)
+	if view.Resume != nil {
+		if view, err = env.offerResume(ctx, c, view); err != nil {
+			return err
+		}
 	}
 	// @decision(DL-027)
 	if opts.Sync {

@@ -65,6 +65,14 @@ export interface LiveOptions {
    * @decision(DL-018)
    */
   onEnded?: () => void;
+  /**
+   * after is the cursor to open from, for a stream reopened once its
+   * source started again: a resumed session's log continues where the
+   * page's left off.
+   *
+   * @decision(DL-090)
+   */
+  after?: number;
 }
 
 /**
@@ -99,7 +107,7 @@ async function* liveStream<T>(
   // The last cursor yielded, sent on the next open. Without it every
   // reopen — one every five minutes, by design — replays the stream
   // from the beginning, and the caller sees everything twice.
-  let cursor: number | undefined;
+  let cursor: number | undefined = opts.after;
   // Whether events may have been lost since the caller last read. Set
   // when a stream ends any way but the server's own, and reported once
   // the stream is back up — not once per attempt, so a server that is

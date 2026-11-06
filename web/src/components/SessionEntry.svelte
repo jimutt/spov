@@ -9,6 +9,7 @@
   // @decision(DL-058) @decision(DL-055) @decision(DL-060)
   import { age, duration, kindName, lifetime, listState, live, money, repoNames, speaker, when } from '../lib/format';
   import type { Session } from '../lib/format';
+  import { resumableLine } from '../lib/resume';
   import StateMark from './StateMark.svelte';
 
   let { session, now }: { session: Session; now: Date } = $props();
@@ -23,6 +24,8 @@
   const state = $derived(listState(session));
   const last = $derived(session.last_message);
   const said = $derived(last?.text?.trim() ?? '');
+  // @decision(DL-090)
+  const resumable = $derived(resumableLine(session.resume));
 
   const trackTone = $derived(!live(session) ? 'bg-rule-2' : life.warn ? 'bg-gold' : 'bg-olive');
 </script>
@@ -34,6 +37,7 @@
   <span class="pt-0.5 text-md max-md:col-start-1 max-md:row-start-1" role="cell">
     <StateMark mark={state.mark} word={state.word} />
     {#if state.why}<span class="mt-0.5 ml-3.5 block text-sm text-soft">{state.why}</span>{/if}
+    {#if resumable}<span class="mt-0.5 ml-3.5 block text-sm text-faint">{resumable}</span>{/if}
   </span>
 
   <div class="min-w-0 max-md:col-span-2 max-md:row-start-2" role="cell">
