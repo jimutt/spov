@@ -47,6 +47,10 @@ type JobRequest struct {
 	// @decision(DL-033)
 	Addons []string `json:"addons,omitempty" maxItems:"16" doc:"Curated add-ons as name or name@version, e.g. rust, java@21; the image is a variant of the base"`
 	Apt    []string `json:"apt,omitempty" maxItems:"32" doc:"Extra Debian packages for the image variant"`
+	// Env are the job's own environment variables, as a session's.
+	//
+	// @decision(DL-096)
+	Env map[string]string `json:"env,omitempty" doc:"Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session"`
 	// Sandbox is named as it is on a session create, not "session": one
 	// shape with two names would give the generated TypeScript client
 	// two names for the same thing.

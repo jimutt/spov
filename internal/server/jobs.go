@@ -287,6 +287,8 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string) (store.Session
 		// @decision(DL-033)
 		Addons: req.Addons,
 		Apt:    req.Apt,
+		// @decision(DL-096)
+		Env: req.Env,
 	}
 	sreq = s.withDefaults(sreq)
 	if err := s.validateRequest(sreq); err != nil {

@@ -668,6 +668,8 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		in.Clones = []string{"x"}
 		in.Booted.Addons = []string{"node@22.23.3"}
 		in.Request.Sync = &store.SessionSync{Branch: "main", BaseCommit: strings.Repeat("a", 40)}
+		// @decision(DL-096)
+		in.Request.Env = map[string]string{"NODE_ENV": "test"}
 		if err := s.Sessions().Create(ctx, in); err != nil {
 			t.Fatal(err)
 		}
@@ -676,8 +678,10 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		got.Request.Repos[0].Name = "mutated"
 		got.Booted.Addons[0] = "mutated"
 		got.Request.Sync.Branch = "mutated"
+		got.Request.Env["NODE_ENV"] = "mutated"
 		again, _ := s.Sessions().Get(ctx, "org", in.ID)
-		if again.Clones[0] != "x" || again.Request.Repos[0].Name != "r" || again.Booted.Addons[0] != "node@22.23.3" || again.Request.Sync.Branch != "main" {
+		if again.Clones[0] != "x" || again.Request.Repos[0].Name != "r" || again.Booted.Addons[0] != "node@22.23.3" ||
+			again.Request.Sync.Branch != "main" || again.Request.Env["NODE_ENV"] != "test" {
 			t.Error("a caller's mutation reached the store")
 		}
 	},

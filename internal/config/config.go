@@ -179,6 +179,11 @@ type Sandbox struct {
 	// @decision(DL-033)
 	Addons []string `koanf:"addons"`
 	Apt    []string `koanf:"apt"`
+	// Env are environment variables set in the sandbox, name to value,
+	// for sessions and jobs alike. A map merges by name across layers.
+	//
+	// @decision(DL-096)
+	Env map[string]string `koanf:"env"`
 	// Regions and Cloud pin where the sandbox runs; empty lets the
 	// provider choose.
 	//

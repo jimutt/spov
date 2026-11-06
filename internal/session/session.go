@@ -83,6 +83,11 @@ type Options struct {
 	//
 	// @decision(DL-033)
 	Addons []toolchain.Selection
+	// Env are the session's own environment variables, set in the main
+	// container beside spov's.
+	//
+	// @decision(DL-096)
+	Env map[string]string
 	// Selections are the repos to bootstrap, per platform.
 	Selections []git.Selection
 	// Landing is the workspace directory the server starts in. Empty
@@ -478,6 +483,12 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		maps.Copy(secrets, cred.placeholders)
 		maps.Copy(env, credproxy.MainEnv())
 		env[credproxy.EnvMainCA] = cred.caCert
+	}
+	// Last, so they are checked against everything the launch set.
+	//
+	// @decision(DL-096) @decision(DL-097)
+	if err := opencode.WithUserEnv(env, secrets, opts.Env); err != nil {
+		return nil, err
 	}
 
 	l.doneStep(StepTokens)

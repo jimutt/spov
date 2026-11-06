@@ -1,9 +1,11 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -668,5 +670,45 @@ func TestTheExampleProjectFileLoads(t *testing.T) {
 	}
 	if !res.Sources.ProjectRepos || len(res.Config.Repos) != 2 {
 		t.Errorf("repos = %+v", res.Config.Repos)
+	}
+}
+
+// sandbox.env merges by name across the layers, unlike a list.
+//
+// @decision(DL-096)
+func TestSandboxEnvMergesByName(t *testing.T) {
+	env, wd := newFixture(t, "sandbox:\n  env:\n    A: user\n    B: user\n", "sandbox:\n  env:\n    B: project\n    C: project\n")
+	res, err := Load(env, wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"A": "user", "B": "project", "C": "project"}
+	if !maps.Equal(res.Config.Sandbox.Env, want) {
+		t.Errorf("sandbox.env = %v, want %v", res.Config.Sandbox.Env, want)
+	}
+}
+
+// A sandbox.env value YAML does not read as text is refused rather than
+// rewritten, and SPOV_SANDBOX_ENV is not a config variable.
+//
+// @decision(DL-096)
+func TestSandboxEnvValuesAreTextAsWritten(t *testing.T) {
+	for _, value := range []string{"true", "1.10", "0755", "2024-01-01", "12"} {
+		env, wd := newFixture(t, "sandbox:\n  env:\n    V: "+value+"\n", "")
+		if _, err := Load(env, wd); err == nil || !strings.Contains(err.Error(), "quote the value") {
+			t.Errorf("V: %s loaded, or failed otherwise: %v", value, err)
+		}
+	}
+	env, wd := newFixture(t, "sandbox:\n  env:\n    A: \"1.10\"\n    B: off\n    C:\n", "")
+	env.Vars["SPOV_SANDBOX_ENV"] = "X=1"
+	res, err := Load(env, wd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Config.Sandbox.Env; got["A"] != "1.10" || got["B"] != "off" || got["C"] != "" {
+		t.Errorf("sandbox.env = %v", got)
+	}
+	if !slices.Contains(res.Sources.IgnoredEnvVars, "SPOV_SANDBOX_ENV") {
+		t.Errorf("SPOV_SANDBOX_ENV was not ignored: %+v", res.Sources)
 	}
 }

@@ -2,6 +2,8 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-097 | A user environment variable may not set what spov itself sets or relies on, and is bounded | accepted | sandbox | sandbox-env, sandbox, security |
+| DL-096 | A session takes non-secret environment variables from sandbox.env and --env | accepted | server | sandbox-env, config, sandbox |
 | DL-095 | A plain spov fly in a git checkout launches that repository, synced | accepted | cli | sync, fly, onboarding, config |
 | DL-093 | A local server prunes a stopped session's history 30 days after it stopped, configurable, and never while its snapshot is kept | accepted | server | local-history, retention, config |
 | DL-092 | The local journal is a directory per session: session.json rewritten whole, and transcript.jsonl appended record by record | accepted | server | local-history, store, format |

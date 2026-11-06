@@ -138,6 +138,7 @@ func load(env Env, workdir string, project bool) (Result, error) {
 			ErrorUnused:      true,
 			DecodeHook: mapstructure.ComposeDecodeHookFunc(
 				durationHook,
+				envMapHook,
 			),
 		},
 	}); err != nil {

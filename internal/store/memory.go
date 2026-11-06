@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -582,6 +583,8 @@ func copySession(s Session) Session {
 	// @decision(DL-033)
 	s.Request.Addons = slices.Clone(s.Request.Addons)
 	s.Request.Apt = slices.Clone(s.Request.Apt)
+	// @decision(DL-096)
+	s.Request.Env = maps.Clone(s.Request.Env)
 	// @decision(DL-027)
 	if s.Request.Sync != nil {
 		sync := *s.Request.Sync

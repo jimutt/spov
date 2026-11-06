@@ -1029,6 +1029,10 @@ export interface components {
             egress?: string;
             /** @description Domains added to the egress preset (not with open), at most 16 */
             egress_extra_domains?: string[] | null;
+            /** @description Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session */
+            env?: {
+                [key: string]: string;
+            };
             git?: components["schemas"]["GitIdentityView"];
             /**
              * @description How far the forge credentials reach: the job's repositories, or every repository they can; the caller's job default, then repos, when empty
@@ -1623,6 +1627,10 @@ export interface components {
             egress?: string;
             /** @description Domains added to the egress preset (not with open), at most 16 */
             egress_extra_domains?: string[] | null;
+            /** @description Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session */
+            env?: {
+                [key: string]: string;
+            };
             git?: components["schemas"]["GitIdentityView"];
             /**
              * @description How far the forge credentials reach: the session's repositories, or every repository they can; the caller's default, then repos, when empty
@@ -1697,6 +1705,10 @@ export interface components {
             /** @description What the sandbox holds for each platform */
             credentials?: components["schemas"]["SandboxCredentialView"][] | null;
             egress?: string;
+            /** @description The environment variables set in the sandbox beside spov's own, as name to value */
+            env?: {
+                [key: string]: string;
+            };
             error?: string;
             /** Format: double */
             estimated_cost: number;

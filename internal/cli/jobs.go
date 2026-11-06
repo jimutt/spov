@@ -43,6 +43,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		access   string
 		asJSON   bool
 		routed   routedFlags
+		envVars  []string
 	)
 	cmd := &cobra.Command{
 		Use:   "create [goal]",
@@ -59,6 +60,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 			return createJob(cmd.Context(), env, createOptions{
 				Goal: goal, Kind: kind, Repos: repos, Landing: landing, Check: check,
 				Model: model, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
+				Env: envVars,
 			})
 		},
 	}
@@ -87,13 +89,18 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		"how far the sandbox's git credentials reach: repos (the job's) or all (every repository they can);"+
 			" sandbox.job_git_access, then your account's job default, then repos, when unset")
 	addRoutedFlags(cmd, &routed, "sandbox.job_credentials")
+	addEnvFlag(cmd, &envVars)
 	jsonFlag(cmd, &asJSON)
 	return cmd
 }
 
 type createOptions struct {
 	// @decision(DL-075)
-	Routed  routedFlags
+	Routed routedFlags
+	// Env are --env KEY=VALUE.
+	//
+	// @decision(DL-096)
+	Env     []string
 	Goal    string
 	Kind    string
 	Model   string
@@ -151,6 +158,11 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		return err
 	}
 	cfg := res.Config
+	// @decision(DL-096)
+	vars, err := launchEnv(cfg.Sandbox.Env, opts.Env, cfg.Sandbox.Addons)
+	if err != nil {
+		return err
+	}
 	c, err := env.client(ctx)
 	if err != nil {
 		return err
@@ -182,6 +194,8 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		// @decision(DL-033)
 		Addons: sb.Addons,
 		Apt:    sb.Apt,
+		// @decision(DL-096)
+		Env:    vars,
 		Egress: sb.Egress,
 		// @decision(DL-068)
 		EgressExtraDomains: sb.EgressExtraDomains,

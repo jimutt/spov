@@ -426,6 +426,11 @@ type SessionRequest struct {
 	// @decision(DL-033)
 	Addons []string
 	Apt    []string
+	// Env are the session's own environment variables, the deployment's
+	// base included, stored in the clear: they are not secrets.
+	//
+	// @decision(DL-096)
+	Env map[string]string `json:",omitempty"`
 	// Sync records the local branch and commit a synced session started
 	// from; Bundle is passed to the launch in memory and never stored in
 	// the database.

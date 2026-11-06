@@ -80,6 +80,9 @@ sandbox:
   sync: false                       # unset (the default): a plain spov fly inside a checkout syncs it; true: always (--sync); false: never (--no-sync)
   addons: [rust, postgres@16, node@22]  # dotnet, java, php, playwright, postgres, redis, ruby, rust; or bun, go, node, python, uv
   apt: [libvips-dev]                # extra Debian packages
+  env:                              # environment variables in the sandbox, for sessions and jobs; not for secrets (see below)
+    NODE_ENV: development
+    OPENCODE_LOG_LEVEL: info
   # image: my-custom-image          # an image spov did not build; refused together with addons or apt
   # gpu: a10g                       # recognised only to be refused: v2 sandboxes have no GPU
 
@@ -198,6 +201,65 @@ full list, with what each one does, is in [`deploy/README.md`](../deploy/README.
 | `SPOV_PLATFORM_TOKEN_<NAME>` | `spov serve` | The organisation's token for the platform called `<name>`, upper-cased, with anything but letters and digits as `_`. |
 | `SPOV_GITHUB_OAUTH_CLIENT_ID`, `SPOV_GITHUB_OAUTH_CLIENT_SECRET` | `spov serve` | The OAuth app for browser login; both or neither. |
 | `SPOV_ALLOWLIST_FILE` | `spov serve` | Seeds a new deployment's allowlist. |
+
+## Environment variables in the sandbox
+
+`sandbox.env` sets environment variables in every session's and job's
+sandbox, as a map of name to value. It is for ordinary settings: `NODE_ENV`,
+a test database's URL, a locale, a feature flag, OpenCode's own
+`OPENCODE_LOG_LEVEL`. They are not secrets: spov stores them with the
+session, shows them on the session page and in `spov ls --json`, and they are
+visible in Modal's control plane. A token or a key belongs in a routed
+credential (`spov credentials add <name> --host ...`), which the credential
+proxy holds outside the sandbox.
+
+- **Values are text.** Quote one YAML would read as something else: `"true"`,
+  `"1.10"`, `"0755"`, `"2024-01-01"`. An unquoted one is refused rather than
+  rewritten (YAML would send `true` as `1` and `1.10` as `1.1`).
+- **Layers merge by name.** A project file's `sandbox.env` adds to your user
+  file's, and overrides it name by name, unlike lists, which a later layer
+  replaces. An empty `env:` in a project file clears the user file's. There
+  is no `SPOV_*` variable for it.
+- **`--env KEY=VALUE`** on `spov fly` and `spov jobs create` sets one more,
+  over the config; repeat it for several. `KEY=` sets an empty value.
+- **The server's own `sandbox.env`** is the base under every request's, so a
+  session started from the browser gets it too. A local server reads your
+  user file, so it is the same map.
+- **A resumed session** gets its variables again.
+
+Some names are refused, because they would change how spov sets up the
+sandbox, how a forge CLI authenticates or how OpenCode is configured. A
+refusal names the variable and the rule:
+
+- every name spov sets itself: `HOME`, `PATH`, the add-ons' variables, the
+  proxy's, the provider keys (`ANTHROPIC_API_KEY` and the rest) and
+  `OPENCODE_PASSWORD`;
+- anything starting with `SPOV_`, `GIT_`, `LD_`, `XDG_` (it moves where
+  OpenCode, mise and the forge CLIs read the config spov writes) or `MISE_`;
+- `BASH_ENV`, `ENV`, `SHELLOPTS`, `BASHOPTS`, `IFS`; the proxy and trust-store
+  variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`,
+  `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`,
+  `CURL_CA_BUNDLE`, `JAVA_TOOL_OPTIONS`, `_JAVA_OPTIONS`, `JDK_JAVA_OPTIONS`);
+- the forge CLIs' token and host overrides (`GH_TOKEN`, `GITHUB_TOKEN`,
+  `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`, `GH_CONFIG_DIR`,
+  `GITLAB_TOKEN`, `GITLAB_ACCESS_TOKEN`, `GITLAB_HOST`, `GITLAB_URI`, `GL_HOST`,
+  `GLAB_CONFIG_DIR`, `GITEA_TOKEN`, `GITEA_SERVER_URL`);
+- the OpenCode variables that touch its authentication, where its
+  configuration or model list comes from, or its own plumbing:
+  `OPENCODE_PASSWORD`, `OPENCODE_SERVER_PASSWORD`, `OPENCODE_API_KEY`,
+  `OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`,
+  `OPENCODE_CLI_CONFIG_CONTENT`, `OPENCODE_CONFIG_PROJECT_DISABLE`,
+  `OPENCODE_DISABLE_PROJECT_CONFIG`, `OPENCODE_MODELS_URL`,
+  `OPENCODE_MODELS_PATH`, `OPENCODE_CLIENT`, `OPENCODE_ROUTE`,
+  `OPENCODE_SESSION_ID`, and anything starting with `OPENCODE_PTY_` or
+  `OPENCODE_SSH_ASKPASS_`. Every other `OPENCODE_*` is allowed.
+
+Names are compared without regard to case. A name is letters, digits and `_`,
+not starting with a digit, at most 128 bytes; a value is at most 4 KiB. A
+session takes at most 64 variables and 32 KiB in all, the server's base
+included. `spov fly` and `spov jobs create` check before asking the server, the
+server checks again, and `spov serve` refuses to start on a bad
+`sandbox.env` of its own.
 
 ## Add-ons
 

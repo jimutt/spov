@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/credproxy"
 	"github.com/jimutt/spov/internal/git"
+	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
 	"github.com/jimutt/spov/internal/routedcred"
@@ -336,6 +338,15 @@ func (s *Service) withDefaults(req store.SessionRequest) store.SessionRequest {
 	if sel, err := toolchain.Parse(req.Addons); err == nil {
 		req.Addons = toolchain.Strings(sel)
 	}
+	// The deployment's own variables are the base, and the request's
+	// are set over them by name.
+	//
+	// @decision(DL-096)
+	if len(d.Env) > 0 {
+		env := maps.Clone(d.Env)
+		maps.Copy(env, req.Env)
+		req.Env = env
+	}
 	if sandbox.ValidatePackages(req.Apt) == nil {
 		req.Apt = sandbox.ExtraPackages(req.Apt)
 	}
@@ -420,6 +431,13 @@ func (s *Service) validateRequest(req store.SessionRequest) error {
 	}
 	// @decision(DL-043)
 	if _, err := store.ParseGitAccess(string(req.GitAccess)); err != nil {
+		problems = append(problems, err.Error())
+	}
+	// @decision(DL-097)
+	if err := opencode.CheckUserEnv(req.Env, spovEnvNames(req)); err != nil {
+		if base := len(s.deps.Defaults.Env); base > 0 && errors.Is(err, opencode.ErrUserEnvTooLarge) {
+			err = fmt.Errorf("%w, the deployment's own %d from its sandbox.env included", err, base)
+		}
 		problems = append(problems, err.Error())
 	}
 	// @decision(DL-068)
@@ -677,6 +695,10 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		BuildVariant:   s.deps.Defaults.BuildOnDemand,
 		RebuildVariant: pick.rebuild,
 		Addons:         pick.addons,
+		// A resumed run gets the stored variables again.
+		//
+		// @decision(DL-096)
+		Env:            sess.Request.Env,
 		Landing:        sess.Request.Landing,
 		Model:          sess.Request.Model,
 		ModelUnlisted:  s.modelUnlisted(sess.Request.Model),
@@ -1160,4 +1182,14 @@ func storedCredentials(creds []session.Credential, known bool) []store.SessionCr
 		out = append(out, store.SessionCredential{Platform: c.Platform, Kind: kind, Holder: holder, Forge: c.Forge, Access: access})
 	}
 	return out
+}
+
+// spovEnvNames are the variables spov sets in the request's sandbox: the
+// add-ons it asks for (an unparsable list is refused elsewhere) and every
+// provider key it may be given.
+//
+// @decision(DL-097)
+func spovEnvNames(req store.SessionRequest) []string {
+	addons, _ := toolchain.Parse(req.Addons)
+	return opencode.SpovEnvNames(addons, prep.ProviderKeyEnvs())
 }

@@ -654,6 +654,11 @@ components:
           type:
             - array
             - "null"
+        env:
+          additionalProperties:
+            type: string
+          description: Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session
+          type: object
         git:
           $ref: "#/components/schemas/GitIdentityView"
         git_access:
@@ -1858,6 +1863,11 @@ components:
           type:
             - array
             - "null"
+        env:
+          additionalProperties:
+            type: string
+          description: Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session
+          type: object
         git:
           $ref: "#/components/schemas/GitIdentityView"
         git_access:
@@ -2030,6 +2040,11 @@ components:
             - "null"
         egress:
           type: string
+        env:
+          additionalProperties:
+            type: string
+          description: The environment variables set in the sandbox beside spov's own, as name to value
+          type: object
         error:
           type: string
         estimated_cost:
