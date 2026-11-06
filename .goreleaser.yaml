@@ -85,6 +85,11 @@ changelog:
 
 release:
   draft: true
+  # A tag with a prerelease suffix (v0.2.0-rc.1) makes a prerelease, which
+  # releases/latest never points at.
+  #
+  # @decision(DL-079)
+  prerelease: auto
   # The installer goes with the release it installs, so its stable URL is
   # releases/latest/download/install.sh.
   #
