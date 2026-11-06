@@ -227,3 +227,29 @@ func TestARoutesPlaceholderVariableFollowsItsName(t *testing.T) {
 		t.Errorf("got %s", got)
 	}
 }
+
+// The Java trust store is built from the system bundle with each
+// certificate marked trusted for the JDK, the JVM options point at it and
+// at the proxy, and a CA install rebuilds it where openssl exists.
+//
+// @decision(DL-076)
+func TestTheJavaTrustCommandsAgree(t *testing.T) {
+	build := JavaTrustCommand()
+	for _, want := range []string{"-in '" + SystemBundle + "'", "-jdktrust anyExtendedKeyUsage", "pass:" + JavaTrustPassword,
+		"mv '" + JavaTrustStore + ".tmp' '" + JavaTrustStore + "'"} {
+		if !strings.Contains(build, want) {
+			t.Errorf("the build lacks %q: %s", want, build)
+		}
+	}
+	opts := JavaToolOptions()
+	for _, want := range []string{"-Djavax.net.ssl.trustStore=" + JavaTrustStore, "-Djavax.net.ssl.trustStorePassword=" + JavaTrustPassword,
+		"-Dhttps.proxyHost=" + SidecarName, "-Dhttps.proxyPort=3128", "-Dhttp.nonProxyHosts=localhost|127.0.0.1|main"} {
+		if !strings.Contains(opts, want) {
+			t.Errorf("the options lack %q: %s", want, opts)
+		}
+	}
+	install := strings.Join(InstallCACommand(), " ")
+	if !strings.Contains(install, "command -v openssl") || !strings.Contains(install, build) {
+		t.Errorf("a CA install does not rebuild the trust store: %s", install)
+	}
+}

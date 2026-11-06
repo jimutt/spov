@@ -60,3 +60,34 @@ func TestTheLocalIndexIsTheOwnersAlone(t *testing.T) {
 		t.Error("a Basic route without a user was stored")
 	}
 }
+
+// A local credential is removed with its secret, reads its secret back,
+// and is listed as missing once the store loses the secret.
+//
+// @decision(DL-073)
+func TestALocalRoutedCredentialIsRemovedWithItsSecret(t *testing.T) {
+	creds := credentials.NewMemoryStore()
+	l := &Local{Creds: creds, Path: filepath.Join(t.TempDir(), IndexName)}
+	r := Route{Name: "acme", Hosts: []string{"npm.acme.com"}, Scheme: "bearer"}
+	if err := l.Put(r, "s3cret"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := l.Secret("acme"); err != nil || got != "s3cret" {
+		t.Errorf("secret = %q, %v", got, err)
+	}
+	if !IsKey(Key("acme")) || IsKey("platform:acme") {
+		t.Error("IsKey does not tell a routed credential's key")
+	}
+	if removed, err := l.Delete("acme"); err != nil || !removed {
+		t.Fatalf("delete = %v, %v", removed, err)
+	}
+	if held, err := l.List(); err != nil || len(held) != 0 {
+		t.Errorf("after delete: %+v, %v", held, err)
+	}
+	if removed, err := l.Delete("acme"); err != nil || removed {
+		t.Errorf("a second delete = %v, %v", removed, err)
+	}
+	if dirs := PresetDirs([]File{{Path: NPMRCFile}, {Path: PipFile}, {Path: UVFile}}); len(dirs) != 3 {
+		t.Errorf("dirs = %v", dirs)
+	}
+}
