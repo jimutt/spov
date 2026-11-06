@@ -475,6 +475,12 @@ func (e *Env) platformToken(ctx context.Context, p config.Platform) (string, err
 	if err != nil {
 		return "", fmt.Errorf("no stored token for platform %q: %w", p.Name, err)
 	}
+	// gh's own login is read at each use, never copied.
+	//
+	// @decision(DL-083)
+	if host, ok := ghLogin(token); ok {
+		return e.ghToken(ctx, host)
+	}
 	return token, nil
 }
 
