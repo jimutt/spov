@@ -22,6 +22,74 @@ import (
 // @decision(DL-027)
 const syncTimeout = 2 * time.Minute
 
+// flySync is how a `spov fly` launch syncs: a flag first, then
+// sandbox.sync, unset being syncAuto.
+type flySync int
+
+const (
+	syncAuto flySync = iota
+	syncAlways
+	syncNever
+)
+
+// flySyncMode resolves --sync, --no-sync and sandbox.sync.
+//
+// @decision(DL-095)
+func flySyncMode(cfg config.Config, opts flyOptions) flySync {
+	switch {
+	case opts.Sync:
+		return syncAlways
+	case opts.NoSync:
+		return syncNever
+	case cfg.Sandbox.Sync == nil:
+		return syncAuto
+	case *cfg.Sandbox.Sync:
+		return syncAlways
+	default:
+		return syncNever
+	}
+}
+
+// autoSyncs reports whether an automatic launch syncs: it names no
+// repository, its project file lists none, and it runs inside a git
+// checkout. Otherwise the repositories come from config or the picker.
+//
+// @decision(DL-095)
+func autoSyncs(ctx context.Context, env *Env, src config.Sources, opts flyOptions) bool {
+	if len(opts.Repos) > 0 || src.ProjectRepos {
+		return false
+	}
+	return git.InCheckout(ctx, env.Workdir)
+}
+
+// autoSyncRefused is a checkout an automatic launch cannot sync, with
+// the way to launch without it. Several platforms matching is answered
+// with --sync, since --repo alone launches unsynced.
+//
+// @decision(DL-095) @decision(DL-066)
+func autoSyncRefused(err error) error {
+	if errors.Is(err, errSeveralPlatforms) {
+		return fmt.Errorf("inside a git checkout, fly syncs it by default: %w (with --sync, or it launches unsynced); or pass --no-sync to launch without it", err)
+	}
+	if strings.Contains(err.Error(), "--no-sync") {
+		return fmt.Errorf("inside a git checkout, fly syncs it by default: %w", err)
+	}
+	return fmt.Errorf("inside a git checkout, fly syncs it by default: %w; or pass --no-sync to launch without it", err)
+}
+
+// bundleOnlyNote says that an automatic launch's checkout has no
+// platform it can clone from, so the sandbox has only the local bundle.
+//
+// @decision(DL-095)
+func bundleOnlyNote(checkout git.LocalCheckout) string {
+	why := checkout.Owner + "/" + checkout.Name + " matches no configured platform with a credential"
+	if checkout.Remote == "" {
+		why = "this checkout has no remote"
+	}
+	return "note: " + why + ", so the sandbox starts from this checkout's commits with no origin and cannot push;" +
+		" its work comes back here when the session closes"
+}
+
 // resolveSyncLaunch inspects the local git checkout, matches its remote
 // against the configured platforms when possible (falling back to a
 // full local bundle when the repo has no remote, is on an unconfigured
@@ -378,6 +446,11 @@ func platformHostAndBase(p config.Platform) (host, basePath string) {
 // @decision(DL-066)
 var errNoPlatformMatch = errors.New("no configured platform matches")
 
+// errSeveralPlatforms is a checkout several configured platforms match.
+//
+// @decision(DL-066)
+var errSeveralPlatforms = errors.New("several configured platforms match")
+
 func matchPlatformForCheckout(cfg config.Config, checkout git.LocalCheckout, explicit string) (config.Platform, error) {
 	if explicit != "" {
 		p, err := findPlatform(cfg, explicit)
@@ -440,8 +513,8 @@ func matchPlatformForCheckout(cfg config.Config, checkout git.LocalCheckout, exp
 		for i, m := range matches {
 			names[i] = m.Name
 		}
-		return config.Platform{}, fmt.Errorf("several configured platforms match %s (%s); pass --repo <platform>:%s/%s to choose one",
-			checkout.Host, strings.Join(names, ", "), checkout.Owner, checkout.Name)
+		return config.Platform{}, fmt.Errorf("%w %s (%s); pass --repo <platform>:%s/%s to choose one",
+			errSeveralPlatforms, checkout.Host, strings.Join(names, ", "), checkout.Owner, checkout.Name)
 	}
 }
 

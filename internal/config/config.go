@@ -228,12 +228,13 @@ type Sandbox struct {
 	//
 	// @decision(DL-049)
 	JobMaxDuration time.Duration `koanf:"job_max_duration"`
-	// Sync makes `spov fly` seed the sandbox from the current local branch
-	// and sync the resulting repository state back on exit when neither
-	// --sync nor --no-sync is given.
+	// Sync is how `spov fly` syncs when neither --sync nor --no-sync is
+	// given: nil syncs the checkout it runs in when that is the launch's
+	// repository, true always syncs, as --sync, and false never does, as
+	// --no-sync.
 	//
-	// @decision(DL-027)
-	Sync bool `koanf:"sync"`
+	// @decision(DL-027) @decision(DL-095)
+	Sync *bool `koanf:"sync"`
 }
 
 // OpenCode pins the OpenCode build used on both ends of a session.

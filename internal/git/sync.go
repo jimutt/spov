@@ -151,6 +151,25 @@ func ValidBranchName(name string) error {
 	return nil
 }
 
+// InCheckout reports whether dir is inside a git working tree. Only
+// git's own "not a git repository", or no git at all, is outside one: a
+// checkout git refuses to read (an unsafe owner, a corrupt .git) is
+// inside, so syncing it fails rather than being skipped.
+//
+// @decision(DL-095)
+func InCheckout(ctx context.Context, dir string) bool {
+	if _, err := exec.LookPath("git"); err != nil {
+		return false
+	}
+	_, err := gitOutput(ctx, dir, "rev-parse", "--show-toplevel")
+	return err == nil || !notARepository(err)
+}
+
+// notARepository is git's answer for a directory outside any checkout.
+func notARepository(err error) bool {
+	return strings.Contains(err.Error(), "not a git repository")
+}
+
 // InspectLocalCheckout verifies that dir is inside a clean git working
 // tree on an attached branch, resolves its remote URL, and packs any
 // commits ahead of the remote into a bundle when bundleAhead is true.
@@ -159,7 +178,10 @@ func ValidBranchName(name string) error {
 func InspectLocalCheckout(ctx context.Context, dir string, kindsByHost map[string]string, bundleAhead bool) (LocalCheckout, error) {
 	root, err := gitOutput(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return LocalCheckout{}, errors.New("not in a git repository; cd into a checkout or pass --no-sync")
+		if notARepository(err) {
+			return LocalCheckout{}, errors.New("not in a git repository; cd into a checkout or pass --no-sync")
+		}
+		return LocalCheckout{}, fmt.Errorf("git cannot read the checkout in %s: %w; fix it or pass --no-sync", dir, err)
 	}
 	gitDir, err := gitOutput(ctx, root, "rev-parse", "--git-dir")
 	if err != nil {
@@ -179,12 +201,12 @@ func InspectLocalCheckout(ctx context.Context, dir string, kindsByHost map[strin
 		return LocalCheckout{}, fmt.Errorf("git status in %s: %w", root, err)
 	}
 	if strings.TrimSpace(status) != "" {
-		return LocalCheckout{}, fmt.Errorf("local checkout in %s has uncommitted or untracked changes; commit or stash them before --sync, or pass --no-sync", root)
+		return LocalCheckout{}, fmt.Errorf("local checkout in %s has uncommitted or untracked changes; commit or stash them before syncing, or pass --no-sync", root)
 	}
 
 	branch, err := gitOutput(ctx, root, "symbolic-ref", "-q", "--short", "HEAD")
 	if err != nil || branch == "" {
-		return LocalCheckout{}, fmt.Errorf("local checkout in %s is in detached HEAD state; check out a branch before --sync", root)
+		return LocalCheckout{}, fmt.Errorf("local checkout in %s is in detached HEAD state; check out a branch before syncing, or pass --no-sync", root)
 	}
 	if err := ValidBranchName(branch); err != nil {
 		return LocalCheckout{}, err

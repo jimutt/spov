@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/jimutt/spov/internal/git"
+	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/sandbox"
 )
 
@@ -47,6 +48,24 @@ func TestLaunchAppliesSyncSeedWithBundleOnStdin(t *testing.T) {
 	}
 	if !strings.Contains(joined, "feat/local-sync") || !strings.Contains(joined, sha) {
 		t.Errorf("exec command did not carry branch and base commit: %q", joined)
+	}
+}
+
+// A session resumed from its snapshot is not seeded again: the snapshot
+// holds the branch as the session left it, the sandbox's own commits
+// included.
+//
+// @decision(DL-027) @decision(DL-088)
+func TestASnapshotResumeIsNotSeededAgain(t *testing.T) {
+	f := newFixture(t)
+	f.opts.Sync = &SyncSeed{Branch: "main", BaseCommit: strings.Repeat("a", 40)}
+	f.opts.Resume = opencode.ResumeSnapshot
+	sess, err := f.launcher.Launch(context.Background(), f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if execs := sess.Handle.(*sandbox.FakeHandle).ExecLog(); len(execs) != 0 {
+		t.Errorf("a snapshot resume was seeded: %q", execs)
 	}
 }
 

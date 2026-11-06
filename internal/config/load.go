@@ -32,6 +32,11 @@ type Sources struct {
 	// UserFileError explains why the user-level layer was skipped, when it
 	// was skipped for a reason other than the file being absent.
 	UserFileError string
+	// ProjectRepos is whether the project file lists repositories, which
+	// a plain `spov fly` prefers to the checkout it runs in.
+	//
+	// @decision(DL-095)
+	ProjectRepos bool
 }
 
 // Result is a merged configuration together with its provenance.
@@ -112,10 +117,12 @@ func load(env Env, workdir string, project bool) (Result, error) {
 			return res, fmt.Errorf("config: locate %s: %w", ProjectFileName, err)
 		}
 		if projectPath != "" {
-			if err := loadProject(k, projectPath, userPath); err != nil {
+			repos, err := loadProject(k, projectPath, userPath)
+			if err != nil {
 				return res, err
 			}
 			res.Sources.ProjectFile = projectPath
+			res.Sources.ProjectRepos = repos
 		}
 	}
 
@@ -145,17 +152,18 @@ func load(env Env, workdir string, project bool) (Result, error) {
 
 // loadProject merges the project file into k, refusing one that names a
 // userOnly section at all: an empty or null one replaces the user
-// file's in the merge just as a value would.
+// file's in the merge just as a value would. It reports whether the
+// file lists any repositories.
 //
-// @decision(DL-026)
-func loadProject(k *koanf.Koanf, path, userPath string) error {
+// @decision(DL-026) @decision(DL-095)
+func loadProject(k *koanf.Koanf, path, userPath string) (bool, error) {
 	raw, err := file.Provider(path).ReadBytes()
 	if err != nil {
-		return fmt.Errorf("config: read %s: %w", path, err)
+		return false, fmt.Errorf("config: read %s: %w", path, err)
 	}
 	top, err := yaml.Parser().Unmarshal(raw)
 	if err != nil {
-		return fmt.Errorf("config: parse %s: %w", path, err)
+		return false, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	if userPath == "" {
 		userPath = "~/.config/spov/config.yaml"
@@ -168,11 +176,14 @@ func loadProject(k *koanf.Koanf, path, userPath string) error {
 		if u.instead != "" {
 			where += ", or " + u.instead
 		}
-		return fmt.Errorf("config: %s sets %s, which a project file may not set because it decides where"+
+		return false, fmt.Errorf("config: %s sets %s, which a project file may not set because it decides where"+
 			" your credentials are sent; set it in %s", path, u.name(), where)
 	}
-	_, err = loadFile(k, path)
-	return err
+	if _, err := loadFile(k, path); err != nil {
+		return false, err
+	}
+	repos, _ := top["repos"].([]any)
+	return len(repos) > 0, nil
 }
 
 // loadFile merges path into k if it exists. It reports whether the file was

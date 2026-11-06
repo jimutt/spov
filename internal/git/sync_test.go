@@ -421,3 +421,29 @@ func TestApplySyncInPlaceAndFallback(t *testing.T) {
 		}
 	})
 }
+
+// InCheckout is true anywhere under a working tree and false outside
+// one or without git.
+//
+// @decision(DL-095)
+func TestInCheckout(t *testing.T) {
+	ctx := context.Background()
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	sub := filepath.Join(repo, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !InCheckout(ctx, repo) || !InCheckout(ctx, sub) {
+		t.Error("a working tree and a directory under it are not in a checkout")
+	}
+	if InCheckout(ctx, t.TempDir()) {
+		t.Error("an empty directory is in a checkout")
+	}
+	t.Setenv("PATH", t.TempDir())
+	if InCheckout(ctx, repo) {
+		t.Error("without git, a working tree is in a checkout")
+	}
+}

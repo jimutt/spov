@@ -572,3 +572,101 @@ func TestGitAccessEnvironmentVariablesReachTheConfig(t *testing.T) {
 			c.Git.AllowAll, c.Sandbox.GitAccess, c.Sandbox.JobGitAccess)
 	}
 }
+
+// sandbox.sync has three states, unset among them, from a file or the
+// environment.
+//
+// @decision(DL-095)
+func TestSandboxSyncHasThreeStates(t *testing.T) {
+	state := func(v *bool) string {
+		if v == nil {
+			return "unset"
+		}
+		if *v {
+			return "true"
+		}
+		return "false"
+	}
+	cases := []struct {
+		name, user, env, want string
+	}{
+		{"unset", "", "", "unset"},
+		{"true in the user file", "sandbox:\n  sync: true\n", "", "true"},
+		{"false in the user file", "sandbox:\n  sync: false\n", "", "false"},
+		{"false from the environment", "sandbox:\n  sync: true\n", "false", "false"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, wd := newFixture(t, tc.user, "")
+			if tc.env != "" {
+				env.Vars["SPOV_SANDBOX_SYNC"] = tc.env
+			}
+			res, err := Load(env, wd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := state(res.Config.Sandbox.Sync); got != tc.want {
+				t.Errorf("sandbox.sync = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// Whether the repositories came from the project file is recorded, and
+// only a list with an entry counts.
+//
+// @decision(DL-095)
+func TestTheSourcesSayWhetherTheProjectFileListsRepos(t *testing.T) {
+	const (
+		platforms = "platforms:\n  - name: codefloe\n    kind: forgejo\n    base_url: https://codefloe.com\n"
+		repos     = "repos:\n  - platform: codefloe\n    owner: alice\n    name: spov\n"
+	)
+	cases := []struct {
+		name, user, project string
+		want                bool
+	}{
+		{"the project file lists them", platforms, repos, true},
+		{"only the user file lists them", platforms + repos, "sandbox:\n  cpu: 1\n", false},
+		{"the project file's list is empty", platforms + repos, "repos: []\n", false},
+		{"no project file", platforms + repos, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, wd := newFixture(t, tc.user, tc.project)
+			res, err := Load(env, wd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Sources.ProjectRepos != tc.want {
+				t.Errorf("ProjectRepos = %v, want %v", res.Sources.ProjectRepos, tc.want)
+			}
+		})
+	}
+}
+
+// The example project file loads as a project file, beside a user file
+// that declares the platforms it names.
+//
+// @decision(DL-026)
+func TestTheExampleProjectFileLoads(t *testing.T) {
+	example, err := os.ReadFile(filepath.Join("..", "..", ".spov.example.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, wd := newFixture(t, `platforms:
+  - name: codefloe
+    kind: forgejo
+    base_url: https://codefloe.com
+    account: alice
+  - name: github
+    kind: github
+    account: alice
+`, string(example))
+	res, err := Load(env, wd)
+	if err != nil {
+		t.Fatalf("the example does not load: %v", err)
+	}
+	if !res.Sources.ProjectRepos || len(res.Config.Repos) != 2 {
+		t.Errorf("repos = %+v", res.Config.Repos)
+	}
+}

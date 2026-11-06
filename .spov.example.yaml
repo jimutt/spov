@@ -2,23 +2,16 @@
 # Safe to commit: it contains no secrets.
 version: 1
 
-# Git platforms are usually declared once in ~/.config/spov/config.yaml.
-# Credentials are resolved by platform name from the credential store.
+# Git platforms are declared in ~/.config/spov/config.yaml, never here: a
+# project file may not say where your credentials are sent. The repos below
+# name those platforms.
 #
-# NOTE: lists are REPLACED by a later layer, not merged. Declaring
-# `platforms:` here replaces the whole list from the user config, so repeat
-# every platform this project's repos reference. Lists cannot be set through
-# SPOV_* environment variables; only scalar keys can.
-platforms:
-  - name: codefloe
-    kind: forgejo
-    base_url: https://codefloe.com
-    account: alice
-  - name: github
-    kind: github
-    account: alice
+# NOTE: lists are REPLACED by a later layer, not merged. Lists cannot be set
+# through SPOV_* environment variables; only scalar keys can.
 
 # Repositories cloned into the sandbox workspace before OpenCode starts.
+# Listing them here makes a plain `spov fly` in this checkout launch these,
+# unsynced, instead of syncing the checkout itself; leave repos out for that.
 repos:
   - platform: codefloe
     owner: alice
@@ -40,6 +33,8 @@ sandbox:
   # dotnet, java, php, playwright, postgres, redis, ruby, rust.
   # addons: [rust, postgres]
   # apt: [libvips-dev]
+  # Unset, a plain `spov fly` inside a checkout syncs it; false never syncs.
+  # sync: false
 
 opencode:
   version: 2.2.5
