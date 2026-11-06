@@ -184,6 +184,8 @@ func TestTheValidatorsRules(t *testing.T) {
 	      "loop": {"$ref": "#/components/schemas/Loop"},
 	      "bad": {"$ref": "#/elsewhere"},
 	      "re": {"type": "string", "pattern": "("},
+	      "name": {"type": "string", "minLength": 2},
+	      "notnull": {"not": {"type": "null"}},
 	      "both": {"allOf": [{"type": "object", "additionalProperties": {"type": "string"}}], "type": "object", "properties": {"n": {"type": "integer"}}}
 	    }},
 	    "Loop": {"$ref": "#/components/schemas/Loop"}
@@ -208,6 +210,10 @@ func TestTheValidatorsRules(t *testing.T) {
 		{"/a/1", `{"loop":1}`, "too deep"},
 		{"/a/1", `{"bad":1}`, "unsupported $ref"},
 		{"/a/1", `{"re":"x"}`, "pattern"},
+		{"/a/1", `{"name":"åä"}`, ""},
+		{"/a/1", `{"name":"å"}`, "shorter than 2"},
+		{"/a/1", `{"notnull":1}`, ""},
+		{"/a/1", `{"notnull":null}`, "must not"},
 		{"/a/1", `{"both":{"s":"x"}}`, ""},
 		{"/a/1", `{"both":{"s":1}}`, "both.s"},
 		{"/a/1", `[1]`, "not of type object"},
