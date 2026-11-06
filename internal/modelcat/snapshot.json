@@ -126,14 +126,14 @@
     "id": "deepseek-flash",
     "name": "DeepSeek V4.1 Flash 1017",
     "released": "2026-10-17",
-    "context": 1000000,
+    "context": 1048576,
     "output": 393216
    },
    {
     "id": "deepseek-v4-pro",
     "name": "DeepSeek V4 Pro",
-    "released": "2026-08-12",
-    "context": 1000000,
+    "released": "2026-08-13",
+    "context": 1048576,
     "output": 393216
    }
   ],
@@ -258,6 +258,13 @@
     "output": 65536
    },
    {
+    "id": "gemini-pro-latest",
+    "name": "Gemini Pro Latest",
+    "released": "2026-02-19",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
     "id": "gemini-3-flash-preview",
     "name": "Gemini 3 Flash Preview",
     "released": "2025-12-17",
@@ -298,13 +305,7 @@
     "id": "qwen/qwen3.8-27b",
     "name": "Qwen3.8 27B",
     "released": "2026-08-14",
-    "context": 131042,
-    "output": 16384
-   },
-   {
-    "id": "qwen/qwen3.6-27b",
-    "name": "Qwen3.6 27B",
-    "released": "2026-04-22",
+    "beta": true,
     "context": 131072,
     "output": 16384
    },
@@ -329,23 +330,16 @@
     "released": "2025-08-05",
     "context": 131072,
     "output": 65536
-   },
-   {
-    "id": "llama-3.3-70b-versatile",
-    "name": "Llama 3.3 70B",
-    "released": "2024-12-06",
-    "context": 131072,
-    "output": 32768
-   },
-   {
-    "id": "llama-3.1-8b-instant",
-    "name": "Llama 3.1 8B",
-    "released": "2024-07-23",
-    "context": 131072,
-    "output": 131072
    }
   ],
   "mistral": [
+   {
+    "id": "deepseek-v4-1-flash-1017",
+    "name": "DeepSeek V4.1 Flash 1017",
+    "released": "2026-10-17",
+    "context": 1048576,
+    "output": 128000
+   },
    {
     "id": "mistral-large-4",
     "name": "Mistral Large 4",
@@ -353,6 +347,21 @@
     "beta": true,
     "context": 1048576,
     "output": 262144
+   },
+   {
+    "id": "mistral-large-4-0-8",
+    "name": "Mistral Large 4.0.8",
+    "released": "2026-10-06",
+    "beta": true,
+    "context": 1048576,
+    "output": 262144
+   },
+   {
+    "id": "zai-glm-5-3-flash",
+    "name": "GLM-5.3-Flash",
+    "released": "2026-08-26",
+    "context": 1048576,
+    "output": 131072
    },
    {
     "id": "zai-glm-5-3",
@@ -468,6 +477,13 @@
    }
   ],
   "openai": [
+   {
+    "id": "gpt-6.1-terra",
+    "name": "GPT-6.1 Terra",
+    "released": "2026-10-26",
+    "context": 1050000,
+    "output": 128000
+   },
    {
     "id": "gpt-6.1-sol",
     "name": "GPT-6.1 Sol",
@@ -709,6 +725,27 @@
   ],
   "opencode": [
    {
+    "id": "crouton-alpha-free",
+    "name": "Crouton Alpha Free",
+    "released": "2026-11-03",
+    "context": 1048576,
+    "output": 270000
+   },
+   {
+    "id": "pulse-alpha-free",
+    "name": "Pulse Alpha Free",
+    "released": "2026-11-02",
+    "context": 1048576,
+    "output": 131072
+   },
+   {
+    "id": "flint-40b-free",
+    "name": "Flint 40B Free",
+    "released": "2026-10-21",
+    "context": 262144,
+    "output": 65536
+   },
+   {
     "id": "nemotron-3.5-super-vl-free",
     "name": "Nemotron 3.5 Super VL Free",
     "released": "2026-10-15",
@@ -721,6 +758,13 @@
     "released": "2026-10-13",
     "context": 1048576,
     "output": 65536
+   },
+   {
+    "id": "muse-wonder-1.0",
+    "name": "Muse Wonder",
+    "released": "2026-10-12",
+    "context": 1048576,
+    "output": 131072
    },
    {
     "id": "claude-haiku-5-5",
@@ -756,20 +800,6 @@
     "released": "2026-09-28",
     "context": 1000000,
     "output": 128000
-   },
-   {
-    "id": "longcat-2.5-preview-free",
-    "name": "LongCat 2.5 Preview Free",
-    "released": "2026-09-25",
-    "context": 1000000,
-    "output": 131072
-   },
-   {
-    "id": "space-bunny-free",
-    "name": "Space Bunny Free",
-    "released": "2026-09-23",
-    "context": 1048576,
-    "output": 524288
    },
    {
     "id": "claude-opus-5-5",
@@ -870,13 +900,6 @@
     "output": 131072
    },
    {
-    "id": "deepseek-v4-flash-vision-exp",
-    "name": "DeepSeek V4 Flash Vision Exp",
-    "released": "2026-08-21",
-    "context": 1000000,
-    "output": 384000
-   },
-   {
     "id": "glm-5.3",
     "name": "GLM-5.3",
     "released": "2026-08-14",
@@ -917,13 +940,6 @@
     "released": "2026-08-03",
     "context": 262144,
     "output": 131072
-   },
-   {
-    "id": "deepseek-v4-flash",
-    "name": "DeepSeek V4 Flash",
-    "released": "2026-07-31",
-    "context": 1000000,
-    "output": 384000
    },
    {
     "id": "claude-opus-5",
@@ -1010,13 +1026,6 @@
     "output": 128000
    },
    {
-    "id": "nemotron-3-ultra-free",
-    "name": "Nemotron 3 Ultra Free",
-    "released": "2026-06-04",
-    "context": 1000000,
-    "output": 128000
-   },
-   {
     "id": "minimax-m3",
     "name": "MiniMax-M3",
     "released": "2026-06-01",
@@ -1045,13 +1054,6 @@
     "output": 384000
    },
    {
-    "id": "gpt-5.5-pro",
-    "name": "GPT-5.5 Pro",
-    "released": "2026-04-24",
-    "context": 1050000,
-    "output": 128000
-   },
-   {
     "id": "gpt-5.5",
     "name": "GPT-5.5",
     "released": "2026-04-23",
@@ -1059,9 +1061,16 @@
     "output": 128000
    },
    {
+    "id": "gpt-5.5-pro",
+    "name": "GPT-5.5 Pro",
+    "released": "2026-04-23",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
     "id": "kimi-k2.6",
     "name": "Kimi K2.6",
-    "released": "2026-04-21",
+    "released": "2026-04-20",
     "context": 262144,
     "output": 65536
    },
@@ -1129,13 +1138,6 @@
     "output": 128000
    },
    {
-    "id": "gpt-5.3-codex",
-    "name": "GPT-5.3 Codex",
-    "released": "2026-02-24",
-    "context": 400000,
-    "output": 128000
-   },
-   {
     "id": "gemini-3.1-pro",
     "name": "Gemini 3.1 Pro Preview",
     "released": "2026-02-19",
@@ -1157,23 +1159,16 @@
     "output": 65536
    },
    {
-    "id": "gpt-5.3-codex-spark",
-    "name": "GPT-5.3 Codex Spark",
-    "released": "2026-02-12",
-    "context": 128000,
-    "output": 128000
-   },
-   {
-    "id": "minimax-m2.5",
-    "name": "MiniMax-M2.5",
+    "id": "glm-5",
+    "name": "GLM-5",
     "released": "2026-02-12",
     "context": 204800,
     "output": 131072
    },
    {
-    "id": "glm-5",
-    "name": "GLM-5",
-    "released": "2026-02-11",
+    "id": "minimax-m2.5",
+    "name": "MiniMax-M2.5",
+    "released": "2026-02-12",
     "context": 204800,
     "output": 131072
    },
@@ -1185,18 +1180,25 @@
     "output": 128000
    },
    {
+    "id": "gpt-5.3-codex",
+    "name": "GPT-5.3 Codex",
+    "released": "2026-02-05",
+    "context": 400000,
+    "output": 128000
+   },
+   {
+    "id": "gpt-5.3-codex-spark",
+    "name": "GPT-5.3 Codex Spark",
+    "released": "2026-02-05",
+    "context": 128000,
+    "output": 128000
+   },
+   {
     "id": "kimi-k2.5",
     "name": "Kimi K2.5",
     "released": "2026-01-27",
     "context": 262144,
     "output": 65536
-   },
-   {
-    "id": "gpt-5.2-codex",
-    "name": "GPT-5.2 Codex",
-    "released": "2026-01-14",
-    "context": 400000,
-    "output": 128000
    },
    {
     "id": "gemini-3-flash",
@@ -1208,6 +1210,13 @@
    {
     "id": "gpt-5.2",
     "name": "GPT-5.2",
+    "released": "2025-12-11",
+    "context": 400000,
+    "output": 128000
+   },
+   {
+    "id": "gpt-5.2-codex",
+    "name": "GPT-5.2 Codex",
     "released": "2025-12-11",
     "context": 400000,
     "output": 128000
@@ -1288,19 +1297,47 @@
     "released": "2025-08-07",
     "context": 400000,
     "output": 128000
-   },
-   {
-    "id": "claude-sonnet-4",
-    "name": "Claude Sonnet 4",
-    "released": "2025-05-22",
-    "context": 1000000,
-    "output": 64000
    }
   ],
   "opencode-go": [
    {
-    "id": "gemini-4-argon-contributor",
-    "name": "Gemini 4 Argon Contributor",
+    "id": "hy4",
+    "name": "Hy4",
+    "released": "2026-11-04",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
+    "id": "crouton-alpha-free",
+    "name": "Crouton Alpha Free",
+    "released": "2026-11-03",
+    "context": 1048576,
+    "output": 270000
+   },
+   {
+    "id": "iceman-contributor-free",
+    "name": "Iceman Contributor Free",
+    "released": "2026-10-24",
+    "context": 262144,
+    "output": 131072
+   },
+   {
+    "id": "kimi-k3.1-pro",
+    "name": "Kimi K3.1 Pro",
+    "released": "2026-10-23",
+    "context": 1048576,
+    "output": 131072
+   },
+   {
+    "id": "minimax-m3.1-flash",
+    "name": "MiniMax M3.1 Flash",
+    "released": "2026-10-19",
+    "context": 1000000,
+    "output": 512000
+   },
+   {
+    "id": "gemini-4-argon",
+    "name": "Gemini 4 Argon",
     "released": "2026-10-13",
     "context": 1048576,
     "output": 65536
@@ -1318,20 +1355,6 @@
     "released": "2026-10-05",
     "context": 1048576,
     "output": 131072
-   },
-   {
-    "id": "longcat-2.5-preview-free",
-    "name": "LongCat 2.5 Preview Free",
-    "released": "2026-09-25",
-    "context": 1000000,
-    "output": 131072
-   },
-   {
-    "id": "space-bunny",
-    "name": "Space Bunny",
-    "released": "2026-09-23",
-    "context": 1048576,
-    "output": 524288
    },
    {
     "id": "gpt-6-luna",
@@ -1476,13 +1499,13 @@
    {
     "id": "minimax-m3",
     "name": "MiniMax-M3",
-    "released": "2026-05-31",
+    "released": "2026-06-01",
     "context": 1000000,
     "output": 131072
    },
    {
     "id": "deepseek-v4-pro",
-    "name": "DeepSeek V4 Pro (New)",
+    "name": "DeepSeek V4 Pro",
     "released": "2026-04-24",
     "context": 1000000,
     "output": 384000
@@ -1504,6 +1527,76 @@
   ],
   "openrouter": [
    {
+    "id": "ricursiveai/ripple-65b-preview",
+    "name": "Ripple 65B Preview",
+    "released": "2026-11-04",
+    "context": 1048576,
+    "output": 131072
+   },
+   {
+    "id": "tencent/hy4",
+    "name": "Hy4",
+    "released": "2026-11-04",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
+    "id": "stealth/crouton-alpha",
+    "name": "Crouton Alpha",
+    "released": "2026-11-03",
+    "context": 1048576,
+    "output": 943718
+   },
+   {
+    "id": "z-ai/glm-5.3-flashx-legal",
+    "name": "GLM 5.3 FlashX Legal",
+    "released": "2026-11-02",
+    "context": 1048576,
+    "output": 131072
+   },
+   {
+    "id": "particle-ai/particle-1",
+    "name": "Particle-1",
+    "released": "2026-10-28",
+    "context": 1048576,
+    "output": 131072
+   },
+   {
+    "id": "openai/gpt-6.1-terra",
+    "name": "GPT-6.1 Terra",
+    "released": "2026-10-26",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
+    "id": "openai/gpt-6.1-terra-pro",
+    "name": "GPT-6.1 Terra Pro",
+    "released": "2026-10-26",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
+    "id": "moonshotai/kimi-k3.1-pro",
+    "name": "Kimi K3.1 Pro",
+    "released": "2026-10-23",
+    "context": 1048576,
+    "output": 943718
+   },
+   {
+    "id": "recursive/flint-v1.0:free",
+    "name": "Flint (free)",
+    "released": "2026-10-21",
+    "context": 262144,
+    "output": 235929
+   },
+   {
+    "id": "minimax/minimax-m3.1-flash",
+    "name": "MiniMax-M3.1-Flash",
+    "released": "2026-10-19",
+    "context": 1048576,
+    "output": 524288
+   },
+   {
     "id": "deepseek/deepseek-v4.1-flash-1017",
     "name": "DeepSeek V4.1 Flash 1017",
     "released": "2026-10-17",
@@ -1518,11 +1611,18 @@
     "output": 256000
    },
    {
-    "id": "reflection/beam-1.0-501b-a23b",
-    "name": "Beam 1.0 501B A23B",
+    "id": "inception/mercury-3",
+    "name": "Mercury 3",
     "released": "2026-10-16",
-    "context": 1048576,
-    "output": 943718
+    "context": 1000000,
+    "output": 131072
+   },
+   {
+    "id": "prism-ml/ternary-bonsai-2-9b",
+    "name": "Ternary Bonsai 2 9B",
+    "released": "2026-10-16",
+    "context": 262144,
+    "output": 65536
    },
    {
     "id": "xingchen-agi/xing4.0-29b-a4b:free",
@@ -1543,7 +1643,7 @@
     "name": "Nemotron 3.5 Super VL",
     "released": "2026-10-15",
     "context": 1048576,
-    "output": 235929
+    "output": 943718
    },
    {
     "id": "nvidia/nemotron-3.5-super-vl:free",
@@ -1616,11 +1716,18 @@
     "output": 262144
    },
    {
+    "id": "reflection/beam-1.0-501b-a23b",
+    "name": "Beam 1.0 501B A23B",
+    "released": "2026-10-05",
+    "context": 1048576,
+    "output": 943718
+   },
+   {
     "id": "inclusionai/ling-3.1-flash",
     "name": "Ling 3.1 Flash",
-    "released": "2026-10-02",
-    "context": 262144,
-    "output": 235929
+    "released": "2026-09-29",
+    "context": 1000000,
+    "output": 262144
    },
    {
     "id": "openai/gpt-6.1-sol",
@@ -1651,13 +1758,6 @@
     "output": 8192
    },
    {
-    "id": "fireworks/ember-1",
-    "name": "Ember-1",
-    "released": "2026-09-24",
-    "context": 1048576,
-    "output": 943718
-   },
-   {
     "id": "aion-labs/aion-3.5",
     "name": "Aion 3.5",
     "released": "2026-09-23",
@@ -1679,13 +1779,6 @@
     "output": 131072
    },
    {
-    "id": "upstage/solar-mini4",
-    "name": "Solar Mini 4",
-    "released": "2026-09-23",
-    "context": 524288,
-    "output": 131072
-   },
-   {
     "id": "z-ai/glm-5.3-prime",
     "name": "GLM 5.3 Prime",
     "released": "2026-09-23",
@@ -1700,11 +1793,11 @@
     "output": 128000
    },
    {
-    "id": "cohere/command-a-plus",
-    "name": "Command A+",
+    "id": "fireworks/ember-1",
+    "name": "Ember-1",
     "released": "2026-09-22",
-    "context": 192000,
-    "output": 64000
+    "context": 1048576,
+    "output": 943718
    },
    {
     "id": "openai/gpt-6-luna",
@@ -1733,6 +1826,13 @@
     "released": "2026-09-22",
     "context": 1050000,
     "output": 128000
+   },
+   {
+    "id": "upstage/solar-mini4",
+    "name": "Solar Mini 4",
+    "released": "2026-09-22",
+    "context": 524288,
+    "output": 131072
    },
    {
     "id": "xiaomi/mimo-v2.6-flash",
@@ -1924,13 +2024,6 @@
     "output": 128000
    },
    {
-    "id": "ibm-granite/granite-4.2-8b",
-    "name": "Granite 4.2 8B",
-    "released": "2026-08-31",
-    "context": 131072,
-    "output": 117964
-   },
-   {
     "id": "tencent/hy4-preview",
     "name": "Hy4 preview",
     "released": "2026-08-28",
@@ -1942,7 +2035,7 @@
     "name": "GLM Flash Latest",
     "released": "2026-08-27",
     "context": 1048576,
-    "output": 943718
+    "output": 131072
    },
    {
     "id": "qwen/qwen3.8-flash",
@@ -1956,14 +2049,21 @@
     "name": "GLM-5.3-Flash",
     "released": "2026-08-26",
     "context": 1048576,
-    "output": 943718
+    "output": 943717
+   },
+   {
+    "id": "ibm-granite/granite-4.2-8b",
+    "name": "Granite 4.2 8B",
+    "released": "2026-08-25",
+    "context": 131072,
+    "output": 117964
    },
    {
     "id": "deepseek/deepseek-v4-flash-vision-exp",
     "name": "DeepSeek V4 Flash Vision Exp",
     "released": "2026-08-21",
     "context": 1048576,
-    "output": 262144
+    "output": 943717
    },
    {
     "id": "meta/muse-spark-1.2-contributor",
@@ -1980,17 +2080,10 @@
     "output": 943718
    },
    {
-    "id": "dots-studio/dots-3-note-preview:free",
-    "name": "Dots3-Note Preview (free)",
-    "released": "2026-08-14",
-    "context": 512000,
-    "output": 460800
-   },
-   {
     "id": "qwen/qwen3.8-27b",
     "name": "Qwen3.8 27B",
     "released": "2026-08-14",
-    "context": 1000000,
+    "context": 1024000,
     "output": 235929
    },
    {
@@ -2001,25 +2094,18 @@
     "output": 943718
    },
    {
+    "id": "deepseek/deepseek-v4-pro-0813",
+    "name": "DeepSeek V4 Pro 0813",
+    "released": "2026-08-13",
+    "context": 1048576,
+    "output": 943718
+   },
+   {
     "id": "google/gemini-3.7-flash",
     "name": "Gemini 3.7 Flash",
     "released": "2026-08-13",
     "context": 1048576,
     "output": 65536
-   },
-   {
-    "id": "bytedance-seed/seed-2-1-turbo",
-    "name": "Seed 2.1 Turbo",
-    "released": "2026-08-12",
-    "context": 262144,
-    "output": 235929
-   },
-   {
-    "id": "deepseek/deepseek-v4-pro-0813",
-    "name": "DeepSeek V4 Pro 0813",
-    "released": "2026-08-12",
-    "context": 1048576,
-    "output": 384000
    },
    {
     "id": "qwen/qwen3.8-2.4t-a95b",
@@ -2034,6 +2120,13 @@
     "released": "2026-08-12",
     "context": 500000,
     "output": 450000
+   },
+   {
+    "id": "liquid/lfm-2.5-2.6b",
+    "name": "LFM2.5-2.6B",
+    "released": "2026-08-11",
+    "context": 128000,
+    "output": 8192
    },
    {
     "id": "liquid/lfm-2.5-2.6b:free",
@@ -2064,9 +2157,16 @@
     "output": 16384
    },
    {
+    "id": "inclusionai/ling-3.0-tiny",
+    "name": "Ling 3.0 Tiny",
+    "released": "2026-08-06",
+    "context": 262144,
+    "output": 250000
+   },
+   {
     "id": "upstage/solar-pro4",
     "name": "Solar Pro 4",
-    "released": "2026-08-10",
+    "released": "2026-08-06",
     "context": 524288,
     "output": 131072
    },
@@ -2106,13 +2206,6 @@
     "output": 262144
    },
    {
-    "id": "thinkingmachines/inkling-small:free",
-    "name": "Inkling Small (free)",
-    "released": "2026-07-30",
-    "context": 1048576,
-    "output": 262144
-   },
-   {
     "id": "anthropic/claude-opus-5",
     "name": "Claude Opus 5",
     "released": "2026-07-24",
@@ -2141,27 +2234,6 @@
     "output": 65536
    },
    {
-    "id": "poolside/laguna-s-2.1",
-    "name": "Laguna S 2.1",
-    "released": "2026-07-21",
-    "context": 1048576,
-    "output": 131072
-   },
-   {
-    "id": "poolside/laguna-s-2.1:free",
-    "name": "Laguna S 2.1 (free)",
-    "released": "2026-07-21",
-    "context": 262144,
-    "output": 32768
-   },
-   {
-    "id": "meituan/longcat-2.0",
-    "name": "LongCat 2.0",
-    "released": "2026-07-20",
-    "context": 1048756,
-    "output": 262144
-   },
-   {
     "id": "moonshotai/kimi-k3",
     "name": "Kimi K3",
     "released": "2026-07-16",
@@ -2181,13 +2253,6 @@
     "released": "2026-07-15",
     "context": 524288,
     "output": 471859
-   },
-   {
-    "id": "thinkingmachines/inkling:free",
-    "name": "Inkling (free)",
-    "released": "2026-07-15",
-    "context": 1048576,
-    "output": 262144
    },
    {
     "id": "openai/gpt-5.6-luna",
@@ -2246,39 +2311,11 @@
     "output": 450000
    },
    {
-    "id": "aion-labs/aion-3.0",
-    "name": "Aion-3.0",
-    "released": "2026-07-07",
-    "context": 131072,
-    "output": 32768
-   },
-   {
-    "id": "aion-labs/aion-3.0-mini",
-    "name": "Aion-3.0-Mini",
-    "released": "2026-07-07",
-    "context": 131072,
-    "output": 32768
-   },
-   {
     "id": "tencent/hy3",
     "name": "Hy3",
     "released": "2026-07-06",
     "context": 262144,
     "output": 128000
-   },
-   {
-    "id": "poolside/laguna-xs-2.1",
-    "name": "Laguna XS 2.1",
-    "released": "2026-07-02",
-    "context": 262144,
-    "output": 32768
-   },
-   {
-    "id": "poolside/laguna-xs-2.1:free",
-    "name": "Laguna XS 2.1 (free)",
-    "released": "2026-07-02",
-    "context": 262144,
-    "output": 32768
    },
    {
     "id": "anthropic/claude-sonnet-5",
@@ -2288,11 +2325,18 @@
     "output": 128000
    },
    {
-    "id": "cohere/north-mini-code:free",
-    "name": "North Mini Code (free)",
-    "released": "2026-06-17",
-    "context": 256000,
-    "output": 64000
+    "id": "meituan/longcat-2.0",
+    "name": "LongCat-2.0",
+    "released": "2026-06-30",
+    "context": 1048756,
+    "output": 262144
+   },
+   {
+    "id": "bytedance-seed/seed-2-1-turbo",
+    "name": "Seed 2.1 Turbo",
+    "released": "2026-06-23",
+    "context": 262144,
+    "output": 235929
    },
    {
     "id": "sakana/fugu-ultra",
@@ -2321,6 +2365,13 @@
     "released": "2026-06-09",
     "context": 1000000,
     "output": 128000
+   },
+   {
+    "id": "cohere/north-mini-code:free",
+    "name": "North Mini Code (free)",
+    "released": "2026-06-09",
+    "context": 256000,
+    "output": 64000
    },
    {
     "id": "~anthropic/claude-fable-latest",
@@ -2386,6 +2437,13 @@
     "output": 131072
    },
    {
+    "id": "cohere/command-a-plus",
+    "name": "Command A+",
+    "released": "2026-05-20",
+    "context": 192000,
+    "output": 64000
+   },
+   {
     "id": "google/gemini-3.5-flash",
     "name": "Gemini 3.5 Flash",
     "released": "2026-05-19",
@@ -2393,11 +2451,25 @@
     "output": 65536
    },
    {
+    "id": "aion-labs/aion-3.0-mini",
+    "name": "Aion-3.0-Mini",
+    "released": "2026-05-14",
+    "context": 131072,
+    "output": 32768
+   },
+   {
     "id": "google/gemini-3.1-flash-lite",
     "name": "Gemini 3.1 Flash Lite",
     "released": "2026-05-07",
     "context": 1048576,
     "output": 65536
+   },
+   {
+    "id": "aion-labs/aion-3.0",
+    "name": "Aion-3.0",
+    "released": "2026-05-05",
+    "context": 131072,
+    "output": 32768
    },
    {
     "id": "openai/gpt-chat-latest",
@@ -2512,32 +2584,18 @@
     "output": 65536
    },
    {
-    "id": "xiaomi/mimo-v2.5",
-    "name": "MiMo-V2.5",
-    "released": "2026-04-22",
-    "context": 1050000,
-    "output": 131072
-   },
-   {
-    "id": "xiaomi/mimo-v2.5-pro",
-    "name": "MiMo-V2.5-Pro",
-    "released": "2026-04-22",
-    "context": 1050000,
-    "output": 131072
-   },
-   {
-    "id": "moonshotai/kimi-k2.6",
-    "name": "Kimi K2.6",
-    "released": "2026-04-21",
-    "context": 262144,
-    "output": 235929
-   },
-   {
     "id": "~anthropic/claude-opus-latest",
     "name": "Claude Opus Latest",
     "released": "2026-04-21",
     "context": 1000000,
     "output": 128000
+   },
+   {
+    "id": "moonshotai/kimi-k2.6",
+    "name": "Kimi K2.6",
+    "released": "2026-04-20",
+    "context": 262144,
+    "output": 235929
    },
    {
     "id": "tencent/hy3-preview",
@@ -2586,7 +2644,7 @@
     "name": "GLM-5.1",
     "released": "2026-04-07",
     "context": 204800,
-    "output": 128000
+    "output": 131072
    },
    {
     "id": "google/gemma-4-26b-a4b-it",
@@ -2624,13 +2682,6 @@
     "output": 65536
    },
    {
-    "id": "arcee-ai/trinity-large-thinking",
-    "name": "Trinity Large Thinking",
-    "released": "2026-04-01",
-    "context": 262144,
-    "output": 80000
-   },
-   {
     "id": "z-ai/glm-5v-turbo",
     "name": "GLM-5V-Turbo",
     "released": "2026-04-01",
@@ -2645,18 +2696,11 @@
     "output": 1800000
    },
    {
-    "id": "rekaai/reka-edge",
-    "name": "Reka Edge",
-    "released": "2026-03-20",
-    "context": 16384,
-    "output": 14745
-   },
-   {
     "id": "minimax/minimax-m2.7",
     "name": "MiniMax-M2.7",
     "released": "2026-03-18",
     "context": 204800,
-    "output": 131072
+    "output": 176947
    },
    {
     "id": "openai/gpt-5.4-mini",
@@ -2690,15 +2734,15 @@
     "id": "nvidia/nemotron-3-super-120b-a12b",
     "name": "Nemotron 3 Super 120B A12B",
     "released": "2026-03-11",
-    "context": 262144,
-    "output": 235929
+    "context": 1048576,
+    "output": 16384
    },
    {
-    "id": "nvidia/nemotron-3-super-120b-a12b:free",
-    "name": "Nemotron 3 Super (free)",
+    "id": "rekaai/reka-edge",
+    "name": "Reka Edge",
     "released": "2026-03-11",
-    "context": 262144,
-    "output": 235929
+    "context": 16384,
+    "output": 14745
    },
    {
     "id": "openai/gpt-5.4",
@@ -2715,13 +2759,6 @@
     "output": 128000
    },
    {
-    "id": "inception/mercury-2",
-    "name": "Mercury 2",
-    "released": "2026-03-04",
-    "context": 128000,
-    "output": 50000
-   },
-   {
     "id": "google/gemini-3.1-flash-lite-preview",
     "name": "Gemini 3.1 Flash Lite Preview",
     "released": "2026-03-03",
@@ -2736,11 +2773,11 @@
     "output": 65536
    },
    {
-    "id": "aion-labs/aion-2.0",
-    "name": "Aion-2.0",
-    "released": "2026-02-23",
-    "context": 131072,
-    "output": 32768
+    "id": "inception/mercury-2",
+    "name": "Mercury 2",
+    "released": "2026-02-24",
+    "context": 128000,
+    "output": 50000
    },
    {
     "id": "qwen/qwen3.5-122b-a10b",
@@ -2754,21 +2791,14 @@
     "name": "Qwen3.5 27B",
     "released": "2026-02-23",
     "context": 262144,
-    "output": 65536
+    "output": 81920
    },
    {
     "id": "qwen/qwen3.5-35b-a3b",
     "name": "Qwen3.5 35B-A3B",
     "released": "2026-02-23",
     "context": 262144,
-    "output": 235929
-   },
-   {
-    "id": "qwen/qwen3.5-9b",
-    "name": "Qwen3.5 9B",
-    "released": "2026-02-23",
-    "context": 262144,
-    "output": 32768
+    "output": 81920
    },
    {
     "id": "google/gemini-3.1-pro-preview",
@@ -2804,13 +2834,6 @@
     "released": "2026-02-15",
     "context": 262144,
     "output": 235929
-   },
-   {
-    "id": "bytedance-seed/seed-2.0-code",
-    "name": "Seed 2.0 Code",
-    "released": "2026-02-14",
-    "context": 262144,
-    "output": 131072
    },
    {
     "id": "bytedance-seed/seed-2.0-lite",
@@ -2876,25 +2899,11 @@
     "output": 65536
    },
    {
-    "id": "upstage/solar-pro-3",
-    "name": "Solar Pro 3",
+    "id": "moonshotai/kimi-k2.5",
+    "name": "Kimi K2.5",
     "released": "2026-01-27",
-    "context": 131072,
-    "output": 117964
-   },
-   {
-    "id": "openai/gpt-audio",
-    "name": "GPT Audio",
-    "released": "2026-01-19",
-    "context": 128000,
-    "output": 16384
-   },
-   {
-    "id": "openai/gpt-audio-mini",
-    "name": "GPT Audio Mini",
-    "released": "2026-01-19",
-    "context": 128000,
-    "output": 16384
+    "context": 262144,
+    "output": 235929
    },
    {
     "id": "z-ai/glm-4.7-flash",
@@ -2904,39 +2913,18 @@
     "output": 117964
    },
    {
-    "id": "moonshotai/kimi-k2.5",
-    "name": "Kimi K2.5",
-    "released": "2026-01",
-    "context": 262144,
-    "output": 235929
-   },
-   {
-    "id": "bytedance-seed/seed-1.6",
-    "name": "Seed 1.6",
-    "released": "2025-12-23",
-    "context": 262144,
-    "output": 32768
-   },
-   {
-    "id": "bytedance-seed/seed-1.6-flash",
-    "name": "Seed 1.6 Flash",
-    "released": "2025-12-23",
-    "context": 262144,
-    "output": 32768
-   },
-   {
-    "id": "minimax/minimax-m2.1",
-    "name": "MiniMax-M2.1",
-    "released": "2025-12-23",
-    "context": 204800,
-    "output": 131072
-   },
-   {
     "id": "z-ai/glm-4.7",
     "name": "GLM-4.7",
     "released": "2025-12-22",
     "context": 204800,
     "output": 131072
+   },
+   {
+    "id": "aion-labs/aion-2.0",
+    "name": "Aion-2.0",
+    "released": "2025-12-21",
+    "context": 131072,
+    "output": 32768
    },
    {
     "id": "google/gemini-3-flash-preview",
@@ -2972,13 +2960,6 @@
     "released": "2025-12-11",
     "context": 400000,
     "output": 128000
-   },
-   {
-    "id": "openai/gpt-5.2-chat",
-    "name": "GPT-5.2 Chat",
-    "released": "2025-12-10",
-    "context": 128000,
-    "output": 32000
    },
    {
     "id": "mistralai/devstral-2512",
@@ -3048,7 +3029,7 @@
     "name": "DeepSeek V3.2",
     "released": "2025-12-01",
     "context": 163840,
-    "output": 65536
+    "output": 147456
    },
    {
     "id": "anthropic/claude-opus-4.5",
@@ -3093,25 +3074,11 @@
     "output": 98304
    },
    {
-    "id": "amazon/nova-premier-v1",
-    "name": "Nova Premier 1.0",
-    "released": "2025-10-31",
-    "context": 1000000,
-    "output": 32000
-   },
-   {
     "id": "openai/gpt-oss-safeguard-20b",
     "name": "GPT OSS Safeguard 20B",
     "released": "2025-10-29",
     "context": 131072,
     "output": 65536
-   },
-   {
-    "id": "minimax/minimax-m2",
-    "name": "MiniMax-M2",
-    "released": "2025-10-27",
-    "context": 204800,
-    "output": 131072
    },
    {
     "id": "anthropic/claude-haiku-4.5",
@@ -3133,6 +3100,13 @@
     "released": "2025-10-06",
     "context": 400000,
     "output": 128000
+   },
+   {
+    "id": "openai/gpt-audio-mini",
+    "name": "GPT-Audio Mini",
+    "released": "2025-10-06",
+    "context": 128000,
+    "output": 16384
    },
    {
     "id": "qwen/qwen3-vl-30b-a3b-thinking",
@@ -3198,23 +3172,23 @@
     "output": 16384
    },
    {
-    "id": "qwen/qwen3-next-80b-a3b-thinking",
-    "name": "Qwen3-Next 80B-A3B (Thinking)",
-    "released": "2025-09",
-    "context": 262144,
-    "output": 235929
+    "id": "openai/gpt-audio",
+    "name": "GPT-Audio",
+    "released": "2025-08-28",
+    "context": 128000,
+    "output": 16384
    },
    {
     "id": "deepseek/deepseek-chat-v3.1",
     "name": "DeepSeek V3.1",
     "released": "2025-08-21",
     "context": 163840,
-    "output": 32768
+    "output": 147456
    },
    {
     "id": "mistralai/mistral-medium-3.1",
     "name": "Mistral Medium 3.1",
-    "released": "2025-08-13",
+    "released": "2025-08-12",
     "context": 131072,
     "output": 104857
    },
@@ -3265,7 +3239,14 @@
     "name": "GPT OSS 20B",
     "released": "2025-08-05",
     "context": 131072,
-    "output": 32768
+    "output": 117964
+   },
+   {
+    "id": "qwen/qwen3-coder-30b-a3b-instruct",
+    "name": "Qwen3-Coder 30B-A3B Instruct",
+    "released": "2025-07-31",
+    "context": 262144,
+    "output": 235929
    },
    {
     "id": "mistralai/codestral-2508",
@@ -3276,8 +3257,8 @@
    },
    {
     "id": "qwen/qwen3-30b-a3b-instruct-2507",
-    "name": "Qwen3 30B A3B Instruct 2507",
-    "released": "2025-07-29",
+    "name": "Qwen3 30B-A3B Instruct 2507",
+    "released": "2025-07-28",
     "context": 262144,
     "output": 235929
    },
@@ -3289,13 +3270,6 @@
     "output": 65536
    },
    {
-    "id": "z-ai/glm-4.5",
-    "name": "GLM-4.5",
-    "released": "2025-07-28",
-    "context": 131072,
-    "output": 98304
-   },
-   {
     "id": "z-ai/glm-4.5-air",
     "name": "GLM-4.5-Air",
     "released": "2025-07-28",
@@ -3304,7 +3278,7 @@
    },
    {
     "id": "qwen/qwen3-235b-a22b-thinking-2507",
-    "name": "Qwen3 235B A22B Thinking 2507",
+    "name": "Qwen3 235B-A22B Thinking 2507",
     "released": "2025-07-25",
     "context": 128000,
     "output": 16384
@@ -3312,7 +3286,7 @@
    {
     "id": "qwen/qwen3-coder",
     "name": "Qwen3 Coder 480B A35B",
-    "released": "2025-07-23",
+    "released": "2025-07-22",
     "context": 262144,
     "output": 65536
    },
@@ -3321,7 +3295,7 @@
     "name": "Qwen3 235B A22B Instruct 2507",
     "released": "2025-07-21",
     "context": 262144,
-    "output": 16384
+    "output": 117964
    },
    {
     "id": "mistralai/voxtral-small-24b-2507",
@@ -3343,27 +3317,6 @@
     "released": "2025-06-20",
     "context": 256000,
     "output": 16384
-   },
-   {
-    "id": "google/gemini-2.5-flash",
-    "name": "Gemini 2.5 Flash",
-    "released": "2025-06-17",
-    "context": 1048576,
-    "output": 65535
-   },
-   {
-    "id": "google/gemini-2.5-flash-lite",
-    "name": "Gemini 2.5 Flash-Lite",
-    "released": "2025-06-17",
-    "context": 1048576,
-    "output": 65535
-   },
-   {
-    "id": "google/gemini-2.5-pro",
-    "name": "Gemini 2.5 Pro",
-    "released": "2025-06-17",
-    "context": 1048576,
-    "output": 65536
    },
    {
     "id": "minimax/minimax-m1",
@@ -3415,22 +3368,15 @@
     "output": 16384
    },
    {
+    "id": "qwen/qwen3-32b",
+    "name": "Qwen3 32B",
+    "released": "2025-04-28",
+    "context": 131072,
+    "output": 16384
+   },
+   {
     "id": "openai/o3",
     "name": "o3",
-    "released": "2025-04-16",
-    "context": 200000,
-    "output": 100000
-   },
-   {
-    "id": "openai/o4-mini",
-    "name": "o4-mini",
-    "released": "2025-04-16",
-    "context": 200000,
-    "output": 100000
-   },
-   {
-    "id": "openai/o4-mini-high",
-    "name": "o4 Mini High",
     "released": "2025-04-16",
     "context": 200000,
     "output": 100000
@@ -3454,35 +3400,21 @@
     "name": "GPT-4.1 nano",
     "released": "2025-04-14",
     "context": 1047576,
-    "output": 32768
+    "output": 942818
    },
    {
     "id": "meta-llama/llama-4-maverick",
     "name": "Llama 4 Maverick",
     "released": "2025-04-05",
-    "context": 1048576,
-    "output": 16384
+    "context": 524288,
+    "output": 32768
    },
    {
     "id": "meta-llama/llama-4-scout",
     "name": "Llama 4 Scout",
     "released": "2025-04-05",
-    "context": 1310720,
+    "context": 327680,
     "output": 16384
-   },
-   {
-    "id": "qwen/qwen3-32b",
-    "name": "Qwen3 32B",
-    "released": "2025-04",
-    "context": 131072,
-    "output": 16384
-   },
-   {
-    "id": "qwen/qwen3-coder-30b-a3b-instruct",
-    "name": "Qwen3-Coder 30B-A3B Instruct",
-    "released": "2025-04",
-    "context": 262144,
-    "output": 235929
    },
    {
     "id": "deepseek/deepseek-chat-v3-0324",
@@ -3520,32 +3452,11 @@
     "output": 26214
    },
    {
-    "id": "openai/o3-mini-high",
-    "name": "o3 Mini High",
-    "released": "2025-02-12",
-    "context": 200000,
-    "output": 100000
-   },
-   {
-    "id": "deepseek/deepseek-r1",
-    "name": "DeepSeek-R1",
-    "released": "2025-01-20",
-    "context": 64000,
-    "output": 16000
-   },
-   {
-    "id": "openai/o3-mini",
-    "name": "o3-mini",
-    "released": "2024-12-20",
-    "context": 200000,
-    "output": 100000
-   },
-   {
     "id": "meta-llama/llama-3.3-70b-instruct",
     "name": "Llama-3.3-70B-Instruct",
     "released": "2024-12-06",
     "context": 131072,
-    "output": 16384
+    "output": 32768
    },
    {
     "id": "amazon/nova-lite-v1",
@@ -3569,25 +3480,11 @@
     "output": 5120
    },
    {
-    "id": "openai/o1",
-    "name": "o1",
-    "released": "2024-12-05",
-    "context": 200000,
-    "output": 100000
-   },
-   {
     "id": "openai/gpt-4o-2024-11-20",
     "name": "GPT-4o (2024-11-20)",
     "released": "2024-11-20",
     "context": 128000,
     "output": 16384
-   },
-   {
-    "id": "mistralai/mistral-large-2407",
-    "name": "Mistral Large 2407",
-    "released": "2024-11-19",
-    "context": 131072,
-    "output": 104857
    },
    {
     "id": "qwen/qwen-2.5-7b-instruct",
@@ -3625,11 +3522,11 @@
     "output": 16384
    },
    {
-    "id": "meta-llama/llama-3.1-70b-instruct",
-    "name": "Llama-3.1-70B-Instruct",
-    "released": "2024-07-23",
+    "id": "mistralai/mistral-large-2407",
+    "name": "Mistral Large 2407",
+    "released": "2024-07-24",
     "context": 131072,
-    "output": 16384
+    "output": 104857
    },
    {
     "id": "meta-llama/llama-3.1-8b-instruct",
@@ -3637,6 +3534,13 @@
     "released": "2024-07-23",
     "context": 131072,
     "output": 117964
+   },
+   {
+    "id": "mistralai/mistral-nemo",
+    "name": "Mistral Nemo",
+    "released": "2024-07-18",
+    "context": 131072,
+    "output": 16384
    },
    {
     "id": "openai/gpt-4o-mini",
@@ -3650,13 +3554,6 @@
     "name": "GPT-4o-mini (2024-07-18)",
     "released": "2024-07-18",
     "context": 128000,
-    "output": 16384
-   },
-   {
-    "id": "mistralai/mistral-nemo",
-    "name": "Mistral Nemo",
-    "released": "2024-07-01",
-    "context": 131072,
     "output": 16384
    },
    {
@@ -3716,23 +3613,9 @@
     "output": 4096
    },
    {
-    "id": "openai/gpt-4-turbo",
-    "name": "GPT-4 Turbo",
-    "released": "2023-11-06",
-    "context": 128000,
-    "output": 4096
-   },
-   {
     "id": "openai/gpt-3.5-turbo-16k",
     "name": "GPT-3.5 Turbo 16k",
     "released": "2023-08-28",
-    "context": 16385,
-    "output": 4096
-   },
-   {
-    "id": "openai/gpt-3.5-turbo",
-    "name": "GPT-3.5-turbo",
-    "released": "2023-03-01",
     "context": 16385,
     "output": 4096
    }
@@ -3795,41 +3678,38 @@
    "deepseek-v4-flash-vision-exp"
   ],
   "google": [
+   "gemini-2.5-flash-image",
    "gemini-3.1-flash-lite-preview"
+  ],
+  "groq": [
+   "llama-3.1-8b-instant",
+   "llama-3.3-70b-versatile",
+   "qwen/qwen3.6-27b"
   ],
   "mistral": [
    "devstral-2512",
    "devstral-latest",
-   "devstral-medium-2507",
    "devstral-medium-latest",
-   "devstral-small-2505",
-   "devstral-small-2507",
    "glm-5-2",
    "labs-devstral-small-2512",
    "labs-leanstral-1-5-1",
    "magistral-medium-latest",
-   "mistral-large-2411",
    "mistral-medium-2505",
    "mistral-medium-2508",
-   "mistral-nemo",
    "mistral-small-2506",
-   "open-mistral-7b",
    "open-mistral-nemo",
-   "open-mixtral-8x22b",
-   "open-mixtral-8x7b",
    "pixtral-12b",
-   "pixtral-large-latest",
    "zai-glm-5-2"
   ],
   "openai": [
+   "chatgpt-image-latest",
    "gpt-3.5-turbo",
    "gpt-4",
    "gpt-4-turbo",
    "gpt-4.1-nano",
    "gpt-4o-2024-05-13",
-   "gpt-5.2-chat-latest",
-   "gpt-5.3-chat-latest",
-   "gpt-image-1",
+   "gpt-image-1-mini",
+   "gpt-image-1.5",
    "o1",
    "o1-pro",
    "o3-mini",
@@ -3839,7 +3719,10 @@
    "cat-jam-free",
    "claude-3-5-haiku",
    "claude-opus-4-1",
+   "claude-sonnet-4",
+   "deepseek-v4-flash",
    "deepseek-v4-flash-free",
+   "deepseek-v4-flash-vision-exp",
    "exo-free",
    "fledge-alpha-free",
    "gemini-3-pro",
@@ -3861,6 +3744,7 @@
    "ling-3.1-flash-free",
    "ll-alpha-free",
    "longcat-2.0-free",
+   "longcat-2.5-preview-free",
    "mimo-v2-flash-free",
    "mimo-v2-omni-free",
    "mimo-v2-pro-free",
@@ -3869,22 +3753,43 @@
    "minimax-m2.1-free",
    "minimax-m2.5-free",
    "minimax-m3-free",
+   "minimax-m3.1-flash-free",
    "muse-spark-1.2-contributor-free",
    "muse-spark-1.3-contributor-free",
    "nemotron-3-super-free",
+   "nemotron-3-ultra-free",
    "north-mini-code-free",
    "qwen3-coder",
    "qwen3.6-plus-free",
    "ring-2.6-1t-free",
+   "space-bunny-free",
    "step-5-preview-free",
    "trinity-large-preview-free",
    "x-preview-f-free"
   ],
   "opencode-go": [
    "cat-jam-free",
+   "gemini-4-argon-contributor",
+   "longcat-2.5-preview-free",
    "minimax-m2.7",
+   "minimax-m3.1-flash-free",
+   "space-bunny",
    "step-5-preview-free"
+  ],
+  "openrouter": [
+   "amazon/nova-premier-v1",
+   "bytedance-seed/seed-1.6",
+   "bytedance-seed/seed-1.6-flash",
+   "bytedance-seed/seed-2.0-code",
+   "dots-studio/dots-3-note-preview:free",
+   "google/gemini-2.5-flash",
+   "google/gemini-2.5-flash-lite",
+   "google/gemini-2.5-pro",
+   "qwen/qwen3.5-9b",
+   "xiaomi/mimo-v2.5",
+   "xiaomi/mimo-v2.5-pro",
+   "z-ai/glm-4.5"
   ]
  },
- "as_of": "2026-10-19T00:00:00Z"
+ "as_of": "2026-11-06T00:00:00Z"
 }

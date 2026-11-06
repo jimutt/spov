@@ -155,7 +155,9 @@ func TestTheSourceRefreshesInTheBackground(t *testing.T) {
 		_, _ = w.Write([]byte(doc))
 	}))
 	defer srv.Close()
-	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	// After the snapshot, or the persisted list is set aside as older
+	// than it, which a refreshed snapshot would make true of any fixed date.
+	now := Snapshot().AsOf.Add(12 * time.Hour)
 	persist := &memPersist{}
 	s := &Source{URL: srv.URL, Persist: persist, Now: func() time.Time { return now }}
 
