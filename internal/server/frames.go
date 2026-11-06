@@ -157,30 +157,41 @@ func find(v any, keys []string) string {
 // sandbox, so ids are gathered by name rather than by position.
 //
 // @decision(DL-018)
-func conversations(body []byte) (ids []string, titles map[string]string) {
+func conversations(body []byte) (ids []string, titles map[string]string, infos map[string][]byte) {
 	titles = map[string]string{}
+	infos = map[string][]byte{}
 	var envelope struct {
-		Data []map[string]any `json:"data"`
+		Data []json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Data == nil {
 		// Some builds answer with a bare array.
-		var bare []map[string]any
+		var bare []json.RawMessage
 		if err := json.Unmarshal(body, &bare); err != nil {
-			return nil, titles
+			return nil, titles, infos
 		}
 		envelope.Data = bare
 	}
-	for _, item := range envelope.Data {
-		id, _ := item["id"].(string)
+	for _, raw := range envelope.Data {
+		var item struct {
+			ID    any `json:"id"`
+			Title any `json:"title"`
+		}
+		if json.Unmarshal(raw, &item) != nil {
+			continue
+		}
+		id, _ := item.ID.(string)
 		if id == "" {
 			continue
 		}
 		ids = append(ids, id)
-		if t, ok := item["title"].(string); ok {
+		if t, ok := item.Title.(string); ok {
 			titles[id] = t
 		}
+		// Each item is a whole Session.Info, kept for an import.
+		// @decision(DL-089)
+		infos[id] = raw
 	}
-	return ids, titles
+	return ids, titles, infos
 }
 
 // parsedMessage is one message with the raw body it was projected

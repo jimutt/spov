@@ -489,6 +489,11 @@ func TestTheRecorderNeverReadsOnATimer(t *testing.T) {
 	if len(convs) != 1 || convs[0].Title != "first" || convs[0].OpenCodeID != "ses_1" {
 		t.Fatalf("conversations = %+v", convs)
 	}
+	// The listing's item is kept whole, with no read of its own.
+	// @decision(DL-089)
+	if string(convs[0].Info) != `{"id":"ses_1","title":"first"}` {
+		t.Errorf("the conversation's info = %q, want the listing's item", convs[0].Info)
+	}
 	if evs := f.events(); len(evs) != 0 {
 		t.Fatalf("a first attach wrote a marker: %+v", evs)
 	}

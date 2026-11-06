@@ -246,12 +246,13 @@ select count(*) from allowlist_entries where org_id = $1 and admin;
 select pg_advisory_xact_lock(hashtext($1), hashtext('spov:allowlist'));
 
 -- name: UpsertConversation :one
--- An existing row keeps its id and created_at; the title changes only
--- when the new one says something.
-insert into conversations (id, org_id, session_id, opencode_id, title, created_at, updated_at)
-values ($1, $2, $3, $4, $5, $6, $7)
+-- An existing row keeps its id and created_at; the title and the info
+-- change only when the new one says something.
+insert into conversations (id, org_id, session_id, opencode_id, title, created_at, updated_at, info)
+values ($1, $2, $3, $4, $5, $6, $7, $8)
 on conflict (session_id, opencode_id) do update
 set title      = case when excluded.title = '' then conversations.title else excluded.title end,
+    info       = coalesce(excluded.info, conversations.info),
     updated_at = excluded.updated_at
 returning *;
 

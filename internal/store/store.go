@@ -851,8 +851,14 @@ type Conversation struct {
 	// OpenCodeID is the session id OpenCode gave it (ses_…).
 	OpenCodeID string
 	Title      string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// Info is OpenCode's Session.Info for it, whole, as the sandbox's
+	// listing last gave it, or empty when it never did. A transcript
+	// resume imports it.
+	//
+	// @decision(DL-089)
+	Info      []byte
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Message is one thing said in a conversation: the reply, not the parts
@@ -920,8 +926,8 @@ type Event struct {
 // @decision(DL-017)
 type ConversationStore interface {
 	// UpsertConversation keys on (SessionID, OpenCodeID). An existing
-	// row keeps its ID and CreatedAt; its title changes only when the
-	// new one is non-empty. The stored row is returned. A session that
+	// row keeps its ID and CreatedAt; its title and its info change only
+	// when the new one is non-empty. The stored row is returned. A session that
 	// does not exist in the org is ErrNotFound.
 	UpsertConversation(ctx context.Context, c Conversation) (Conversation, error)
 	ListConversations(ctx context.Context, orgID, sessionID string) ([]Conversation, error)

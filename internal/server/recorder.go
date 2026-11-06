@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -605,14 +606,14 @@ func (r *Recorder) catchUp(ctx context.Context, c *capture) error {
 	if err != nil {
 		return fmt.Errorf("list conversations: %w", err)
 	}
-	ids, titles := conversations(listed)
+	ids, titles, infos := conversations(listed)
 	// The count comes from the sandbox; see MaxConversations.
 	if len(ids) > MaxConversations {
 		r.warn(fmt.Sprintf("recorder %s: the sandbox lists %d conversations; reading the first %d", c.sess.ID, len(ids), MaxConversations))
 		ids = ids[:MaxConversations]
 	}
 	for _, id := range ids {
-		conv, err := r.conversation(ctx, c, id, titles[id])
+		conv, err := r.conversationWith(ctx, c, id, titles[id], infos[id])
 		if err != nil {
 			return err
 		}
@@ -626,11 +627,19 @@ func (r *Recorder) catchUp(ctx context.Context, c *capture) error {
 // conversation resolves an OpenCode session to its stored row, creating
 // it on first sight.
 func (r *Recorder) conversation(ctx context.Context, c *capture, opencodeID, title string) (store.Conversation, error) {
-	if conv, ok := c.convs[opencodeID]; ok && (title == "" || conv.Title == title) {
+	return r.conversationWith(ctx, c, opencodeID, title, nil)
+}
+
+// conversationWith is conversation that also keeps the listing's
+// Session.Info, when there is one and it changed.
+//
+// @decision(DL-089)
+func (r *Recorder) conversationWith(ctx context.Context, c *capture, opencodeID, title string, info []byte) (store.Conversation, error) {
+	if conv, ok := c.convs[opencodeID]; ok && (title == "" || conv.Title == title) && (len(info) == 0 || bytes.Equal(conv.Info, info)) {
 		return conv, nil
 	}
 	conv, err := r.store.Conversations().UpsertConversation(ctx, store.Conversation{
-		ID: store.NewID(r.now()), OrgID: c.sess.OrgID, SessionID: c.sess.ID, OpenCodeID: opencodeID, Title: title,
+		ID: store.NewID(r.now()), OrgID: c.sess.OrgID, SessionID: c.sess.ID, OpenCodeID: opencodeID, Title: title, Info: info,
 	})
 	if err != nil {
 		return store.Conversation{}, fmt.Errorf("write the store: %w", err)

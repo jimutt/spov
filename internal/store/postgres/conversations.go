@@ -25,7 +25,7 @@ func (p pgConversations) UpsertConversation(ctx context.Context, c store.Convers
 	}
 	row, err := p.s.q.UpsertConversation(ctx, sqlcgen.UpsertConversationParams{
 		ID: c.ID, OrgID: c.OrgID, SessionID: c.SessionID, OpencodeID: c.OpenCodeID,
-		Title: c.Title, CreatedAt: ts(c.CreatedAt), UpdatedAt: ts(now),
+		Title: c.Title, CreatedAt: ts(c.CreatedAt), UpdatedAt: ts(now), Info: nonEmpty(c.Info),
 	})
 	if err != nil {
 		return store.Conversation{}, mapErr("upsert conversation", err)

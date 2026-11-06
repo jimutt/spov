@@ -1602,6 +1602,20 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		if err != nil || blank.Title != "hello" {
 			t.Errorf("an empty title overwrote a known one: %+v, %v", blank, err)
 		}
+		// The info is kept whole and, like the title, only replaced by
+		// one that says something. @decision(DL-089)
+		info := []byte(`{"id":"ses_1","time":{"created":1,"updated":2}}`)
+		withInfo, err := cs.UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, OpenCodeID: "ses_1", Info: info,
+		})
+		if err != nil || string(withInfo.Info) != string(info) || withInfo.Title != "hello" {
+			t.Errorf("the info was not kept: %+v, %v", withInfo, err)
+		}
+		if kept, err := cs.UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, OpenCodeID: "ses_1",
+		}); err != nil || string(kept.Info) != string(info) {
+			t.Errorf("an upsert with no info dropped the stored one: %q, %v", kept.Info, err)
+		}
 		list, err := cs.ListConversations(ctx, "org", sess.ID)
 		if err != nil || len(list) != 1 {
 			t.Fatalf("list: %+v, %v", list, err)

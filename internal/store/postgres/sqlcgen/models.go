@@ -45,6 +45,7 @@ type Conversation struct {
 	Title      string
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	Info       []byte
 }
 
 type DeviceCode struct {

@@ -1101,6 +1101,9 @@ func (s memConversations) UpsertConversation(_ context.Context, c Conversation) 
 		if c.Title != "" {
 			cur.Title = c.Title
 		}
+		if len(c.Info) > 0 {
+			cur.Info = c.Info
+		}
 		cur.UpdatedAt = now
 		old := s.m.conversations[cur.ID]
 		s.m.conversations[cur.ID] = *cur
