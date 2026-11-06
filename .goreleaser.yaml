@@ -61,7 +61,9 @@ homebrew_casks:
     repository:
       owner: jimutt
       name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
+      # Read only when uploading, which skip_upload allows only with the
+      # token set; envOrDefault is not available in this field.
+      token: '{{ .Env.HOMEBREW_TAP_TOKEN }}'
     directory: Casks
     homepage: https://github.com/jimutt/spov
     description: Launch OpenCode sessions in on-demand Modal sandboxes
