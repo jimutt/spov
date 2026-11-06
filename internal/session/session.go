@@ -559,8 +559,12 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		return nil, fmt.Errorf("session: %w", err)
 	}
 
-	// @decision(DL-027)
-	if opts.Sync != nil {
+	// A snapshot already holds the repository as the session left it, so
+	// seeding it again would reset the branch to the launch's base and
+	// drop every commit made in the sandbox since.
+	//
+	// @decision(DL-027) @decision(DL-088)
+	if opts.Sync != nil && opts.Resume != opencode.ResumeSnapshot {
 		seedDir := opts.Sync.Dir
 		if len(bootstrap.Clones) == 1 {
 			seedDir = bootstrap.Clones[0].Dir
