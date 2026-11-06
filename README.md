@@ -53,18 +53,14 @@ You need:
 **1. Install spov**, with the OpenCode 2 version it expects:
 
 ```sh
-curl -fsSLO https://github.com/jimutt/spov/releases/latest/download/install.sh
-less install.sh                  # read it first
-sh install.sh --with-opencode
+curl -fsSL https://github.com/jimutt/spov/releases/latest/download/install.sh | sh -s -- --with-opencode
 ```
 
-or, trusting it unread,
-`curl -fsSL https://github.com/jimutt/spov/releases/latest/download/install.sh | sh -s -- --with-opencode`.
 spov goes to `~/.local/bin` (the script tells you if that is not on your
 `PATH`) and OpenCode beside spov's data in `~/.local/share/spov/bin/`. The
-script checks the download against the release's checksums, and their
-signature when `cosign` is installed. Running it again updates spov, and
-`SPOV_VERSION=0.2.0` pins a release. With Homebrew,
+[script](scripts/install.sh) checks the download against the release's
+checksums, and their signature when `cosign` is installed. Running it again updates spov;
+`… | SPOV_VERSION=0.2.0 sh -s -- --with-opencode` pins a release. With Homebrew,
 `brew install jimutt/tap/spov` installs spov alone; install OpenCode 2 with
 its own installer (`curl -fsSL https://opencode.ai/v2/install | bash`).
 
@@ -134,7 +130,7 @@ default branch instead.
 - **The agent cannot reach a model**: store a key (step 4). A key stored
   while the local server runs is seen once it restarts, which it does after a
   minute with nothing to do.
-- **An OpenCode version mismatch**: run `sh install.sh --with-opencode` again.
+- **An OpenCode version mismatch**: run the install command again.
 - **Anything else at launch**: the local server's log is
   `~/.local/state/spov/server.log`, and `spov config show` prints the
   configuration spov is using.
