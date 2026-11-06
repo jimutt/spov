@@ -26,6 +26,14 @@ WITH_OPENCODE=0
 
 say() { printf 'spov-install: %s\n' "$*" >&2; }
 die() { say "$*"; exit 1; }
+# spov runs the binary just installed without this script's own variables:
+# it reads every SPOV_* variable as config, and SPOV_VERSION names its
+# config file's version field.
+spov() {
+  (unset SPOV_VERSION SPOV_INSTALL_DIR SPOV_REQUIRE_SIGNATURE SPOV_RELEASES_URL \
+    SPOV_NPM_REGISTRY SPOV_INSTALL_OS SPOV_INSTALL_ARCH
+  "$INSTALL_DIR/spov" "$@")
+}
 
 for arg in "$@"; do
   case "$arg" in
@@ -109,7 +117,7 @@ tar -xzf "$tmp/$archive" -C "$tmp/unpacked" spov
 mkdir -p "$INSTALL_DIR"
 mv -f "$tmp/unpacked/spov" "$INSTALL_DIR/spov"
 chmod 755 "$INSTALL_DIR/spov"
-say "installed $("$INSTALL_DIR/spov" version)"
+say "installed $(spov version)"
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *) say "$INSTALL_DIR is not on your PATH; add it, for example: export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
@@ -125,7 +133,7 @@ if [ -z "$pin" ] && [ -n "${SPOV_SERVER:-}" ]; then
     pin=$(sed -n 's/.*"opencode" *: *"\([^"]*\)".*/\1/p' "$tmp/pin.json")
 fi
 if [ -z "$pin" ]; then
-  pin=$("$INSTALL_DIR/spov" config show --format json 2>/dev/null |
+  pin=$(spov config show --format json 2>/dev/null |
     sed -n '/"opencode": {/,/}/s/.*"version": *"\([^"]*\)".*/\1/p' | head -1)
 fi
 [ -n "$pin" ] || die "could not tell which OpenCode version to install; set SPOV_OPENCODE_VERSION"
