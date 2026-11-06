@@ -7,8 +7,10 @@ package storetest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -62,6 +64,18 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if _, err := oc.Get(ctx, "other", "github"); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("another org sees it: %v", err)
+		}
+		// @decision(DL-074)
+		if err := oc.Put(ctx, store.OrgCredential{ID: store.NewID(t0), OrgID: "org", Platform: "route:acme",
+			Ciphertext: []byte("r"), Nonce: []byte("n"), KeyVersion: 1, Meta: []byte(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if err := oc.Put(ctx, store.OrgCredential{ID: store.NewID(t0), OrgID: "other", Platform: "route:theirs",
+			Ciphertext: []byte("r"), Nonce: []byte("n"), KeyVersion: 1, Meta: []byte(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if list, err := oc.List(ctx, "org"); err != nil || len(list) != 2 || list[0].Platform != "github" || list[1].Platform != "route:acme" {
+			t.Errorf("list = %+v, %v", list, err)
 		}
 		if err := oc.Delete(ctx, "org", "github"); err != nil {
 			t.Fatal(err)
@@ -209,6 +223,10 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		// @decision(DL-033)
 		stale.Booted = store.BootedImage{Image: "spov-base-x", Addons: []string{"node@22.23.3"}}
+		// @decision(DL-075)
+		stale.RoutedCredentials = []store.SessionRoutedCredential{{Name: "acme-npm", Tier: "user",
+			Hosts: []string{"npm.acme.com"}, Paths: []string{"/npm/"}, Scheme: "bearer"}}
+		stale.Request.Routed = store.RoutedRequest{Names: []string{"acme-npm"}, Needs: []string{"npm.acme.com"}}
 		if err := s.Sessions().Update(ctx, stale); err != nil {
 			t.Fatal(err)
 		}
@@ -221,6 +239,9 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if got.Booted.Image != "spov-base-x" || len(got.Booted.Addons) != 1 || got.Booted.Addons[0] != "node@22.23.3" {
 			t.Errorf("booted = %+v", got.Booted)
+		}
+		if !reflect.DeepEqual(got.RoutedCredentials, stale.RoutedCredentials) || !reflect.DeepEqual(got.Request.Routed, stale.Request.Routed) {
+			t.Errorf("routed = %+v, request %+v", got.RoutedCredentials, got.Request.Routed)
 		}
 		if got.GitTokenMintedAt == nil || !got.GitTokenMintedAt.Equal(minted) ||
 			got.GitTokenExpiresAt == nil || !got.GitTokenExpiresAt.Equal(expires) {
@@ -1180,6 +1201,45 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if err := s.Credentials().Delete(ctx, "org", "u1", "github"); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("a second delete: %v", err)
+		}
+	},
+	// A routed credential's route is stored beside its secret and
+	// replaced with it; Postgres may reorder the JSON, so it is compared
+	// decoded. @decision(DL-073)
+	"a routed credential's route is kept and replaced with it": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		c := store.UserCredential{ID: store.NewID(t0), OrgID: "org", UserID: "u1", Platform: "route:acme",
+			Ciphertext: []byte("sealed"), Nonce: []byte("nonce"), KeyVersion: 1,
+			Route: []byte(`{"name":"acme","hosts":["npm.acme.com"],"scheme":"bearer","attach":"always"}`)}
+		if err := s.Credentials().Put(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+		decoded := func(b []byte) map[string]any {
+			var m map[string]any
+			if err := json.Unmarshal(b, &m); err != nil {
+				t.Fatalf("route %q: %v", b, err)
+			}
+			return m
+		}
+		got, err := s.Credentials().Get(ctx, "org", "u1", "route:acme")
+		if err != nil || !reflect.DeepEqual(decoded(got.Route), decoded(c.Route)) {
+			t.Fatalf("got %s, %v", got.Route, err)
+		}
+		c.Route = []byte(`{"name":"acme","hosts":["npm2.acme.com"],"scheme":"bearer","attach":"asked"}`)
+		if err := s.Credentials().Put(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+		list, _ := s.Credentials().ListByUser(ctx, "org", "u1")
+		if len(list) != 1 || !reflect.DeepEqual(decoded(list[0].Route), decoded(c.Route)) {
+			t.Errorf("list = %+v", list)
+		}
+		plain := store.UserCredential{ID: store.NewID(t0), OrgID: "org", UserID: "u1", Platform: "github",
+			Ciphertext: []byte("x"), Nonce: []byte("n"), KeyVersion: 1}
+		if err := s.Credentials().Put(ctx, plain); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.Credentials().Get(ctx, "org", "u1", "github"); got.Route != nil {
+			t.Errorf("a forge credential has a route: %s", got.Route)
 		}
 	},
 	"returned users, tokens and credentials are copies": func(t *testing.T, s store.Store) {

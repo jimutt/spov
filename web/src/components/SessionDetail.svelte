@@ -14,6 +14,8 @@
     clock,
     clockBar,
     credentialLine,
+    routedCredentialLine,
+    routedCredentialTag,
     credentialTag,
     duration,
     age,
@@ -1245,7 +1247,7 @@
         </dl>
       </details>
 
-      {#if repoNames(s).length || s.landing || s.credentials?.length}
+      {#if repoNames(s).length || s.landing || s.credentials?.length || s.routed_credentials?.length}
         <section>
           <h2 class="m-0 mb-2 text-base font-semibold">Workspace</h2>
           <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
@@ -1283,6 +1285,17 @@
               {#if credentialNotes.has(cred.platform)}
                 <p id={noteID} class="mt-1 mb-1 text-sm leading-snug text-soft">{line.note}</p>
               {/if}
+            </div>
+          {/each}
+          <!-- Each routed credential the proxy holds, with its hosts written
+               out, never the secret. @decision(DL-077) -->
+          {#each s.routed_credentials ?? [] as rc (rc.name)}
+            <div class="mt-1" data-testid="routed-credential">
+              <div class="grid grid-cols-[auto_1fr] items-center gap-x-3">
+                <span class="font-mono">{rc.name}</span>
+                <span class="text-right text-soft">{routedCredentialTag(rc.tier, rc.preset)}</span>
+              </div>
+              <p class="mt-0.5 mb-1 text-right text-sm text-soft [overflow-wrap:anywhere]">{routedCredentialLine(rc)}</p>
             </div>
           {/each}
         </section>

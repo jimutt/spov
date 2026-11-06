@@ -1,7 +1,8 @@
 -- name: CreateSession :exec
 insert into sessions (id, org_id, owner_id, name, state, sandbox_id, request, clones,
-                      landing, error, created_at, updated_at, stopped_at, credentials, booted)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15);
+                      landing, error, created_at, updated_at, stopped_at, credentials, booted,
+                      routed_credentials)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16);
 
 -- name: GetSessionByID :one
 select * from sessions where id = $1 and org_id = $2;
@@ -13,7 +14,8 @@ where org_id = $1 and name = $2 and state in ('starting', 'running');
 -- name: UpdateSession :execrows
 update sessions
 set owner_id = $3, name = $4, state = $5, sandbox_id = $6, request = $7, clones = $8,
-    landing = $9, error = $10, updated_at = $11, stopped_at = $12, credentials = $13, booted = $14
+    landing = $9, error = $10, updated_at = $11, stopped_at = $12, credentials = $13, booted = $14,
+    routed_credentials = $15
 where id = $1 and org_id = $2;
 
 -- name: MarkSessionStopped :execrows
@@ -194,13 +196,13 @@ delete from device_codes where expires_at < $1;
 -- name: PutUserCredential :exec
 insert into user_credentials (id, org_id, user_id, platform, ciphertext, nonce,
                               key_version, verified_as, created_at, updated_at,
-                              scopes, expires_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                              scopes, expires_at, route)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 on conflict (org_id, user_id, platform) do update
 set ciphertext = excluded.ciphertext, nonce = excluded.nonce,
     key_version = excluded.key_version, verified_as = excluded.verified_as,
     updated_at = excluded.updated_at, scopes = excluded.scopes,
-    expires_at = excluded.expires_at;
+    expires_at = excluded.expires_at, route = excluded.route;
 
 -- name: GetUserCredential :one
 select * from user_credentials where org_id = $1 and user_id = $2 and platform = $3;
@@ -515,6 +517,10 @@ set ciphertext = excluded.ciphertext, nonce = excluded.nonce,
 
 -- name: GetOrgCredential :one
 select * from org_credentials where org_id = $1 and platform = $2;
+
+-- name: ListOrgCredentials :many
+-- @decision(DL-074)
+select * from org_credentials where org_id = $1 order by platform;
 
 -- name: DeleteOrgCredential :execrows
 delete from org_credentials where org_id = $1 and platform = $2;

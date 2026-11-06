@@ -86,7 +86,8 @@ type Platform struct {
 func (p Platform) Hosts() []string {
 	host := RequestKey(p.Host)
 	if p.Kind == KindGitHub && host == "github.com" {
-		return []string{"github.com", "api.github.com", "uploads.github.com"}
+		// @decision(DL-078)
+		return append([]string{"github.com", "api.github.com", "uploads.github.com"}, p.PackageHosts()...)
 	}
 	return []string{host}
 }
@@ -102,7 +103,10 @@ func (p Platform) Hosts() []string {
 func (p Platform) authorization(host, path string) string {
 	switch p.Kind {
 	case KindGitHub:
-		if host == "api.github.com" || host == "uploads.github.com" || strings.HasPrefix(path, "/api/") {
+		// npm sends its token as a bearer; Maven and NuGet use Basic.
+		//
+		// @decision(DL-078)
+		if host == "api.github.com" || host == "uploads.github.com" || host == "npm.pkg.github.com" || strings.HasPrefix(path, "/api/") {
 			return "Bearer " + p.Token
 		}
 		return basic(p.User, p.Token)
@@ -135,6 +139,11 @@ type SidecarConfig struct {
 	//
 	// @decision(DL-034)
 	Providers []Provider `json:"providers,omitempty"`
+	// Routes are the routed credentials, each set only on its own
+	// hosts and paths.
+	//
+	// @decision(DL-072)
+	Routes []Route `json:"routes,omitempty"`
 }
 
 // Validate checks a config before the proxy trusts it.
@@ -186,6 +195,26 @@ func (c SidecarConfig) Validate() error {
 		}
 		envs[p.Env], hosts[host] = true, true
 	}
+	// A route's hosts are its own: never a forge's, a provider's or
+	// another route's.
+	//
+	// @decision(DL-072)
+	names := map[string]bool{}
+	for _, r := range c.Routes {
+		if err := r.Validate(); err != nil {
+			return err
+		}
+		if names[r.Name] {
+			return fmt.Errorf("credproxy: routed credential %s is listed twice", r.Name)
+		}
+		names[r.Name] = true
+		for _, h := range r.Hosts {
+			if hosts[h] {
+				return fmt.Errorf("credproxy: routed credential %s's host %s already has a credential", r.Name, h)
+			}
+			hosts[h] = true
+		}
+	}
 	return nil
 }
 
@@ -234,6 +263,14 @@ func (c SidecarConfig) DecryptHosts() []string {
 	for _, p := range c.Providers {
 		if h := RequestKey(p.Host); !slices.Contains(out, h) {
 			out = append(out, h)
+		}
+	}
+	// @decision(DL-072)
+	for _, r := range c.Routes {
+		for _, h := range r.Hosts {
+			if !slices.Contains(out, h) {
+				out = append(out, h)
+			}
 		}
 	}
 	return out
@@ -308,15 +345,42 @@ func (s *Store) Provider(host string) (Provider, bool) {
 	return Provider{}, false
 }
 
+// Route returns the routed credential set on a target, reread from the
+// file if it has been replaced since.
+//
+// @decision(DL-072)
+func (s *Store) Route(host string) (Route, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if info, err := os.Stat(s.path); err == nil && !os.SameFile(info, s.file) {
+		_ = s.reloadLocked()
+	}
+	for _, r := range s.cfg.Routes {
+		if slices.Contains(r.Hosts, host) {
+			return r, true
+		}
+	}
+	return Route{}, false
+}
+
 // Rewrite is the proxy's policy: a request to a platform's host gets
 // that platform's credential when the endpoint policy allows it, a
 // request to a model provider's API host gets its key on the provider's
-// paths (any path when it lists none), and anything else is forwarded as
-// an anonymous client's would be.
+// paths (any path when it lists none), a request to a route's host gets
+// its secret on the route's paths, and anything else is forwarded as an
+// anonymous client's would be.
 //
-// @decision(DL-034) @decision(DL-015)
+// @decision(DL-034) @decision(DL-015) @decision(DL-072)
 func (s *Store) Rewrite(r *http.Request) bool {
 	target := RequestKey(r.Host)
+	if rt, ok := s.Route(target); ok {
+		rt.stripHeader(r.Header)
+		if !rt.covers(r) {
+			return false
+		}
+		rt.set(r.Header)
+		return true
+	}
 	if m, ok := s.Provider(target); ok {
 		if !m.allows(r) {
 			return false
@@ -337,11 +401,15 @@ func (s *Store) Rewrite(r *http.Request) bool {
 }
 
 // Secrets are the forms of a request's credential an upstream might echo:
-// the token and its Basic encoding, or a provider's key.
+// the token and its Basic encoding, a provider's key, or a route's secret
+// and, for Basic, its encoding.
 //
 // @decision(DL-034)
 func (s *Store) Secrets(r *http.Request) []string {
 	target := RequestKey(r.Host)
+	if rt, ok := s.Route(target); ok {
+		return rt.secrets()
+	}
 	if m, ok := s.Provider(target); ok {
 		return []string{m.Key}
 	}
@@ -350,6 +418,14 @@ func (s *Store) Secrets(r *http.Request) []string {
 		return nil
 	}
 	return []string{p.Token, strings.TrimPrefix(basic(p.User, p.Token), "Basic ")}
+}
+
+// RouteName names the routed credential set on r's target, or "".
+//
+// @decision(DL-072)
+func (s *Store) RouteName(r *http.Request) string {
+	rt, _ := s.Route(RequestKey(r.Host))
+	return rt.Name
 }
 
 // Streamed reports whether a response to r that is an event stream is

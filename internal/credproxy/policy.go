@@ -60,6 +60,12 @@ func (p Platform) allows(host string, r *http.Request) bool {
 		return true
 	}
 	read := r.Method == http.MethodGet || r.Method == http.MethodHead
+	// The forge's package registry reads its own escapes.
+	//
+	// @decision(DL-078)
+	if handled, allowed := p.allowsForgePackages(host, r); handled {
+		return allowed
+	}
 	// GitLab encodes a project's path into one segment, so it splits the
 	// path itself rather than refusing every escape.
 	//

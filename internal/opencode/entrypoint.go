@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jimutt/spov/internal/credproxy"
+	"github.com/jimutt/spov/internal/routedcred"
 	"github.com/jimutt/spov/internal/toolchain"
 )
 
@@ -105,6 +106,11 @@ type Entrypoint struct {
 	//
 	// @decision(DL-033)
 	Addons []toolchain.Selection
+	// Files are the routed-credential presets' client config files,
+	// holding placeholders only.
+	//
+	// @decision(DL-076)
+	Files []routedcred.File
 }
 
 // ProxyWaitExitCode is the entrypoint's exit code when the proxy sidecar
@@ -259,9 +265,34 @@ func (e Entrypoint) writeProxyWait(b *strings.Builder) {
 	fmt.Fprintf(b, "mkdir -p %s\n", shellQuote(path.Dir(credproxy.MainCAFile)))
 	fmt.Fprintf(b, "printf '%%s\\n' \"$%s\" > %s\n", credproxy.EnvMainCA, shellQuote(credproxy.MainCAFile))
 	fmt.Fprintf(b, "cat %s >> %s\n", shellQuote(credproxy.MainCAFile), shellQuote(credproxy.SystemBundle))
+	// Every JVM reads the trust store and the proxy from
+	// JAVA_TOOL_OPTIONS, exported only once the store exists: a JVM told
+	// to read a missing store trusts nothing at all.
+	//
+	// @decision(DL-076)
+	fmt.Fprintf(b, "if command -v openssl >/dev/null && %s; then export JAVA_TOOL_OPTIONS=%s; "+
+		"else echo 'spov: no Java trust store; a JVM will not trust the proxy' >&2; fi\n",
+		credproxy.JavaTrustCommand(), shellQuote(credproxy.JavaToolOptions()))
+	e.writeFiles(b)
 	fmt.Fprintf(b, "spov_i=0; until (exec 3<>/dev/tcp/%s/%d) 2>/dev/null; do "+
 		"spov_i=$((spov_i+1)); if [ \"$spov_i\" -ge %d ]; then echo 'spov: the proxy sidecar never answered' >&2; exit %d; fi; sleep 0.1; done\n",
 		credproxy.SidecarName, credproxy.Port, proxyWaitTenths, ProxyWaitExitCode)
+}
+
+// fileMarker ends each preset file's heredoc.
+const fileMarker = "SPOV_PRESET_EOF"
+
+// writeFiles writes the presets' config files through quoted heredocs,
+// so nothing in them is expanded.
+//
+// @decision(DL-076)
+func (e Entrypoint) writeFiles(b *strings.Builder) {
+	for _, d := range routedcred.PresetDirs(e.Files) {
+		fmt.Fprintf(b, "mkdir -p %s\n", shellQuote(d))
+	}
+	for _, f := range e.Files {
+		fmt.Fprintf(b, "cat > %s <<'%s'\n%s%s\n", shellQuote(f.Path), fileMarker, f.Content, fileMarker)
+	}
 }
 
 // hostOf strips the scheme from a platform URL.
@@ -444,6 +475,12 @@ func (e Entrypoint) Validate() error {
 			return fmt.Errorf("opencode: clone %d targets %q, which spov reserves", i, c.Dir)
 		}
 		dirs[c.Dir] = true
+	}
+	// @decision(DL-076)
+	for _, f := range e.Files {
+		if !strings.HasPrefix(f.Path, "/") || strings.Contains("\n"+f.Content+"\n", "\n"+fileMarker+"\n") || !strings.HasSuffix(f.Content, "\n") {
+			return fmt.Errorf("opencode: the config file %s cannot be written", f.Path)
+		}
 	}
 	if e.Landing != "" {
 		if err := validDir(e.Landing); err != nil {

@@ -349,3 +349,24 @@ func TestAPresetReachesTheSessionsForges(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// A routed credential's hosts join a narrowed policy, a custom one
+// included, and the preset keeps its name; an open policy is left as it
+// is.
+//
+// @decision(DL-072)
+func TestARoutesHostsJoinTheEgress(t *testing.T) {
+	custom := EgressInstall().WithDomains("extra.example.com")
+	for _, p := range []EgressPolicy{EgressAgent(), EgressInstall(), custom} {
+		got := p.WithRouteHosts("npm.acme.com", "repo.acme.com")
+		if got.Preset != p.Preset || !slices.Contains(got.Domains, "npm.acme.com") || !slices.Contains(got.Domains, "repo.acme.com") {
+			t.Errorf("%s: %+v", p.Preset, got)
+		}
+		if err := got.Validate(); err != nil {
+			t.Error(err)
+		}
+	}
+	if open := EgressOpen().WithRouteHosts("npm.acme.com"); !slices.Equal(open.Domains, EgressOpen().Domains) {
+		t.Errorf("open = %+v", open)
+	}
+}
