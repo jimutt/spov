@@ -2,7 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-095 | A plain spov fly in a git checkout launches that repository, synced | proposed | cli | sync, fly, onboarding, config |
+| DL-095 | A plain spov fly in a git checkout launches that repository, synced | accepted | cli | sync, fly, onboarding, config |
 | DL-093 | A local server prunes a stopped session's history 30 days after it stopped, configurable, and never while its snapshot is kept | accepted | server | local-history, retention, config |
 | DL-092 | The local journal is a directory per session: session.json rewritten whole, and transcript.jsonl appended record by record | accepted | server | local-history, store, format |
 | DL-091 | A local server keeps its sessions in a journal on disk, with the memory store as its engine | accepted | server | local-history, store, local-mode, snapshot-resume |

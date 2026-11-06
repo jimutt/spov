@@ -105,18 +105,23 @@ platforms:
     account: your-username
 ```
 
-Store a token for it and a model key, then launch from any directory:
+Store a token for it and a model key, then launch from a checkout of your
+repository:
 
 ```sh
 spov credentials add codefloe
 spov credentials add ANTHROPIC_API_KEY
 
-spov fly --repo your-username/your-repo
+cd your-repo
+spov fly
 ```
 
-That creates a sandbox, clones the repository, waits for OpenCode to be
-healthy, and hands your terminal to the TUI. When you quit, the sandbox is
-terminated.
+That creates a sandbox, clones the repository and checks out your current
+branch, waits for OpenCode to be healthy, and hands your terminal to the TUI.
+When you quit, what the agent did (its commits and its uncommitted changes)
+comes back to your checkout, and then the sandbox is terminated. From any
+other directory, `spov fly --repo your-username/your-repo` launches the
+repository's default branch instead, without syncing back.
 
 ## Interactive sessions
 
@@ -141,7 +146,7 @@ terminated.
 | `--plain` | Report progress as plain lines instead of the full-screen launch view |
 | `--git-name`, `--git-email` | Identity for commits made in the sandbox; defaults to your local `git config` |
 | `--git-access repos\|all` | Whether the sandbox's git credentials reach only this session's repositories (the default) or every repository they can |
-| `--sync`, `--no-sync` | Seed the sandbox from your current clean local branch and sync its changes back when the session closes (one repository; `sandbox.sync` makes it the default) |
+| `--sync`, `--no-sync` | Whether to seed the sandbox from your current clean local branch and sync its changes back when the session closes. Inside a checkout with no `--repo` it does by default; `--sync` also syncs a `--repo` that is the checkout's, `--no-sync` launches without the checkout (see [Choosing repositories](#choosing-repositories)) |
 | `--allow-version-mismatch` | Attach even if the local and sandbox OpenCode versions differ |
 
 `spov attach` takes `--web`, `--no-tui`, `--sync` and `--allow-version-mismatch`.
@@ -184,8 +189,26 @@ straight away. Ctrl-C stops only the wait; the session or job carries on.
 spov takes the first of these that names anything:
 
 1. `--repo` flags.
-2. The `repos:` list in project config.
-3. An interactive picker of your repositories, when you are on a terminal.
+2. The `repos:` list in a project file (`.spov.yaml`).
+3. The git checkout you run `spov fly` in, synced (below).
+4. The `repos:` list in your user file.
+5. An interactive picker of your repositories, when you are on a terminal.
+
+**Working from a checkout.** Inside a git checkout, a plain `spov fly`
+launches that repository from your current branch, including commits you
+have not pushed, and copies the sandbox's commits and uncommitted changes
+back into the checkout when you quit. It lands back on your branch when the
+checkout is as you left it, and on a `spov/<session>` branch when you have
+changed it meanwhile, so nothing is overwritten. The sandbox is terminated
+only after the work is back; a sync that fails leaves it running. The
+checkout must be clean and on a branch, or the launch stops and says so:
+commit or stash first, or pass `--no-sync`. A checkout whose remote is on no
+platform you configured is sent along from your machine, and its sandbox
+cannot push. `sandbox.sync: false` turns this off, and `true` makes every
+`spov fly` sync (`--sync`), failing outside a checkout. Jobs never sync.
+"Clean" counts untracked files too, a new `.spov.yaml` among them, and a
+directory with no checkout of its own counts as inside any checkout above it,
+such as a home directory kept in git.
 
 Several repositories clone concurrently, up to five at a time. If any clone
 fails, the launch fails rather than starting the agent without it.

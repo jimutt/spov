@@ -134,7 +134,10 @@ type shownSandbox struct {
 	// @decision(DL-049)
 	JobMaxDuration string `json:"job_max_duration,omitempty" yaml:"job_max_duration,omitempty"`
 	// @decision(DL-027)
-	Sync bool `json:"sync,omitempty" yaml:"sync,omitempty"`
+	// Sync is null when unset, which is spov fly's automatic mode.
+	//
+	// @decision(DL-095)
+	Sync *bool `json:"sync" yaml:"sync"`
 	// @decision(DL-033)
 	Addons []string `json:"addons,omitempty" yaml:"addons,omitempty"`
 	Apt    []string `json:"apt,omitempty" yaml:"apt,omitempty"`

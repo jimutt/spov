@@ -44,7 +44,13 @@ func newFlyCmd(env *Env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "fly",
 		Short: "Launch an OpenCode session in a new sandbox",
-		Args:  cobra.NoArgs,
+		Long: "Launches an OpenCode session in a new sandbox and opens the TUI on it.\n\n" +
+			"Run inside a git checkout with no --repo, it launches that repository from the current branch" +
+			" and syncs the work back to it when the session closes. The checkout must be clean and on a branch;" +
+			" pass --no-sync to launch without it. A .spov.yaml that lists repos, or --repo, launches those" +
+			" repositories instead, unsynced; outside a checkout the repos in your config are used, or a picker" +
+			" when there are none.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runFly(cmd.Context(), env, flyOptions{
 				Keep:                 keep,
@@ -58,7 +64,11 @@ func newFlyCmd(env *Env) *cobra.Command {
 				GitAccess:            gitAccess,
 				Routed:               routed,
 				Sync:                 sync,
-				NoSync:               noSync,
+				// An explicit --sync=false turns sync off rather than
+				// leaving it to sandbox.sync.
+				//
+				// @decision(DL-095)
+				NoSync: noSync || (cmd.Flags().Changed("sync") && !sync),
 			})
 		},
 	}
@@ -82,8 +92,10 @@ func newFlyCmd(env *Env) *cobra.Command {
 			" sandbox.git_access, then your account default, when unset")
 	addRoutedFlags(cmd, &routed, "sandbox.credentials")
 	// @decision(DL-027)
+	// @decision(DL-095)
 	cmd.Flags().BoolVar(&sync, "sync", false,
-		"seed the sandbox from the current clean local git branch and sync repository changes back when the session closes")
+		"seed the sandbox from the current clean local git branch and sync repository changes back when the session closes,"+
+			" also with --repo or sandbox.sync: false (the default inside a checkout, without --repo or a .spov.yaml that lists repos)")
 	cmd.Flags().BoolVar(&noSync, "no-sync", false,
 		"do not seed from or sync back to the local git checkout, overriding sandbox.sync in config")
 	cmd.MarkFlagsMutuallyExclusive("sync", "no-sync")
@@ -124,7 +136,7 @@ type flyOptions struct {
 	GitAccess string
 	// Sync and NoSync override sandbox.sync for this launch.
 	//
-	// @decision(DL-027)
+	// @decision(DL-027) @decision(DL-095)
 	Sync   bool
 	NoSync bool
 }
@@ -140,16 +152,21 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 	}
 	cfg := res.Config
 
-	// @decision(DL-027)
-	syncMode := opts.Sync || (cfg.Sandbox.Sync && !opts.NoSync)
+	// @decision(DL-027) @decision(DL-095)
+	mode := flySyncMode(cfg, opts)
+	syncMode := mode == syncAlways || (mode == syncAuto && autoSyncs(ctx, env, res.Sources, opts))
 	var (
-		refs    []server.RepoRef
-		syncReq *server.SessionSyncRequest
+		refs     []server.RepoRef
+		syncReq  *server.SessionSyncRequest
+		syncNote string
 	)
 	if syncMode {
 		// Validate the local git checkout before spawning or contacting
 		// the server so a dirty or non-git directory fails immediately.
 		if _, err := git.InspectLocalCheckout(ctx, env.Workdir, platformKindsByHost(cfg), false); err != nil {
+			if mode == syncAuto {
+				return autoSyncRefused(err)
+			}
 			return err
 		}
 	}
@@ -159,12 +176,18 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 		return err
 	}
 	if syncMode {
-		ref, sreq, _, err := env.resolveSyncLaunch(ctx, c, cfg, opts.Repos)
+		ref, sreq, checkout, err := env.resolveSyncLaunch(ctx, c, cfg, opts.Repos)
 		if err != nil {
+			if mode == syncAuto {
+				return autoSyncRefused(err)
+			}
 			return err
 		}
 		refs = []server.RepoRef{ref}
 		syncReq = sreq
+		if mode == syncAuto && ref.Platform == "" {
+			syncNote = bundleOnlyNote(checkout)
+		}
 	} else {
 		refs, err = env.resolveRepoRefs(ctx, c, cfg, opts.Repos)
 		if err != nil {
@@ -190,6 +213,9 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 		env.activeView = view
 	}
 
+	if syncNote != "" {
+		env.deferWarning(syncNote)
+	}
 	identity := env.gitIdentity(ctx, cfg, opts.Identity)
 	if warning := identityWarning(identity); warning != "" {
 		env.deferWarning(warning)
