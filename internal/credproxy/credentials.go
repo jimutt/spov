@@ -86,7 +86,8 @@ type Platform struct {
 func (p Platform) Hosts() []string {
 	host := RequestKey(p.Host)
 	if p.Kind == KindGitHub && host == "github.com" {
-		return []string{"github.com", "api.github.com", "uploads.github.com"}
+		// @decision(DL-078)
+		return append([]string{"github.com", "api.github.com", "uploads.github.com"}, p.PackageHosts()...)
 	}
 	return []string{host}
 }
@@ -102,7 +103,10 @@ func (p Platform) Hosts() []string {
 func (p Platform) authorization(host, path string) string {
 	switch p.Kind {
 	case KindGitHub:
-		if host == "api.github.com" || host == "uploads.github.com" || strings.HasPrefix(path, "/api/") {
+		// npm sends its token as a bearer; Maven and NuGet use Basic.
+		//
+		// @decision(DL-078)
+		if host == "api.github.com" || host == "uploads.github.com" || host == "npm.pkg.github.com" || strings.HasPrefix(path, "/api/") {
 			return "Bearer " + p.Token
 		}
 		return basic(p.User, p.Token)

@@ -491,3 +491,22 @@ func TestAPresetsConfigHoldsThePlaceholder(t *testing.T) {
 		t.Errorf("placeholder %q; script holds the secret or lacks the placeholder", ph)
 	}
 }
+
+// A classic PAT's package hosts join the sidecar's egress and the CA,
+// as its forge's own hosts do.
+//
+// @decision(DL-078)
+func TestAClassicPATsPackageHostsJoinTheEgress(t *testing.T) {
+	gh := git.NewFake()
+	gh.PlatformName, gh.HostName, gh.PlatformKind = "gh", "github.com", git.KindGitHub
+	sel := []git.Selection{{Platform: gh, Repos: []git.Repo{{Owner: "acme", Name: "app", CloneURL: "https://github.com/acme/app.git"}}}}
+	tokens := []git.PlatformToken{{Platform: "gh", Host: "github.com", Username: "alice", Secret: "ghp_real"}}
+	p, err := buildProxy(context.Background(), func(context.Context) (string, error) { return "img", nil },
+		tokens, sel, nil, nil, sandbox.EgressInstall(), time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.sidecar.Egress.Domains, "npm.pkg.github.com") || !slices.Contains(p.packageHosts, "maven.pkg.github.com") {
+		t.Errorf("egress %v, package hosts %v", p.sidecar.Egress.Domains, p.packageHosts)
+	}
+}
