@@ -40,6 +40,40 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# The checksums are signed with cosign's keyless flow, through the release
+# workflow's OIDC token, so the signature names the workflow and the tag.
+#
+# @decision(DL-079)
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--yes", "--bundle=${signature}", "${artifact}"]
+    output: true
+
+# The cask is written to the tap only when its token is set, so a release
+# never fails for want of one.
+#
+# @decision(DL-081)
+homebrew_casks:
+  - name: spov
+    ids: [spov]
+    repository:
+      owner: jimutt
+      name: homebrew-tap
+      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
+    directory: Casks
+    homepage: https://github.com/jimutt/spov
+    description: Launch OpenCode sessions in on-demand Modal sandboxes
+    license: MIT
+    skip_upload: '{{ if eq (envOrDefault "HOMEBREW_TAP_TOKEN" "") "" }}true{{ else }}auto{{ end }}'
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/spov"]
+          end
+
 changelog:
   use: git
   sort: asc
@@ -51,3 +85,9 @@ changelog:
 
 release:
   draft: true
+  # The installer goes with the release it installs, so its stable URL is
+  # releases/latest/download/install.sh.
+  #
+  # @decision(DL-080)
+  extra_files:
+    - glob: ./scripts/install.sh

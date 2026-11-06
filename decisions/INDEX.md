@@ -9,6 +9,11 @@
 | DL-086 | Snapshot retention, a per-user cap and an off switch are deployment config, and a daily pass prunes past them | proposed | server | snapshot-resume, config, images, cost |
 | DL-085 | Each sandbox of a session is a run, and its exit snapshot is collected after it ends | proposed | server | snapshot-resume, store, reconciler, cost |
 | DL-084 | An interactive sandbox is created with an exit snapshot when the proxy holds its secrets | proposed | sandbox | snapshot-resume, sandbox, modal, lifecycle |
+| DL-083 | A local server can use the gh CLI's own login, opted into once and read again at each launch, and never on a hosted server | accepted | cli | distribution, credentials, gh, local |
+| DL-082 | Each release publishes a signed multi-architecture server image to ghcr.io, and the deployment examples pin it by digest | accepted | server | distribution, deployment, image, supply-chain |
+| DL-081 | A Homebrew tap carries a cask that goreleaser writes on each published release | accepted | cli | distribution, homebrew |
+| DL-080 | install.sh is the headline install: a release asset that verifies before it unpacks, installs to ~/.local/bin, and can fetch the pinned OpenCode | accepted | cli | distribution, install, security |
+| DL-079 | A release is built by goreleaser from a tag, its checksums signed keylessly and its archives attested, and it refuses a binary without the web app or the proxy | accepted | server | distribution, release, security, supply-chain |
 | DL-078 | A forge token also reads its forge's package registry, for the session's own namespaces | accepted | git | routed-credentials, git, credentials, proxy, packages |
 | DL-077 | A server without the proxy refuses to attach a routed credential, and the session page names each one with its hosts | accepted | server | routed-credentials, credentials, security, web |
 | DL-076 | Presets for npm, Maven, NuGet and PyPI fill in a routed credential's scheme and write the client's config, and Java trusts the sandbox's CA | accepted | sandbox | routed-credentials, sandbox, presets, toolchain |

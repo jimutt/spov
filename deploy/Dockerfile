@@ -7,7 +7,12 @@
 # carries the built bytes inside the Go binary and no JS runtime at all.
 #
 # @decision(DL-055)
-FROM oven/bun:1.4.0 AS web
+# The web app's bytes are the same for every platform, and the Go stage
+# cross-compiles, so both run on the builder's own platform: a
+# multi-architecture build emulates nothing.
+#
+# @decision(DL-082)
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.0 AS web
 WORKDIR /web
 COPY web/package.json web/bun.lock ./
 # Frozen installs are not automatic in CI the way npm's are.
@@ -15,7 +20,7 @@ RUN bun install --frozen-lockfile
 COPY web/ ./
 RUN bun run build
 
-FROM golang:1.26 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26 AS build
 WORKDIR /src
 
 # Dependencies first, so a source-only change does not re-download them.
@@ -36,7 +41,11 @@ RUN bash scripts/build-proxy.sh
 ARG VERSION=dev
 ARG COMMIT=none
 ARG DATE=unknown
-RUN CGO_ENABLED=0 go build -trimpath \
+# Set by BuildKit for the platform being built. A default here would
+# override it, and every platform's image would hold the builder's binary.
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags "-s -w \
       -X github.com/jimutt/spov/internal/version.version=${VERSION} \
       -X github.com/jimutt/spov/internal/version.commit=${COMMIT} \

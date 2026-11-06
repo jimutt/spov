@@ -18,7 +18,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: spov
-          image: ghcr.io/example/spov:latest # pin by digest
+          image: ghcr.io/jimutt/spov:<version>@sha256:<digest> # a release's, by digest (deploy/README.md)
           args: ["serve"]
           ports:
             - containerPort: 8080
