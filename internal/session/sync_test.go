@@ -308,3 +308,172 @@ func runSyncGit(t *testing.T, dir string, args ...string) string {
 	}
 	return string(out)
 }
+
+// A transcript resume's fresh clone is seeded from the bundle the CLI
+// sends; without one, a base the clone cannot reach leaves it on its
+// default branch, and a first launch still fails.
+//
+// @decision(DL-098)
+func TestATranscriptResumeSeedsFromTheCLIsBundleElseTheDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	remoteDir := filepath.Join(tmp, "remote.git")
+	runSyncGit(t, tmp, "init", "--bare", "-b", "main", remoteDir)
+	localDir := filepath.Join(tmp, "local")
+	runSyncGit(t, tmp, "clone", remoteDir, localDir)
+	runSyncGit(t, localDir, "config", "user.name", "Local Dev")
+	runSyncGit(t, localDir, "config", "user.email", "dev@example.com")
+	if err := os.WriteFile(filepath.Join(localDir, "README.md"), []byte("# base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runSyncGit(t, localDir, "add", "README.md")
+	runSyncGit(t, localDir, "commit", "-m", "pushed")
+	runSyncGit(t, localDir, "push", "-u", "origin", "main")
+	if err := os.WriteFile(filepath.Join(localDir, "unpushed.txt"), []byte("local only\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runSyncGit(t, localDir, "add", "unpushed.txt")
+	runSyncGit(t, localDir, "commit", "-m", "unpushed")
+	base := strings.TrimSpace(runSyncGit(t, localDir, "rev-parse", "HEAD"))
+	// The checkout has moved on since the session started from base.
+	runSyncGit(t, localDir, "checkout", "-q", "-b", "later")
+
+	bundle, err := git.BundleCommit(ctx, localDir, "origin", base)
+	if err != nil || len(bundle) == 0 {
+		t.Fatalf("BundleCommit: %d bytes, %v", len(bundle), err)
+	}
+	if out := runSyncGit(t, localDir, "for-each-ref", "refs/spov/"); strings.TrimSpace(out) != "" {
+		t.Errorf("the bundling ref was left behind: %s", out)
+	}
+	clone := func(name string) string {
+		dir := filepath.Join(tmp, "workspace", name)
+		runSyncGit(t, tmp, "clone", "-q", "--depth", "1", "file://"+remoteDir, dir)
+		rel, err := filepath.Rel("/workspace", dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rel
+	}
+
+	withBundle := clone("with-bundle")
+	if err := applySyncSeed(ctx, LocalShellExec{}, withBundle, SyncSeed{Branch: "main", BaseCommit: base, Bundle: bundle, AllowMissingBase: true}); err != nil {
+		t.Fatalf("seed with the CLI's bundle: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join("/workspace", withBundle, "unpushed.txt")); err != nil {
+		t.Errorf("the unpushed commit is not in the resumed clone: %v", err)
+	}
+
+	without := clone("without")
+	err = applySyncSeed(ctx, LocalShellExec{}, without, SyncSeed{Branch: "main", BaseCommit: base, AllowMissingBase: true})
+	if !errors.Is(err, ErrSeedBaseMissing) {
+		t.Fatalf("seed without a bundle: %v, want ErrSeedBaseMissing", err)
+	}
+	if head := strings.TrimSpace(runSyncGit(t, filepath.Join("/workspace", without), "log", "-1", "--format=%s")); head != "pushed" {
+		t.Errorf("the clone left without a bundle is at %q, want the default branch's tip", head)
+	}
+
+	first := clone("first-launch")
+	err = applySyncSeed(ctx, LocalShellExec{}, first, SyncSeed{Branch: "main", BaseCommit: base})
+	if err == nil || errors.Is(err, ErrSeedBaseMissing) {
+		t.Errorf("a first launch whose base cannot be reached: %v, want a failure", err)
+	}
+
+	if _, err := git.BundleCommit(ctx, localDir, "origin", strings.Repeat("b", 40)); err == nil {
+		t.Error("a commit the checkout lacks was bundled")
+	}
+}
+
+// A transcript resume whose seed cannot reach its base launches on the
+// default branch and says so; a first launch fails.
+//
+// @decision(DL-098)
+func TestATranscriptResumeLaunchesWhenItsBaseIsGone(t *testing.T) {
+	seed := SyncSeed{Branch: "main", BaseCommit: strings.Repeat("c", 40)}
+	missing := func(t *testing.T, f *fixture, resume string) (*Session, string, error) {
+		t.Helper()
+		f.opts.Sync = &seed
+		f.opts.Resume = resume
+		key := strings.Join(seedCommand(t, seed, resume == opencode.ResumeTranscript), " ")
+		f.provider.ExecResults[key] = sandbox.ExecResult{ExitCode: seedBaseMissingExit}
+		var progress bytes.Buffer
+		f.launcher.Progress = &progress
+		sess, err := f.launcher.Launch(context.Background(), f.opts)
+		return sess, progress.String(), err
+	}
+	sess, notes, err := missing(t, newFixture(t), opencode.ResumeTranscript)
+	if err != nil || sess == nil {
+		t.Fatalf("a transcript resume failed: %v", err)
+	}
+	if !strings.Contains(notes, "not on the remote") || !strings.Contains(notes, "spov resume inside the checkout") {
+		t.Errorf("no note about the missing commits:\n%s", notes)
+	}
+	if _, _, err := missing(t, newFixture(t), ""); err == nil {
+		t.Error("a first launch whose base cannot be reached went ahead")
+	}
+}
+
+// seedCommand is the command applySyncSeed sends for seed into the
+// fixture's repository, for matching a fake's canned result.
+func seedCommand(t *testing.T, seed SyncSeed, allowMissing bool) []string {
+	t.Helper()
+	seed.AllowMissingBase = allowMissing
+	rec := &recordingExec{}
+	_ = applySyncSeed(context.Background(), rec, "app", seed)
+	if len(rec.commands) != 1 {
+		t.Fatalf("the seed ran %d commands", len(rec.commands))
+	}
+	return rec.commands[0]
+}
+
+type recordingExec struct {
+	sandbox.Handle
+	commands [][]string
+}
+
+func (r *recordingExec) ExecInput(_ context.Context, command []string, _ []byte) (sandbox.ExecResult, error) {
+	r.commands = append(r.commands, command)
+	return sandbox.ExecResult{}, nil
+}
+
+// An export from a sandbox that does not hold the recorded base bundles
+// from the remote's default branch rather than the whole history.
+//
+// @decision(DL-098)
+func TestAnExportWithoutItsBaseBundlesFromTheDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	remoteDir := filepath.Join(tmp, "remote.git")
+	runSyncGit(t, tmp, "init", "--bare", "-b", "main", remoteDir)
+	seedDir := filepath.Join(tmp, "seed")
+	runSyncGit(t, tmp, "clone", "-q", remoteDir, seedDir)
+	runSyncGit(t, seedDir, "config", "user.name", "Dev")
+	runSyncGit(t, seedDir, "config", "user.email", "dev@example.com")
+	if err := os.WriteFile(filepath.Join(seedDir, "README.md"), []byte("# x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runSyncGit(t, seedDir, "add", "README.md")
+	runSyncGit(t, seedDir, "commit", "-q", "-m", "pushed")
+	runSyncGit(t, seedDir, "push", "-q", "origin", "main")
+
+	sandboxRepo := filepath.Join(tmp, "workspace", "app")
+	runSyncGit(t, tmp, "clone", "-q", remoteDir, sandboxRepo)
+	runSyncGit(t, sandboxRepo, "config", "user.name", "Agent")
+	runSyncGit(t, sandboxRepo, "config", "user.email", "agent@example.com")
+	if err := os.WriteFile(filepath.Join(sandboxRepo, "agent.txt"), []byte("agent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runSyncGit(t, sandboxRepo, "add", "agent.txt")
+	runSyncGit(t, sandboxRepo, "commit", "-q", "-m", "agent")
+	rel, err := filepath.Rel("/workspace", sandboxRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := ExportSync(ctx, LocalShellExec{}, rel, strings.Repeat("e", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := state.Bundle[:bytes.Index(state.Bundle, []byte("\n\n"))]
+	if !bytes.Contains(header, []byte("\n-")) {
+		t.Errorf("the export bundled the whole history:\n%s", header)
+	}
+}

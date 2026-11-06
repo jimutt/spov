@@ -447,3 +447,84 @@ func TestInCheckout(t *testing.T) {
 		t.Error("without git, a working tree is in a checkout")
 	}
 }
+
+// A sandbox whose history does not hold the local head (a resume that
+// fell back to the default branch, or a rewritten history) lands on the
+// fallback branch, never in place, so the local commits stay put.
+//
+// @decision(DL-098)
+func TestASyncThatDoesNotDescendFromTheCheckoutIsNotAppliedInPlace(t *testing.T) {
+	ctx := context.Background()
+	localDir, initial := initTestRepo(t, "https://codefloe.com/alice/spov.git")
+	if err := os.WriteFile(filepath.Join(localDir, "local.txt"), []byte("unpushed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, localDir, "add", "local.txt")
+	runGit(t, localDir, "commit", "-m", "unpushed base")
+	base := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD"))
+
+	// The sandbox started from the default branch, without the base.
+	sandboxDir := filepath.Join(t.TempDir(), "sandbox")
+	runGit(t, localDir, "clone", "-q", localDir, sandboxDir)
+	runGit(t, sandboxDir, "reset", "-q", "--hard", initial)
+	runGit(t, sandboxDir, "config", "user.name", "Agent")
+	runGit(t, sandboxDir, "config", "user.email", "agent@example.com")
+	if err := os.WriteFile(filepath.Join(sandboxDir, "agent.txt"), []byte("agent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, sandboxDir, "add", "agent.txt")
+	runGit(t, sandboxDir, "commit", "-m", "agent on the default branch")
+	head := strings.TrimSpace(runGit(t, sandboxDir, "rev-parse", "HEAD"))
+	bundleFile := filepath.Join(t.TempDir(), "s.bundle")
+	runGit(t, sandboxDir, "bundle", "create", bundleFile, initial+"..HEAD")
+	bundle, err := os.ReadFile(bundleFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := ApplySync(ctx, localDir, "resumed", "main", ExportedState{Branch: "main", BaseCommit: base, HeadCommit: head, Bundle: bundle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.InPlace {
+		t.Errorf("applied in place: %+v", res)
+	}
+	if got := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD")); got != base {
+		t.Errorf("the local branch moved to %s, want it at its own %s", got, base)
+	}
+}
+
+// BundleCommit packs a commit from its newest remote ancestor, and
+// nothing for one a remote branch already has.
+//
+// @decision(DL-098)
+func TestBundleCommit(t *testing.T) {
+	ctx := context.Background()
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	runGit(t, t.TempDir(), "init", "-q", "--bare", "-b", "main", remote)
+	localDir, _ := initTestRepo(t, remote)
+	runGit(t, localDir, "push", "-q", "-u", "origin", "main")
+	runGit(t, localDir, "checkout", "-q", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(localDir, "f.txt"), []byte("f\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, localDir, "add", "f.txt")
+	runGit(t, localDir, "commit", "-q", "-m", "feature")
+	feature := strings.TrimSpace(runGit(t, localDir, "rev-parse", "HEAD"))
+
+	b, err := BundleCommit(ctx, localDir, "origin", feature)
+	if err != nil || !bytes.Contains(b, []byte("\n-")) {
+		t.Errorf("an unpushed commit: %d bytes, err %v, want a range with a prerequisite", len(b), err)
+	}
+	whole, err := BundleCommit(ctx, localDir, "", feature)
+	if err != nil || bytes.Contains(whole[:bytes.Index(whole, []byte("\n\n"))], []byte("\n-")) {
+		t.Errorf("with no remote: err %v, want the whole history", err)
+	}
+	runGit(t, localDir, "push", "-q", "origin", "feature")
+	if b, err := BundleCommit(ctx, localDir, "origin", feature); err != nil || b != nil {
+		t.Errorf("a pushed branch's tip: %d bytes, err %v, want nothing", len(b), err)
+	}
+	if refs := strings.TrimSpace(runGit(t, localDir, "for-each-ref", "refs/spov/")); refs != "" {
+		t.Errorf("bundling refs were left: %s", refs)
+	}
+}

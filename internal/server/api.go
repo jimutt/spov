@@ -46,6 +46,10 @@ func maxBodyBytesFor(path string) int64 {
 	if path == APIPrefix+"sessions" {
 		return MaxSessionBodyBytes
 	}
+	// @decision(DL-098)
+	if strings.HasPrefix(path, APIPrefix+"sessions/") && strings.HasSuffix(path, "/resume") {
+		return MaxSessionBodyBytes
+	}
 	return MaxBodyBytes
 }
 

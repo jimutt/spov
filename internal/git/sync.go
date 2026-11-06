@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // MaxSyncBundleBytes bounds a git bundle carried between the CLI and a
@@ -394,6 +395,36 @@ func ParseRemoteURL(raw string, kindsByHost map[string]string) (host, basePath, 
 //
 // @decision(DL-027)
 func bundleUnpushedCommits(ctx context.Context, root, remote, branch, head string) ([]byte, error) {
+	return bundleAhead(ctx, root, remote, branch, head, "HEAD")
+}
+
+// BundleCommit packs commit from a local checkout for a resume's fresh
+// clone, as a launch packs HEAD: from the newest remote-tracking
+// ancestor, else the commit's whole history. It is nil when the commit
+// is a remote branch's tip, which the clone fetches itself.
+//
+// @decision(DL-098)
+func BundleCommit(ctx context.Context, root, remote, commit string) ([]byte, error) {
+	commit = strings.ToLower(strings.TrimSpace(commit))
+	if !ValidCommitSHA(commit) {
+		return nil, fmt.Errorf("git: %q is not a commit", commit)
+	}
+	if !commitExists(ctx, root, commit) {
+		return nil, fmt.Errorf("the checkout in %s does not have commit %s", root, commit[:12])
+	}
+	// A bundle names its tips by ref, so the commit gets one of its own
+	// for as long as the bundle takes.
+	ref := fmt.Sprintf("refs/spov/resume-seed-%d-%d", os.Getpid(), time.Now().UnixNano())
+	if _, err := gitOutput(ctx, root, "update-ref", ref, commit); err != nil {
+		return nil, fmt.Errorf("git: mark %s for bundling: %w", commit[:12], err)
+	}
+	defer func() { _, _ = gitOutput(context.WithoutCancel(ctx), root, "update-ref", "-d", ref, commit) }()
+	return bundleAhead(ctx, root, remote, "", commit, ref)
+}
+
+// bundleAhead packs tip, which is head, from the newest remote-tracking
+// ancestor of head, or whole when there is none.
+func bundleAhead(ctx context.Context, root, remote, branch, head, tip string) ([]byte, error) {
 	refsOut, err := gitOutputRaw(ctx, root, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/"+remote+"/")
 	if err != nil {
 		return nil, fmt.Errorf("git: inspect remote refs in %s: %w", root, err)
@@ -408,9 +439,10 @@ func bundleUnpushedCommits(ctx context.Context, root, remote, branch, head strin
 			continue
 		}
 		sha = strings.ToLower(sha)
-		if sha == head && (ref == wantTracking || ref == wantDefault) {
-			// HEAD is already the tip of the remote's tracked branch or
-			// default branch, so the sandbox can fetch it directly.
+		if sha == head {
+			// Already a remote branch's tip, which the sandbox fetches.
+			//
+			// @decision(DL-098)
 			return nil, nil
 		}
 		if isAncestor(ctx, root, sha, head) {
@@ -431,11 +463,11 @@ func bundleUnpushedCommits(ctx context.Context, root, remote, branch, head strin
 	_ = tmp.Close()
 	defer func() { _ = os.Remove(bundlePath) }()
 
-	args := []string{"bundle", "create", bundlePath, "HEAD"}
+	args := []string{"bundle", "create", bundlePath, tip}
 	if preferredBase != "" {
-		args = []string{"bundle", "create", bundlePath, preferredBase + "..HEAD"}
+		args = []string{"bundle", "create", bundlePath, preferredBase + ".." + tip}
 	} else if len(bases) > 0 {
-		args = []string{"bundle", "create", bundlePath, bases[0] + "..HEAD"}
+		args = []string{"bundle", "create", bundlePath, bases[0] + ".." + tip}
 	}
 	if _, err := gitOutput(ctx, root, args...); err != nil {
 		return nil, fmt.Errorf("git: bundle unpushed commits: %w", err)
@@ -618,7 +650,12 @@ func canApplyInPlace(ctx context.Context, root, startBranch, baseCommit, headCom
 		return false, "could not read local HEAD"
 	}
 	curHead = strings.ToLower(curHead)
-	if curHead != baseCommit && curHead != headCommit && !isAncestor(ctx, root, curHead, headCommit) {
+	// In place only onto a descendant: a sandbox whose history does not
+	// hold the local head (rewritten, or a resume that could not reach
+	// its base) would otherwise drop the local commits in the reset.
+	//
+	// @decision(DL-098)
+	if curHead != headCommit && !isAncestor(ctx, root, curHead, headCommit) {
 		return false, fmt.Sprintf("local branch %s moved to %s", curBranch, curHead[:min(12, len(curHead))])
 	}
 	return true, ""

@@ -1581,6 +1581,9 @@ components:
         message:
           $ref: "#/components/schemas/SteerRequest"
           description: A message to send once the session runs
+        sync_bundle:
+          description: A base64 git bundle of a synced session's base commit, for a resume from the transcript; ignored otherwise
+          type: string
         timeout_secs:
           description: The resumed sandbox's lifetime in seconds; omitted takes the one the session was launched with
           format: int64

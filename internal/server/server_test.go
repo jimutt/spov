@@ -599,10 +599,22 @@ func (failingPing) Ping(context.Context) error { return fmt.Errorf("down") }
 // @decision(DL-005)
 func TestBodyLimit(t *testing.T) {
 	f := newAPIFixture(t)
+	tooLarge := func(code int) bool { return code == http.StatusRequestEntityTooLarge || code == http.StatusBadRequest }
 	big := strings.Repeat("x", MaxBodyBytes+1)
-	resp, _ := f.do(http.MethodPost, "/api/v1/sessions", map[string]string{"name": big})
-	if resp.StatusCode != http.StatusRequestEntityTooLarge && resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("oversized body: %d", resp.StatusCode)
+	if resp, _ := f.do(http.MethodPost, "/api/v1/sessions/alpha/messages", map[string]string{"text": big}); !tooLarge(resp.StatusCode) {
+		t.Errorf("an oversized message: %d", resp.StatusCode)
+	}
+	// A launch or a resume may carry a sync bundle, past huma's own 1 MiB.
+	//
+	// @decision(DL-027) @decision(DL-098)
+	for _, path := range []string{"/api/v1/sessions", "/api/v1/sessions/alpha/resume"} {
+		if resp, body := f.do(http.MethodPost, path, map[string]string{"name": big, "sync_bundle": big}); tooLarge(resp.StatusCode) {
+			t.Errorf("%s refused a body under its limit: %d %s", path, resp.StatusCode, body)
+		}
+		huge := strings.Repeat("x", MaxSessionBodyBytes+1)
+		if resp, _ := f.do(http.MethodPost, path, map[string]string{"name": huge}); !tooLarge(resp.StatusCode) {
+			t.Errorf("%s took a body over its limit: %d", path, resp.StatusCode)
+		}
 	}
 }
 

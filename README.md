@@ -168,7 +168,11 @@ a new sandbox, and it comes back one of two ways:
   at most 20 per user by default (`snapshots` in the server's config).
 - **From its transcript** otherwise: the repositories are cloned fresh and
   the conversation is restored, but uncommitted work is gone. The CLI asks
-  first; `--yes` skips the question.
+  first; `--yes` skips the question. A session synced from a checkout
+  starts again from the commit it started from: run `spov resume` inside
+  that checkout and it sends the commit along, unpushed or not. From the
+  browser or elsewhere, a commit that was never pushed is not there, and
+  the workspace starts on the default branch, which the launch notes.
 
 The settings are as launched; `--timeout` sets a new lifetime. Leaving the
 TUI stops the session again unless `--keep`. `spov attach` on a stopped

@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/jimutt/spov/internal/config"
+	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/server"
 	"github.com/jimutt/spov/internal/server/client"
 	"github.com/jimutt/spov/internal/store"
@@ -77,6 +80,8 @@ func runResume(ctx context.Context, env *Env, opts resumeOptions) error {
 		return err
 	}
 	req := server.ResumeRequest{TimeoutSecs: int(opts.Timeout / time.Second)}
+	// @decision(DL-098)
+	req.SyncBundle = env.resumeSeed(ctx, res.Config, view)
 	name := viewName(view)
 	view, err = c.Resume(ctx, view.ID, req)
 	if err != nil {
@@ -182,11 +187,44 @@ func (e *Env) offerResume(ctx context.Context, c *client.Client, view server.Ses
 	if !ok {
 		return view, fmt.Errorf("not resumed; `spov resume %s` reopens it later", name)
 	}
-	resumed, err := c.Resume(ctx, view.ID, server.ResumeRequest{})
+	req := server.ResumeRequest{}
+	// @decision(DL-098)
+	if res, err := e.config(); err == nil {
+		req.SyncBundle = e.resumeSeed(ctx, res.Config, view)
+	}
+	resumed, err := c.Resume(ctx, view.ID, req)
 	if err != nil {
 		return view, resumeError(name, err)
 	}
 	return resumed, nil
+}
+
+// resumeSeed is a synced session's base commit, bundled from the checkout
+// here, for a resume from its transcript; empty otherwise. When it cannot
+// be sent it says why, since the resumed workspace may then lack the
+// session's unpushed commits.
+//
+// @decision(DL-098)
+func (e *Env) resumeSeed(ctx context.Context, cfg config.Config, view server.SessionView) string {
+	if view.Sync == nil || view.Resume == nil || view.Resume.Mode != server.ResumeTranscript {
+		return ""
+	}
+	checkout, err := e.verifySyncCheckout(ctx, cfg, view)
+	if err == nil {
+		// A session with no platform has no clone to build on, so its
+		// bundle holds the whole history, as its launch's did.
+		remote := checkout.Remote
+		if len(view.Repos) == 1 && view.Repos[0].Platform == "" {
+			remote = ""
+		}
+		var bundle []byte
+		if bundle, err = git.BundleCommit(ctx, checkout.Root, remote, view.Sync.BaseCommit); err == nil {
+			return base64.StdEncoding.EncodeToString(bundle)
+		}
+	}
+	_, _ = fmt.Fprintf(e.Err, "note: the session's starting commit is not sent (%v); unless it was pushed, the resumed workspace"+
+		" starts on the default branch without it\n", err)
+	return ""
 }
 
 // notResumable explains a session that offers no resume.

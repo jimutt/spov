@@ -791,6 +791,11 @@ func (s *Server) registerSessions() {
 	register(s.api, huma.Operation{
 		OperationID: "create-session", Method: http.MethodPost, Path: "/api/v1/sessions",
 		Summary: "Create a session", DefaultStatus: http.StatusAccepted, Tags: []string{"sessions"},
+		// huma caps every body at 1 MiB unless an operation names its own,
+		// which a sync bundle needs.
+		//
+		// @decision(DL-027)
+		MaxBodyBytes: MaxSessionBodyBytes,
 	}, func(ctx context.Context, in *createInput) (*createOutput, error) {
 		req, err := in.Body.toStore()
 		if err != nil {
