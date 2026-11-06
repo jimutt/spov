@@ -4,8 +4,8 @@
 |----|-------|--------|-----------|------|
 | DL-090 | Resume is offered on a stopped session's page, in its composer, by spov resume and by spov attach, worded for what will come back | proposed | web | snapshot-resume, web, cli, composer, attach |
 | DL-089 | Without a snapshot, a resume clones as at launch and imports each conversation from the store | proposed | server | snapshot-resume, recorder, opencode, store |
-| DL-088 | A resume boots from the last kept exit snapshot, and the entrypoint takes up the restored workspace | proposed | opencode | snapshot-resume, entrypoint, sandbox |
-| DL-087 | Resume reopens a stopped interactive session in a new sandbox, with its settings as launched | proposed | server | snapshot-resume, sessions, lifecycle, credentials |
+| DL-088 | A resume boots from the newest run's exit snapshot, waiting for one still being taken, and the entrypoint takes up the restored workspace | proposed | opencode | snapshot-resume, entrypoint, sandbox |
+| DL-087 | Resume reopens a stopped interactive session in a new sandbox, with its settings as launched and only the timeout to change | proposed | server | snapshot-resume, sessions, lifecycle, credentials |
 | DL-086 | Snapshot retention, a per-user cap and an off switch are deployment config, and a daily pass prunes past them | proposed | server | snapshot-resume, config, images, cost |
 | DL-085 | Each sandbox of a session is a run, and its exit snapshot is collected after it ends | proposed | server | snapshot-resume, store, reconciler, cost |
 | DL-084 | An interactive sandbox is created with an exit snapshot when the proxy holds its secrets | proposed | sandbox | snapshot-resume, sandbox, modal, lifecycle |
