@@ -68,8 +68,17 @@ func (s *Service) usageFor(ctx context.Context, orgID, userID string, now time.T
 	if err != nil {
 		return UsageView{}, err
 	}
+	ids := make([]string, len(sessions))
+	for i, sess := range sessions {
+		ids[i] = sess.ID
+	}
+	// @decision(DL-085)
+	runs, err := s.deps.Store.Runs().List(ctx, orgID, ids)
+	if err != nil {
+		return UsageView{}, err
+	}
 	for _, sess := range sessions {
-		d := billableWithin(sess, since, now)
+		d := billableWithin(sess, runs[sess.ID], since, now)
 		if d <= 0 {
 			continue
 		}
@@ -82,10 +91,18 @@ func (s *Service) usageFor(ctx context.Context, orgID, userID string, now time.T
 	return view, nil
 }
 
-// billableWithin is how long a session ran inside [since, now].
+// billableWithin is how long a session ran inside [since, now]: the sum
+// of its runs' stretches, or the session's own times when it has none.
 //
-// @decision(DL-009)
-func billableWithin(sess store.Session, since, now time.Time) time.Duration {
+// @decision(DL-009) @decision(DL-085)
+func billableWithin(sess store.Session, runs []store.Run, since, now time.Time) time.Duration {
+	if len(runs) > 0 {
+		var d time.Duration
+		for _, r := range runs {
+			d += r.Stretch(since, now)
+		}
+		return d
+	}
 	// A row with no creation time cannot be aged. Both stores backfill
 	// it, so this is unreachable today — but it is the one input that
 	// turns a bad row into a wildly wrong cost, since the zero time is

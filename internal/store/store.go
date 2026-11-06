@@ -47,6 +47,10 @@ type Store interface {
 	//
 	// @decision(DL-045)
 	Jobs() JobStore
+	// Runs is each sandbox a session had.
+	//
+	// @decision(DL-085)
+	Runs() RunStore
 	// Tx runs fn atomically where the backend can. The memory store
 	// serialises transactions with a mutex so the semantics hold there
 	// too. fn must not call back into the outer store, must not retain
@@ -110,7 +114,8 @@ type SessionStore interface {
 	// @decision(DL-003)
 	CancelRequested(ctx context.Context, orgID, id string) (bool, error)
 	// MarkStopped moves a live session to state (stopped or failed) at
-	// at, with errText, and reports whether this call made the move. A
+	// at, with errText, and reports whether this call made the move. The
+	// same write ends the session's current run (DL-085). A
 	// session no longer live, or not this org's, is left alone and
 	// reports false, so of two callers stopping the same session exactly
 	// one sees true.

@@ -227,6 +227,24 @@ type SessionProxyCa struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type SessionRun struct {
+	SessionID     string
+	OrgID         string
+	OwnerID       string
+	N             int32
+	SandboxID     string
+	Booted        string
+	BootedImageID string
+	Opencode      string
+	Origin        string
+	StartedAt     pgtype.Timestamptz
+	RunningAt     pgtype.Timestamptz
+	EndedAt       pgtype.Timestamptz
+	Snapshot      string
+	SnapshotState string
+	SnapshotAt    pgtype.Timestamptz
+}
+
 type User struct {
 	ID                        string
 	OrgID                     string

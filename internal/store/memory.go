@@ -47,6 +47,10 @@ type Memory struct {
 	proxyCAs map[string]proxyCA
 	// @decision(DL-045)
 	jobs map[string]Job
+	// runs are each session's runs, oldest first, by session ID.
+	//
+	// @decision(DL-085)
+	runs map[string][]Run
 	// deliverables and jobFiles are keyed by job ID, then by key or path.
 	deliverables map[string]map[string]Deliverable
 	jobFiles     map[string]map[string]JobFile
@@ -86,6 +90,7 @@ func NewMemory() *Memory {
 		eventSeqs:       map[convSeq]bool{},
 		messageKeys:     map[convMessage]string{},
 		jobs:            map[string]Job{},
+		runs:            map[string][]Run{},
 		deliverables:    map[string]map[string]Deliverable{},
 		jobFiles:        map[string]map[string]JobFile{},
 	}
@@ -162,6 +167,11 @@ func (m *Memory) Conversations() ConversationStore { return memConversations{m} 
 // @decision(DL-045)
 func (m *Memory) Jobs() JobStore { return memJobs{m} }
 
+// Runs implements Store.
+//
+// @decision(DL-085)
+func (m *Memory) Runs() RunStore { return memRuns{m} }
+
 // Ping implements Store.
 func (m *Memory) Ping(context.Context) error { return nil }
 
@@ -180,6 +190,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	allowed := cloneMap(m.allowlist)
 	orgCreds, admin := cloneMap(m.orgCredentials), slices.Clone(m.adminEvents)
 	jobs := cloneMap(m.jobs)
+	runs := cloneRuns(m.runs)
 	var undo []func()
 	pos := m.eventPos
 	view := &Memory{Now: m.Now, sessions: m.sessions, mints: m.mints,
@@ -188,7 +199,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		orgCredentials: m.orgCredentials, adminEvents: m.adminEvents,
 		conversations: m.conversations, messages: m.messages, events: m.events,
 		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
-		jobs: m.jobs, eventPos: m.eventPos, undo: &undo, inTx: true}
+		jobs: m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true}
 	committed := false
 	defer func() {
 		view.done = true
@@ -208,6 +219,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 			undo[i]()
 		}
 		m.jobs = jobs
+		m.runs = runs
 		m.eventPos = pos
 	}()
 	if err := fn(view); err != nil {
@@ -359,6 +371,10 @@ func (s memSessions) MarkStopped(_ context.Context, orgID, id string, state Sess
 	stopped := at
 	cur.StoppedAt = &stopped
 	s.m.sessions[id] = copySession(cur)
+	// @decision(DL-085)
+	if runs := s.m.runs[id]; len(runs) > 0 && runs[len(runs)-1].EndedAt == nil {
+		runs[len(runs)-1].EndedAt = &stopped
+	}
 	// @decision(DL-034)
 	delete(s.m.proxyCAs, id)
 	return true, nil

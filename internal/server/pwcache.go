@@ -27,6 +27,11 @@ type passwordCache struct {
 type pwEntry struct {
 	id       string
 	password string
+	// sandbox is the sandbox the password was read from, so a resumed
+	// session's new sandbox is never offered the old one's.
+	//
+	// @decision(DL-085)
+	sandbox string
 }
 
 func newPasswordCache(max int) *passwordCache {
@@ -48,10 +53,29 @@ func (c *passwordCache) get(id string) (string, bool) {
 	return el.Value.(*pwEntry).password, true
 }
 
+// getFor is get for the password read from one sandbox of the session.
+//
+// @decision(DL-085)
+func (c *passwordCache) getFor(id, sandbox string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.items[id]
+	if !ok || el.Value.(*pwEntry).sandbox != sandbox {
+		return "", false
+	}
+	c.order.MoveToFront(el)
+	return el.Value.(*pwEntry).password, true
+}
+
 // put stores a password, evicting the least recently used entry when the
 // cache is full. An empty password is not cached: it would satisfy a
 // later lookup with a value that cannot authenticate.
-func (c *passwordCache) put(id, password string) {
+func (c *passwordCache) put(id, password string) { c.putFor(id, "", password) }
+
+// putFor is put for the password read from sandbox.
+//
+// @decision(DL-085)
+func (c *passwordCache) putFor(id, sandbox, password string) {
 	if id == "" || password == "" {
 		return
 	}
@@ -59,10 +83,11 @@ func (c *passwordCache) put(id, password string) {
 	defer c.mu.Unlock()
 	if el, ok := c.items[id]; ok {
 		el.Value.(*pwEntry).password = password
+		el.Value.(*pwEntry).sandbox = sandbox
 		c.order.MoveToFront(el)
 		return
 	}
-	c.items[id] = c.order.PushFront(&pwEntry{id: id, password: password})
+	c.items[id] = c.order.PushFront(&pwEntry{id: id, password: password, sandbox: sandbox})
 	for c.order.Len() > c.max {
 		oldest := c.order.Back()
 		if oldest == nil {

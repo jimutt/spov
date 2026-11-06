@@ -217,7 +217,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 			delete(s.launches, sess.ID)
 			s.mu.Unlock()
 		}()
-		s.launch(launchCtx, sess, log, telemetry.KindInteractive)
+		s.launch(launchCtx, sess, log, telemetry.KindInteractive, runPlan{})
 	}()
 	return sess, nil
 }
@@ -476,7 +476,7 @@ func (s *Service) validateRequest(req store.SessionRequest) error {
 // JobOptions, and an ordinary session passes none.
 //
 // @decision(DL-005) @decision(DL-045)
-func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog, kind telemetry.SessionKind, with ...func(*session.Options)) {
+func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog, kind telemetry.SessionKind, plan runPlan, with ...func(*session.Options)) {
 	// The store is written from a context that no request owns.
 	storeCtx := context.WithoutCancel(ctx)
 	// @decision(DL-011)
@@ -517,6 +517,7 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		if uerr := s.deps.Store.Sessions().Update(storeCtx, sess); uerr != nil {
 			s.deps.Warn(fmt.Sprintf("launch %s: record failure: %v", sess.ID, uerr))
 		}
+		s.endFailedRun(storeCtx, sess, plan, t)
 		s.forgetSession(sess.ID)
 		log.fail(ProblemView{Title: "Launch failed", Status: 502, Detail: msg})
 	}
@@ -717,6 +718,9 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 			Dir:        dir,
 		}
 	}
+	// @decision(DL-084) @decision(DL-085)
+	opts.Run = plan.number()
+	opts.ExitSnapshot = kind != telemetry.KindJob && s.deps.Snapshots != nil
 	for _, fn := range with {
 		fn(&opts)
 	}
@@ -758,7 +762,8 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	if len(live.ProxiedKeys) > 0 {
 		log.Note(ProxiedKeysNote(live.ProxiedKeys))
 	}
-	cancelled, err := s.commitLaunch(storeCtx, sess)
+	run := s.runOf(sess, plan, live.Info.ID, pick.image, live.ExitSnapshot)
+	cancelled, err := s.commitLaunch(storeCtx, sess, run)
 	if err != nil {
 		s.deps.Warn(fmt.Sprintf("launch %s: record success: %v", sess.ID, err))
 	}
@@ -830,7 +835,7 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 // launch was cancelled rather than committed.
 //
 // @decision(DL-003)
-func (s *Service) commitLaunch(ctx context.Context, sess store.Session) (bool, error) {
+func (s *Service) commitLaunch(ctx context.Context, sess store.Session, run store.Run) (bool, error) {
 	var cancelled bool
 	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
 		var err error
@@ -840,7 +845,11 @@ func (s *Service) commitLaunch(ctx context.Context, sess store.Session) (bool, e
 		if cancelled {
 			return nil
 		}
-		return tx.Sessions().Update(ctx, sess)
+		if err := tx.Sessions().Update(ctx, sess); err != nil {
+			return err
+		}
+		// @decision(DL-085)
+		return recordRun(ctx, tx, run)
 	})
 	return cancelled, err
 }

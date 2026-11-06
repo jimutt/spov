@@ -68,6 +68,8 @@ func LoadUser(env Env) (Result, error) {
 var userOnly = []userOnlyKey{
 	{"server", "server.url", "SPOV_SERVER or --server"},
 	{"platforms", "", ""},
+	// @decision(DL-086)
+	{"snapshots", "", ""},
 }
 
 type userOnlyKey struct{ key, shown, instead string }

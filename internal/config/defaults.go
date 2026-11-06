@@ -35,6 +35,8 @@ func Defaults() Config {
 			Version: DefaultOpenCodeVersion,
 			Port:    4096,
 		},
+		// @decision(DL-086)
+		Snapshots: Snapshots{Enabled: true, Retention: 168 * time.Hour, MaxPerUser: 20},
 		// Per-user limits for a hosted server. Three concurrent
 		// sessions and eight hours are generous for one person and
 		// still bound what any one user can spend.

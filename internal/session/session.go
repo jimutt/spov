@@ -5,6 +5,7 @@
 package session
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,8 +29,29 @@ import (
 
 // Options describes the session to launch.
 type Options struct {
-	// Name is the session name; also the sandbox name.
+	// Name is the session name; also the sandbox name unless
+	// SandboxName is set.
 	Name string
+	// SandboxName names the sandbox when it is not the session's name:
+	// a resumed session's later runs.
+	//
+	// @decision(DL-087)
+	SandboxName string
+	// Run is the session's run this sandbox is, for its tag; 0 tags
+	// none.
+	//
+	// @decision(DL-084) @decision(DL-085)
+	Run int
+	// ExitSnapshot asks for a snapshot of the filesystem when the
+	// sandbox ends.
+	//
+	// @decision(DL-084)
+	ExitSnapshot bool
+	// SnapshotImage, when set, is the exit snapshot the sandbox boots
+	// from, by its ID, instead of Image.
+	//
+	// @decision(DL-088)
+	SnapshotImage string
 	// User launched the session, recorded as a tag. In hosted mode it
 	// is their ULID; in local mode "local".
 	//
@@ -206,6 +228,11 @@ type Session struct {
 	//
 	// @decision(DL-034)
 	ProxyCA *ProxyCA
+	// ExitSnapshot reports whether the sandbox was asked for an exit
+	// snapshot, which only a proxied one is.
+	//
+	// @decision(DL-084)
+	ExitSnapshot bool
 
 	// proxy fronts the sandbox. Closing the session closes it.
 	//
@@ -453,11 +480,15 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		cloneSlugs = []string{opts.Sync.Slug}
 	}
 	spec := sandbox.Spec{
-		Name:    opts.Name,
-		Image:   opts.Image,
-		Command: command,
-		Env:     env,
-		Secrets: secrets,
+		Name:  cmp.Or(opts.SandboxName, opts.Name),
+		Image: opts.Image,
+		// @decision(DL-084) @decision(DL-088)
+		ImageID: opts.SnapshotImage,
+		// Only under the proxy, so a snapshot never holds a secret.
+		ExitSnapshot: opts.ExitSnapshot && cred != nil,
+		Command:      command,
+		Env:          env,
+		Secrets:      secrets,
 		// No exposed ports: the sandbox has no public URL, and is
 		// reachable only through a connect token.
 		//
@@ -475,7 +506,7 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		Tags: sandbox.BuildTags(sandbox.TagSet{
 			Name: opts.Name, User: opts.User, Org: opts.Org,
 			Repos: cloneSlugs, CreatedAt: l.now(),
-			Job: jobID(opts.Job), Proxy: cred != nil,
+			Job: jobID(opts.Job), Proxy: cred != nil, Run: opts.Run,
 		}),
 		Egress:       opts.Egress,
 		InboundCIDRs: opts.InboundCIDRs,
@@ -557,6 +588,7 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		Credentials:     credentialsOf(bootstrap.Tokens, cred != nil, platformKinds(opts.Selections)),
 		ProxiedKeys:     cred.keyNames(),
 		ProxyCA:         cred.ca(),
+		ExitSnapshot:    spec.ExitSnapshot,
 		RenewableExpiry: renewableExpiry(bootstrap.Tokens),
 		proxy:           prox,
 		revokeTokens:    revokeTokens,

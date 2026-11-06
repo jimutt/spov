@@ -77,10 +77,12 @@ type shownConfig struct {
 	// Server, Quotas, Prep and Metrics are shown whole: config show is
 	// how a user sees every merged value, and a key it leaves out looks
 	// unset.
-	Server  config.Server  `json:"server" yaml:"server"`
-	Quotas  shownQuotas    `json:"quotas" yaml:"quotas"`
-	Prep    prep.Config    `json:"prep" yaml:"prep"`
-	Metrics config.Metrics `json:"metrics" yaml:"metrics"`
+	Server config.Server `json:"server" yaml:"server"`
+	Quotas shownQuotas   `json:"quotas" yaml:"quotas"`
+	// @decision(DL-086)
+	Snapshots shownSnapshots `json:"snapshots" yaml:"snapshots"`
+	Prep      prep.Config    `json:"prep" yaml:"prep"`
+	Metrics   config.Metrics `json:"metrics" yaml:"metrics"`
 	// Credentials names the backend secrets are stored in, so a user can
 	// tell where their tokens actually live.
 	//
@@ -146,6 +148,15 @@ type shownQuotas struct {
 	MaxMemoryMiB          int     `json:"max_memory_mib" yaml:"max_memory_mib"`
 }
 
+// shownSnapshots is config.Snapshots with its retention as a string.
+//
+// @decision(DL-086)
+type shownSnapshots struct {
+	Enabled    bool   `json:"enabled" yaml:"enabled"`
+	Retention  string `json:"retention" yaml:"retention"`
+	MaxPerUser int    `json:"max_per_user" yaml:"max_per_user"`
+}
+
 type shownSources struct {
 	UserFile       string   `json:"user_file,omitempty" yaml:"user_file,omitempty"`
 	UserFileError  string   `json:"user_file_error,omitempty" yaml:"user_file_error,omitempty"`
@@ -204,6 +215,9 @@ func newShownConfig(res config.Result, credentialBackend string, stored *shownSt
 			MaxTimeout:            c.Quotas.MaxTimeout.String(),
 			MaxCPU:                c.Quotas.MaxCPU,
 			MaxMemoryMiB:          c.Quotas.MaxMemoryMiB,
+		},
+		Snapshots: shownSnapshots{
+			Enabled: c.Snapshots.Enabled, Retention: c.Snapshots.Retention.String(), MaxPerUser: c.Snapshots.MaxPerUser,
 		},
 		Prep:        c.Prep,
 		Metrics:     c.Metrics,

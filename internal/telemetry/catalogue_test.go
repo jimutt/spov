@@ -37,6 +37,8 @@ func recordEverything(m *Metrics) {
 	m.TokenRenewal(ctx, OutcomeRenewed)
 	m.ProxyRecovery(ctx, OutcomeRecreated)
 	m.ImageBuilt(ctx, nil)
+	m.SnapshotCollected(ctx, "kept")
+	m.SnapshotPruned(ctx, "retention")
 	m.SetShared(Snapshot{
 		Jobs:         map[store.JobState]int64{store.JobQueued: 2},
 		Sessions:     map[SessionKey]int64{{State: store.StateRunning, Kind: KindJob}: 1},

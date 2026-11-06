@@ -520,6 +520,10 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 			//
 			// @decision(DL-016)
 			wg.Go(func() { srv.Service().RunImagePrune(ctx) })
+			// Collecting and pruning exit snapshots, the same way.
+			//
+			// @decision(DL-085) @decision(DL-086)
+			wg.Go(func() { srv.Service().RunSnapshots(ctx) })
 			// Shared state is reported only while this replica holds
 			// the lock, and withdrawn when it stops holding it.
 			//
@@ -699,7 +703,14 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 		launcher.Variants = &session.VariantBuilder{Builder: builder, Warn: warn}
 	}
 	sb := cfg.Sandbox
+	snapshots, err := snapshotSettings(cfg.Snapshots, st, launcher.ProxyImage != nil)
+	if err != nil {
+		closeStore()
+		return server.Deps{}, nil, err
+	}
 	return server.Deps{
+		// @decision(DL-084) @decision(DL-086)
+		Snapshots: snapshots,
 		// @decision(DL-033) @decision(DL-016)
 		Images:   images,
 		Resolver: e.addonResolver(stateFile, warn),
@@ -764,6 +775,25 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 		// @decision(DL-046) @decision(DL-045)
 		Jobs: newSupervisor(st, provider, warn),
 	}, closeStore, nil
+}
+
+// snapshotSettings is the server's snapshot setting: nil, taking none,
+// unless snapshots are enabled, the proxy holds the secrets and the
+// sessions are kept in Postgres, where a resume can find them.
+//
+// @decision(DL-084) @decision(DL-086)
+func snapshotSettings(c config.Snapshots, st store.Store, proxy bool) (*server.SnapshotSettings, error) {
+	if !c.Enabled {
+		return nil, nil
+	}
+	s := server.SnapshotSettings{Retention: c.Retention, MaxPerUser: c.MaxPerUser}
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+	if _, persistent := st.(*postgres.Store); !persistent || !proxy {
+		return nil, nil
+	}
+	return &s, nil
 }
 
 // newSupervisor builds the job supervisor, or nil where there is no

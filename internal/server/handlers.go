@@ -339,7 +339,7 @@ func viewOf(s store.Session, now time.Time) SessionView {
 			// The session's whole billable life: the same helper the
 			// monthly total uses, with the period opened at its own
 			// creation.
-			billableWithin(s, s.CreatedAt, now),
+			billableWithin(s, nil, s.CreatedAt, now),
 		)),
 	}
 }
@@ -390,6 +390,7 @@ func (s *Server) viewsOf(ctx context.Context, p auth.Principal, sessions []store
 	if len(ids) == 0 {
 		return out
 	}
+	s.withRuns(ctx, p.OrgID, sessions, out, now)
 	last, err := s.deps.Store.Conversations().LastMessages(ctx, p.OrgID, ids)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -421,6 +422,34 @@ func (s *Server) viewsOf(ctx context.Context, p auth.Principal, sessions []store
 		}
 	}
 	return out
+}
+
+// withRuns decorates views from their sessions' runs, read in one
+// query: the cost of a resumed session counts only the time a sandbox
+// ran. A failed read is warned about and leaves the session's own
+// figures.
+//
+// @decision(DL-085)
+func (s *Server) withRuns(ctx context.Context, orgID string, sessions []store.Session, views []SessionView, now time.Time) {
+	ids := make([]string, len(sessions))
+	for i, sess := range sessions {
+		ids[i] = sess.ID
+	}
+	runs, err := s.deps.Store.Runs().List(ctx, orgID, ids)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.deps.Warn(fmt.Sprintf("runs: %s", redact.Error(err)))
+		}
+		return
+	}
+	for i, sess := range sessions {
+		rs := runs[sess.ID]
+		if len(rs) == 0 {
+			continue
+		}
+		views[i].EstimatedCost = round2(sandbox.EstimatedCost(
+			sess.Request.Sandbox.CPU, sess.Request.Sandbox.MemoryMiB, billableWithin(sess, rs, sess.CreatedAt, now)))
+	}
 }
 
 // sessionJob is the job driving one session, as the listing decorates
@@ -764,7 +793,10 @@ func (s *Server) registerSessions() {
 		if err != nil {
 			return nil, toHumaError(err)
 		}
-		view := viewOf(sess, s.deps.Now())
+		now := s.deps.Now()
+		views := []SessionView{viewOf(sess, now)}
+		s.withRuns(ctx, sess.OrgID, []store.Session{sess}, views, now)
+		view := views[0]
 		view.Job = s.sessionJob(ctx, sess)
 		return &sessionOutput{Body: view}, nil
 	})

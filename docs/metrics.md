@@ -84,6 +84,8 @@ are in seconds.
 | `spov_git_token_renewals_total` | counter | `outcome` | per process | Git token re-mints: `renewed`, `skipped`, `failed`. |
 | `spov_proxy_recoveries_total` | counter | `outcome` | per process | Credential proxy sidecars recreated (`recreated`), or sessions ended because a recreated sidecar died again (`failed`). An attempt that fails and is retried next minute is not counted. |
 | `spov_image_builds_total` | counter | `outcome` | per process | Sandbox image builds, `ok` or `error`. |
+| `spov_snapshot_collections_total` | counter | `outcome` | per process | Exit snapshots settled after a run ended: `kept`, `failed` (Modal took none, or it was still pending 30 minutes after the end), `none` (the sandbox was created without one). Only the reconciler's lock holder, or a resume waiting for one, collects. |
+| `spov_snapshot_prunes_total` | counter | `reason` | per process | Exit snapshots marked deleted: `retention`, `cap` (the owner's oldest beyond `snapshots.max_per_user`), `superseded` (a later run of the session kept its own), `unused` (its run never reached running). |
 
 A label value outside its listed set is recorded as `other`.
 

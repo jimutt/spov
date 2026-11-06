@@ -47,7 +47,10 @@ type Metrics struct {
 	recorderRetries  metric.Int64Counter
 	renewals         metric.Int64Counter
 	proxyRecoveries  metric.Int64Counter
-	imageBuilds      metric.Int64Counter
+	// @decision(DL-085) @decision(DL-086)
+	snapshotCollections metric.Int64Counter
+	snapshotPrunes      metric.Int64Counter
+	imageBuilds         metric.Int64Counter
 
 	// shared is the leader's latest snapshot of shared state, nil when
 	// this process does not lead (DL-011).
@@ -111,6 +114,8 @@ func NewMetrics(meter metric.Meter, version string) (*Metrics, error) {
 	m.recorderRetries = b.counter("spov_recorder_reconnects", "{reconnect}", "Times the recorder reattached to a session's stream")
 	m.renewals = b.counter("spov_git_token_renewals", "{renewal}", "Git token re-mints, by outcome")
 	m.proxyRecoveries = b.counter("spov_proxy_recoveries", "{recovery}", "Credential proxy sidecar recoveries, by outcome")
+	m.snapshotCollections = b.counter("spov_snapshot_collections", "{snapshot}", "Exit snapshots collected after a run ended, by outcome")
+	m.snapshotPrunes = b.counter("spov_snapshot_prunes", "{snapshot}", "Exit snapshots pruned, by reason")
 	m.imageBuilds = b.counter("spov_image_builds", "{build}", "Sandbox image builds, by outcome")
 	b.gauge("spov_build_info", "{build}", "The running build, always 1", func(_ context.Context, o metric.Int64Observer) error {
 		o.Observe(1, metric.WithAttributes(attribute.String("version", version)))
@@ -353,6 +358,29 @@ func (m *Metrics) TokenRenewal(ctx context.Context, outcome Outcome) {
 func (m *Metrics) ProxyRecovery(ctx context.Context, outcome Outcome) {
 	if m != nil {
 		m.proxyRecoveries.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", oneOf(string(outcome), recoveryOutcomes))))
+	}
+}
+
+// snapshotOutcomes and pruneReasons are the closed label sets of the
+// snapshot counters.
+//
+// @decision(DL-085) @decision(DL-086)
+var (
+	snapshotOutcomes = []string{"kept", "failed", "none"}
+	pruneReasons     = []string{"retention", "cap", "superseded", "unused"}
+)
+
+// SnapshotCollected records one run's exit snapshot settling.
+func (m *Metrics) SnapshotCollected(ctx context.Context, outcome string) {
+	if m != nil {
+		m.snapshotCollections.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", oneOf(outcome, snapshotOutcomes))))
+	}
+}
+
+// SnapshotPruned records one exit snapshot marked deleted.
+func (m *Metrics) SnapshotPruned(ctx context.Context, reason string) {
+	if m != nil {
+		m.snapshotPrunes.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", oneOf(reason, pruneReasons))))
 	}
 }
 

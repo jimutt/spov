@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"strconv"
 	"strings"
 	"time"
 )
@@ -44,6 +45,11 @@ const (
 	//
 	// @decision(DL-034)
 	TagProxyRecreated = "proxy-recreated"
+	// TagRun is the session's run the sandbox is, from 1. A resumed
+	// session's sandboxes differ by it.
+	//
+	// @decision(DL-084) @decision(DL-087)
+	TagRun = "run"
 )
 
 // JobTags is the tag filter matching the sandbox running one job.
@@ -79,6 +85,10 @@ type TagSet struct {
 	//
 	// @decision(DL-034)
 	Proxy bool
+	// Run is the session's run, or 0 when untagged.
+	//
+	// @decision(DL-084)
+	Run int
 }
 
 // BuildTags assembles the tag set for a new sandbox.
@@ -106,6 +116,9 @@ func BuildTags(t TagSet) map[string]string {
 	}
 	if t.Proxy {
 		tags[TagProxy] = "1"
+	}
+	if t.Run > 0 {
+		tags[TagRun] = strconv.Itoa(t.Run)
 	}
 	return tags
 }

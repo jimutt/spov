@@ -234,6 +234,8 @@ func (e *Env) defaultProvider(ctx context.Context, cfg config.Config) (sandbox.P
 		AppName:     cfg.Modal.App,
 		Environment: cfg.Modal.Environment,
 		Credentials: e.modalCredentials(),
+		// @decision(DL-084)
+		Warn: func(msg string) { _, _ = fmt.Fprintln(e.Err, "spov serve: "+msg) },
 	})
 }
 
