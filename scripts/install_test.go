@@ -80,6 +80,9 @@ func newRelease(t *testing.T) *release {
 	mux.HandleFunc("GET /releases/download/v1.2.3/checksums.txt", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, r.checksums)
 	})
+	mux.HandleFunc("GET /releases/download/v1.2.3/checksums.txt.sigstore.json", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})
 	mux.HandleFunc("GET /opencode-pin.json", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprintf(w, `{"scheme":1,"opencode":%q}`, r.pin)
 	})
@@ -266,5 +269,27 @@ func TestTheRealBinaryNeverSeesTheScriptsVariables(t *testing.T) {
 	want := filepath.Join(home, ".local", "share", "spov", "bin", config.DefaultOpenCodeVersion, "opencode")
 	if _, err := os.Stat(want); err != nil {
 		t.Errorf("OpenCode is not at the binary's own default %s:\n%s", config.DefaultOpenCodeVersion, out)
+	}
+}
+
+// A signature cosign refuses stops the install, with cosign's own words
+// and the version it takes, since an old cosign cannot read the bundle.
+//
+// @decision(DL-080)
+func TestAFailedSignatureCheckSaysWhy(t *testing.T) {
+	r := newRelease(t)
+	bin := t.TempDir()
+	fake := "#!/bin/sh\necho 'error: bundle format not understood' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "cosign"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "install.sh")
+	cmd.Env = []string{"HOME=" + t.TempDir(), "PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"SPOV_RELEASES_URL=" + r.URL + "/releases", "SPOV_INSTALL_OS=Linux", "SPOV_INSTALL_ARCH=x86_64"}
+	out, err := cmd.CombinedOutput()
+	for _, want := range []string{"bundle format not understood", "v2.4.2 or newer", "nothing was installed"} {
+		if err == nil || !strings.Contains(string(out), want) {
+			t.Errorf("output lacks %q (err %v):\n%s", want, err, out)
+		}
 	}
 }

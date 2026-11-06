@@ -422,7 +422,8 @@ and `linux/arm64`, signed by its digest and with a build provenance
 attestation (DL-082). Deploy it by digest, so a moved tag can never change
 what runs: the release workflow prints `ghcr.io/jimutt/spov:<version>@sha256:<digest>`
 as a notice, and `docker buildx imagetools inspect ghcr.io/jimutt/spov:<version>`
-shows it too. Check it before deploying:
+shows it too. Check it before deploying, with cosign v3 (cosign v2.6 or
+newer needs `--new-bundle-format`):
 
 ```sh
 cosign verify ghcr.io/jimutt/spov@sha256:<digest> \

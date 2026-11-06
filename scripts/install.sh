@@ -96,10 +96,14 @@ fetch "$base/checksums.txt" "$tmp/checksums.txt" || die "could not download the 
 # trusted when cosign can tell.
 if command -v cosign >/dev/null 2>&1; then
   fetch "$base/checksums.txt.sigstore.json" "$tmp/checksums.txt.sigstore.json" || die "the release has no signature bundle"
-  cosign verify-blob "$tmp/checksums.txt" --bundle "$tmp/checksums.txt.sigstore.json" \
+  # cosign's own words on failure: an old cosign cannot read the bundle
+  # format, which is not the same as a bad signature.
+  if ! out=$(cosign verify-blob "$tmp/checksums.txt" --bundle "$tmp/checksums.txt.sigstore.json" \
     --certificate-identity-regexp "^https://github.com/$REPO/\.github/workflows/release\.yml@refs/tags/v" \
-    --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null 2>&1 ||
-    die "the checksums' signature does not verify; nothing was installed"
+    --certificate-oidc-issuer https://token.actions.githubusercontent.com 2>&1); then
+    printf '%s\n' "$out" >&2
+    die "the checksums' signature does not verify (this needs cosign v2.4.2 or newer); nothing was installed"
+  fi
   say "the checksums' signature verifies"
 elif [ "${SPOV_REQUIRE_SIGNATURE:-}" = 1 ]; then
   die "SPOV_REQUIRE_SIGNATURE=1 and cosign is not installed"
