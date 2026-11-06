@@ -146,6 +146,13 @@ func startOpenCodeSandboxWith(t *testing.T, ctx context.Context, p *ModalProvide
 // environment for the server.
 func startOpenCodeSandboxEnv(t *testing.T, ctx context.Context, p *ModalProvider, prefix string, idle time.Duration, files, extraEnv map[string]string) (*modal.Sandbox, *modal.SandboxCreateConnectCredentials, string) {
 	t.Helper()
+	return startOpenCodeSandboxOn(t, ctx, p, nil, prefix, idle, files, extraEnv, nil)
+}
+
+// startOpenCodeSandboxOn is startOpenCodeSandboxEnv booted from image
+// (the base image when nil), with Modal's experimental create options.
+func startOpenCodeSandboxOn(t *testing.T, ctx context.Context, p *ModalProvider, from *modal.Image, prefix string, idle time.Duration, files, extraEnv map[string]string, options map[string]any) (*modal.Sandbox, *modal.SandboxCreateConnectCredentials, string) {
+	t.Helper()
 	password := randomPassword(t)
 	name := fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 	env := map[string]string{
@@ -179,15 +186,19 @@ func startOpenCodeSandboxEnv(t *testing.T, ctx context.Context, p *ModalProvider
 		IdleTimeout: idle,
 		Tags:        BuildTags(TagSet{Name: name, User: "integration-test", CreatedAt: time.Now()}),
 	}
-	image, err := p.image(ctx, spec.Image)
-	if err != nil {
-		t.Fatal(err)
+	image := from
+	if image == nil {
+		var err error
+		if image, err = p.image(ctx, spec.Image); err != nil {
+			t.Fatal(err)
+		}
 	}
 	params, err := p.createParams(ctx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	params.EncryptedPorts = nil
+	params.ExperimentalOptions = options
 
 	sb, err := p.client.Sandboxes.ExperimentalCreate(ctx, p.app, image, params)
 	if err != nil {

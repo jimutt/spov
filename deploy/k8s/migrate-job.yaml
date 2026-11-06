@@ -15,7 +15,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: migrate
-          image: ghcr.io/example/spov:latest # the same digest as the Deployment
+          image: ghcr.io/jimutt/spov:<version>@sha256:<digest> # the same digest as the Deployment
           args: ["serve", "migrate", "up"] # ENTRYPOINT is the binary alone
           envFrom:
             - secretRef: { name: spov-secrets }
