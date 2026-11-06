@@ -140,6 +140,8 @@ func (n credentialName) serverKey() (key, prompt string, err error) {
 // addOptions are `credentials add`'s flags. The App flags and
 // --no-verify apply to this machine's store only.
 type addOptions struct {
+	// @decision(DL-073)
+	Route          routeOptions
 	Token          string
 	AppID          string
 	KeyFile        string
@@ -159,13 +161,26 @@ func newCredentialsAddCmd(env *Env) *cobra.Command {
 			"  spov credentials add github --app-id ID --key-file app.pem\n" +
 			"                                            a GitHub App (local server)\n" +
 			"  spov credentials add forgejo:codeberg.org a Forgejo token\n" +
-			"  spov credentials add OPENROUTER_API_KEY   a model provider key\n\n" +
-			"The secret is prompted for without echo unless --token gives it.",
+			"  spov credentials add OPENROUTER_API_KEY   a model provider key\n" +
+			"  spov credentials add acme-npm --host npm.acme.com --bearer\n" +
+			"                                            a routed credential, set only on its host\n" +
+			"  spov credentials add acme-npm --preset npm --url https://npm.acme.com/ --scope @acme\n" +
+			"                                            the same from a preset, which writes .npmrc\n\n" +
+			"The secret is prompted for without echo unless --token gives it. A routed credential's\n" +
+			"secret comes from the prompt or --secret-file, and is stored unchecked.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// @decision(DL-073)
+			if _, prefixed := routeName(args[0]); prefixed || opts.Route.set() {
+				if opts.app() || opts.NoVerify {
+					return fmt.Errorf("--app-id, --key-file, --installation-id and --no-verify are for a platform, not a routed credential")
+				}
+				return addRoutedCredential(cmd.Context(), env, args[0], opts.Route, opts.Token)
+			}
 			return addCredential(cmd.Context(), env, parseCredentialName(args[0]), opts)
 		},
 	}
+	addRouteFlags(cmd, &opts.Route)
 	cmd.Flags().StringVar(&opts.Token, "token", "", "the token or key; prompted for if omitted")
 	// @decision(DL-041)
 	cmd.Flags().StringVar(&opts.AppID, "app-id", "", "GitHub App id or client id (local server)")
@@ -273,11 +288,24 @@ func runListCredentials(ctx context.Context, env *Env, asJSON bool) error {
 	// left out here.
 	//
 	// @decision(DL-023)
+	// @decision(DL-073)
+	routes, err := listRoutedCredentials(ctx, env)
+	if err != nil {
+		return err
+	}
+	// @decision(DL-074)
+	orgRoutes, err := listOrgRoutedCredentials(ctx, env)
+	if err != nil {
+		return err
+	}
 	if asJSON {
-		return writeJSON(env.Out, credentialsBody{Credentials: orEmpty(creds), Enabled: enabled})
+		return writeJSON(env.Out, credentialsBody{Credentials: orEmpty(creds), Enabled: enabled,
+			RoutedCredentials: orEmpty(routes), OrgRoutedCredentials: orgRoutes})
 	}
 	defer printOpenCodeLine(ctx, env)
 	defer printPreferences(env)
+	defer printRoutedCredentials(env, orgRoutes, "The organisation's routed credentials, which your sessions get too:")
+	defer printRoutedCredentials(env, routes, "Routed credentials:")
 	if !enabled {
 		_, _ = fmt.Fprintln(env.Out, "This server stores no user credentials:"+
 			" it has no SPOV_CREDENTIAL_KEY configured.")
@@ -368,7 +396,8 @@ func openCodeLine(v server.OpenCodeConnectionView) string {
 }
 
 func newCredentialsRemoveCmd(env *Env) *cobra.Command {
-	return &cobra.Command{
+	var org bool
+	cmd := &cobra.Command{
 		Use:   "remove <name>",
 		Short: "Remove a stored credential",
 		Long: "Remove one of your stored credentials, named as `spov credentials` lists it.\n\n" +
@@ -378,9 +407,29 @@ func newCredentialsRemoveCmd(env *Env) *cobra.Command {
 		// @decision(DL-023)
 		ValidArgsFunction: completeCredentials(env),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// @decision(DL-074)
+			if org {
+				return removeOrgRoutedCredential(cmd.Context(), env, args[0])
+			}
+			// A bare name that cannot be a platform is tried as a routed
+			// credential first; route:<name> is only ever one.
+			//
+			// @decision(DL-073)
+			if name, ok := isRoutedName(env, args[0]); ok {
+				removed, err := removeRoutedCredential(cmd.Context(), env, name)
+				if err != nil || removed {
+					return err
+				}
+				if _, prefixed := routeName(args[0]); prefixed {
+					_, _ = fmt.Fprintf(env.Out, "No routed credential named %s %s.\n", name, whereRoutesAre(env))
+					return nil
+				}
+			}
 			return removeCredential(cmd.Context(), env, parseCredentialName(args[0]))
 		},
 	}
+	cmd.Flags().BoolVar(&org, "org", false, "remove the organisation's routed credential of that name (admins, hosted server)")
+	return cmd
 }
 
 // removeCredential removes one credential from where the server reads it.

@@ -26,6 +26,10 @@ type Entry struct {
 	Host   string
 	Path   string
 	Status int
+	// Route names the routed credential the request got, if any.
+	//
+	// @decision(DL-072)
+	Route string `json:",omitempty"`
 }
 
 // Config is what a Proxy needs. Only CA is required.
@@ -54,6 +58,9 @@ type Config struct {
 	Streamed func(r *http.Request) bool
 	// Audit receives one Entry per credentialed request.
 	Audit func(Entry)
+	// RouteName names the routed credential a credentialed request got,
+	// for its Entry. Nil, or "", names none.
+	RouteName func(r *http.Request) string
 	// Dial connects upstream. Nil uses PublicDial.
 	Dial func(ctx context.Context, network, addr string) (net.Conn, error)
 	// UpstreamRoots verifies decrypted upstreams. Nil uses the system
@@ -245,7 +252,11 @@ func (p *Proxy) forward(target string) http.Handler {
 		}
 		sw := &statusWriter{ResponseWriter: w}
 		rp.ServeHTTP(sw, r)
-		p.cfg.Audit(Entry{Method: r.Method, Host: target, Path: r.URL.Path, Status: sw.status()})
+		e := Entry{Method: r.Method, Host: target, Path: r.URL.Path, Status: sw.status()}
+		if p.cfg.RouteName != nil {
+			e.Route = p.cfg.RouteName(r)
+		}
+		p.cfg.Audit(e)
 	})
 }
 

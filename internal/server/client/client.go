@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jimutt/spov/internal/routedcred"
 	"github.com/jimutt/spov/internal/server"
 )
 
@@ -342,6 +343,74 @@ func (c *Client) PutCredential(ctx context.Context, platform, token string) (ser
 // @decision(DL-008)
 func (c *Client) DeleteCredential(ctx context.Context, platform string) error {
 	return c.do(ctx, http.MethodDelete, "me/credentials/"+url.PathEscape(platform), nil, nil)
+}
+
+// ListRoutedCredentials lists the caller's routed credentials, never
+// their secrets.
+//
+// @decision(DL-073)
+func (c *Client) ListRoutedCredentials(ctx context.Context) ([]server.RoutedCredentialView, error) {
+	var out struct {
+		RoutedCredentials []server.RoutedCredentialView `json:"routed_credentials"`
+	}
+	if err := c.do(ctx, http.MethodGet, "me/routed-credentials", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.RoutedCredentials, nil
+}
+
+// PutRoutedCredential stores a routed credential, replacing its route
+// and secret together.
+//
+// @decision(DL-073)
+func (c *Client) PutRoutedCredential(ctx context.Context, r routedcred.Route, secret string) (server.RoutedCredentialView, error) {
+	body := struct {
+		Secret string           `json:"secret"`
+		Route  routedcred.Route `json:"route"`
+	}{Secret: secret, Route: r}
+	var out server.RoutedCredentialView
+	err := c.do(ctx, http.MethodPut, "me/routed-credentials/"+url.PathEscape(r.Name), body, &out)
+	return out, err
+}
+
+// DeleteRoutedCredential removes one of the caller's routed credentials.
+//
+// @decision(DL-073)
+func (c *Client) DeleteRoutedCredential(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "me/routed-credentials/"+url.PathEscape(name), nil, nil)
+}
+
+// ListOrgRoutedCredentials lists the organisation's routed credentials,
+// never their secrets.
+//
+// @decision(DL-074)
+func (c *Client) ListOrgRoutedCredentials(ctx context.Context) ([]server.RoutedCredentialView, error) {
+	var out struct {
+		RoutedCredentials []server.RoutedCredentialView `json:"routed_credentials"`
+	}
+	if err := c.do(ctx, http.MethodGet, "org/routed-credentials", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.RoutedCredentials, nil
+}
+
+// PutOrgRoutedCredential stores one of the organisation's routed
+// credentials; only an admin may.
+//
+// @decision(DL-074)
+func (c *Client) PutOrgRoutedCredential(ctx context.Context, r routedcred.Route, secret string) error {
+	body := struct {
+		Secret string           `json:"secret"`
+		Route  routedcred.Route `json:"route"`
+	}{Secret: secret, Route: r}
+	return c.do(ctx, http.MethodPut, "org/routed-credentials/"+url.PathEscape(r.Name), body, nil)
+}
+
+// DeleteOrgRoutedCredential removes one; only an admin may.
+//
+// @decision(DL-074)
+func (c *Client) DeleteOrgRoutedCredential(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "org/routed-credentials/"+url.PathEscape(name), nil, nil)
 }
 
 // OpenCodeConnection reports the caller's OpenCode Console sign-in.

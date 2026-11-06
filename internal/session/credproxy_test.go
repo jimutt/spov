@@ -12,6 +12,7 @@ import (
 
 	"github.com/jimutt/spov/internal/credproxy"
 	"github.com/jimutt/spov/internal/git"
+	"github.com/jimutt/spov/internal/routedcred"
 	"github.com/jimutt/spov/internal/sandbox"
 )
 
@@ -380,7 +381,7 @@ func TestTheSidecarKnowsAGitLabProjectByPathAndID(t *testing.T) {
 	sel := []git.Selection{{Platform: gl, Repos: []git.Repo{repo}}}
 	tokens := []git.PlatformToken{{Platform: "gl", Host: "gitlab.com", Username: git.GitLabUser, Secret: "glpat-real"}}
 	p, err := buildProxy(context.Background(), func(context.Context) (string, error) { return "img", nil },
-		tokens, sel, nil, sandbox.EgressPolicy{}, time.Now(), nil)
+		tokens, sel, nil, nil, sandbox.EgressPolicy{}, time.Now(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,3 +405,108 @@ type idPlatform struct {
 }
 
 func (p *idPlatform) ProjectIDs(_ context.Context, repos []git.Repo) map[string]string { return p.ids }
+
+// A routed credential reaches the sidecar only. The main container holds
+// a placeholder in the credential's variable, and the CA vouches for the
+// route's hosts.
+//
+// @decision(DL-072)
+func TestAProxiedLaunchKeepsARoutedSecretOutOfTheMainContainer(t *testing.T) {
+	f := newFixture(t)
+	withProxy(f)
+	route := credproxy.Route{Name: "acme-npm", Hosts: []string{"npm.acme.com"}, Scheme: credproxy.SchemeBearer, Secret: "npm_realsecret"}
+	f.opts.Routes = []credproxy.Route{route}
+	f.opts.Egress = sandbox.EgressInstall().WithDomains("extra.example.com")
+	if _, err := f.launcher.Launch(context.Background(), f.opts); err != nil {
+		t.Fatal(err)
+	}
+	spec := f.provider.Created[0]
+	if !slices.Contains(spec.Egress.Domains, "npm.acme.com") || !slices.Contains(spec.Sidecar.Egress.Domains, "npm.acme.com") {
+		t.Errorf("the route's host is not in the egress: %v / %v", spec.Egress.Domains, spec.Sidecar.Egress.Domains)
+	}
+	if spec.Egress.Preset != sandbox.PresetCustom {
+		t.Errorf("the preset became %s", spec.Egress.Preset)
+	}
+	ph := spec.Secrets["SPOV_CREDENTIAL_ACME_NPM"]
+	if ph == "" || strings.Contains(ph, "realsecret") {
+		t.Errorf("the main container's placeholder is %q", ph)
+	}
+	for k, v := range spec.Secrets {
+		if strings.Contains(v, "npm_realsecret") {
+			t.Errorf("the main container's %s holds the secret", k)
+		}
+	}
+	for k, v := range spec.Env {
+		if strings.Contains(v, "npm_realsecret") {
+			t.Errorf("the main container's %s holds the secret", k)
+		}
+	}
+	if cfg := sidecarConfig(t, spec); !reflect.DeepEqual(cfg.Routes, []credproxy.Route{route}) {
+		t.Errorf("the sidecar's routes = %+v", cfg.Routes)
+	}
+	ca, err := credproxy.LoadCA([]byte(spec.Sidecar.Env[credproxy.EnvCACert]), []byte(spec.Sidecar.Secrets[credproxy.EnvCAKey]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ca.Leaf("npm.acme.com"); err != nil {
+		t.Errorf("the CA cannot vouch for the route's host: %v", err)
+	}
+}
+
+// A launcher without the proxy refuses a routed credential before it
+// mints anything or buys a sandbox.
+//
+// @decision(DL-077)
+func TestALaunchWithoutTheProxyRefusesRoutedCredentials(t *testing.T) {
+	f := newFixture(t)
+	f.opts.Routes = []credproxy.Route{{Name: "acme-npm", Hosts: []string{"npm.acme.com"}, Scheme: credproxy.SchemeBearer, Secret: "npm_realsecret"}}
+	if _, err := f.launcher.Launch(context.Background(), f.opts); !errors.Is(err, ErrRoutesNeedTheProxy) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.provider.Created) != 0 || len(f.platform.Requested()) != 0 {
+		t.Error("the refused launch minted a token or created a sandbox")
+	}
+}
+
+// A preset route's client config is written with the route's
+// placeholder, which the main container holds in its variable.
+//
+// @decision(DL-076)
+func TestAPresetsConfigHoldsThePlaceholder(t *testing.T) {
+	f := newFixture(t)
+	withProxy(f)
+	preset, err := routedcred.FromPreset("acme-npm", routedcred.PresetNPM, routedcred.PresetOptions{URL: "https://npm.acme.com/", Scope: "@acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.opts.Routes = []credproxy.Route{preset.WithSecret("npm_realsecret")}
+	f.opts.Presets = []routedcred.Route{preset}
+	if _, err := f.launcher.Launch(context.Background(), f.opts); err != nil {
+		t.Fatal(err)
+	}
+	spec := f.provider.Created[0]
+	ph := spec.Secrets[credproxy.RouteEnvVar("acme-npm")]
+	script := strings.Join(spec.Command, " ")
+	if ph == "" || !strings.Contains(script, "//npm.acme.com/:_authToken="+ph) || strings.Contains(script, "npm_realsecret") {
+		t.Errorf("placeholder %q; script holds the secret or lacks the placeholder", ph)
+	}
+}
+
+// A classic PAT's package hosts join the sidecar's egress and the CA,
+// as its forge's own hosts do.
+//
+// @decision(DL-078)
+func TestAClassicPATsPackageHostsJoinTheEgress(t *testing.T) {
+	gh := git.NewFake()
+	gh.PlatformName, gh.HostName, gh.PlatformKind = "gh", "github.com", git.KindGitHub
+	sel := []git.Selection{{Platform: gh, Repos: []git.Repo{{Owner: "acme", Name: "app", CloneURL: "https://github.com/acme/app.git"}}}}
+	tokens := []git.PlatformToken{{Platform: "gh", Host: "github.com", Username: "alice", Secret: "ghp_real"}}
+	p, err := buildProxy(context.Background(), func(context.Context) (string, error) { return "img", nil },
+		tokens, sel, nil, nil, sandbox.EgressInstall(), time.Now(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.sidecar.Egress.Domains, "npm.pkg.github.com") || !slices.Contains(p.packageHosts, "maven.pkg.github.com") {
+		t.Errorf("egress %v, package hosts %v", p.sidecar.Egress.Domains, p.packageHosts)
+	}
+}

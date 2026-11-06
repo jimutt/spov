@@ -24,6 +24,10 @@ func (p pgSessions) Create(ctx context.Context, sess store.Session) error {
 	if err != nil {
 		return err
 	}
+	routed, err := routedJSON(sess)
+	if err != nil {
+		return err
+	}
 	now := p.s.now()
 	if sess.CreatedAt.IsZero() {
 		sess.CreatedAt = now
@@ -45,6 +49,8 @@ func (p pgSessions) Create(ctx context.Context, sess store.Session) error {
 		StoppedAt:   tsPtr(sess.StoppedAt),
 		Credentials: credentials,
 		Booted:      booted,
+		// @decision(DL-075)
+		RoutedCredentials: routed,
 	}))
 }
 
@@ -148,6 +154,10 @@ func (p pgSessions) Update(ctx context.Context, sess store.Session) error {
 	if err != nil {
 		return err
 	}
+	routed, err := routedJSON(sess)
+	if err != nil {
+		return err
+	}
 	n, err := p.s.q.UpdateSession(ctx, sqlcgen.UpdateSessionParams{
 		ID:          sess.ID,
 		OrgID:       sess.OrgID,
@@ -163,6 +173,8 @@ func (p pgSessions) Update(ctx context.Context, sess store.Session) error {
 		StoppedAt:   tsPtr(sess.StoppedAt),
 		Credentials: credentials,
 		Booted:      booted,
+		// @decision(DL-075)
+		RoutedCredentials: routed,
 	})
 	if err != nil {
 		return mapErr("update session", err)
