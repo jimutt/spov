@@ -1,0 +1,110 @@
+name: release
+
+# A tag makes a draft release: goreleaser's archives for Linux and macOS,
+# checksums.txt signed keylessly with cosign, a build provenance
+# attestation per archive, and the Homebrew cask when the tap's token is
+# set. A person publishes the draft. Once the release check has passed,
+# the server image is built for amd64 and arm64, pushed to ghcr.io,
+# signed by its digest and attested.
+#
+# @decision(DL-079) @decision(DL-081) @decision(DL-082)
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  packages: write
+
+env:
+  GO_VERSION: "1.26"
+  GORELEASER_VERSION: "v2.18.0"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install Bun
+        run: bash scripts/install-bun.sh >> "$GITHUB_PATH"
+      - uses: sigstore/cosign-installer@v3
+      - name: Install goreleaser
+        env:
+          CGO_ENABLED: "0"
+        run: go install "github.com/goreleaser/goreleaser/v2@${GORELEASER_VERSION}"
+
+      # This platform's binary, built as the release builds it, must carry
+      # the web app and the proxy and report the tag's version, or nothing
+      # is released.
+      - name: Release check
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          goreleaser build --single-target --clean --id spov -o "$RUNNER_TEMP/spov"
+          bash scripts/release-check.sh "$RUNNER_TEMP/spov" "$GITHUB_REF_NAME"
+
+      - name: Release (a draft)
+        env:
+          CGO_ENABLED: "0"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: goreleaser release --clean
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*.tar.gz"
+
+  image:
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@v3
+      - name: Tags
+        id: tags
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          tags="$IMAGE:$version"
+          # A prerelease never moves latest; the examples never use it.
+          case "$version" in *-*) ;; *) tags="$tags,$IMAGE:latest" ;; esac
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.tags.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ steps.tags.outputs.date }}
+      - name: Sign the image by its digest
+        run: cosign sign --yes "$IMAGE@${{ steps.push.outputs.digest }}"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: The digest the examples pin
+        run: echo "::notice title=image::$IMAGE:${{ steps.tags.outputs.version }}@${{ steps.push.outputs.digest }}"
