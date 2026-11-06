@@ -239,3 +239,56 @@ func TestARecreatedSidecarFollowsTheRecordedCredentials(t *testing.T) {
 		t.Error("the left-out credential was not noted in the session's log")
 	}
 }
+
+// A server without the proxy refuses, at create, a launch that would
+// attach a routed credential, naming it and the way on; one that
+// attaches none goes on.
+//
+// @decision(DL-077)
+func TestALaunchWithoutTheProxyRefusesRoutedCredentialsAtCreate(t *testing.T) {
+	var src *SealedRoutedCredentials
+	f := newAPIFixtureWith(t, func(d *Deps) {
+		src = &SealedRoutedCredentials{Store: d.Store.Credentials(), Sealer: testSealer(t)}
+		d.RoutedCredentials = src
+	})
+	p := auth.Local()
+	if err := src.Put(context.Background(), p.OrgID, p.UserID, routedcred.Route{Name: "acme-npm",
+		Hosts: []string{"npm.acme.com"}, Scheme: "bearer"}, "npm_realsecret"); err != nil {
+		t.Fatal(err)
+	}
+	resp, body := f.do(http.MethodPost, "/api/v1/sessions", repoReq("alpha"))
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(body), "acme-npm") ||
+		!strings.Contains(string(body), "--no-credentials") || strings.Contains(string(body), "npm_realsecret") {
+		t.Fatalf("POST = %d: %s", resp.StatusCode, body)
+	}
+	if len(f.provider.Created) != 0 {
+		t.Error("a sandbox was bought")
+	}
+	req := repoReq("beta")
+	req.NoCredentials = true
+	if resp, body := f.do(http.MethodPost, "/api/v1/sessions", req); resp.StatusCode/100 != 2 {
+		t.Errorf("a launch attaching none: %d %s", resp.StatusCode, body)
+	}
+}
+
+// The session view names each routed credential the proxy holds, with
+// its hosts and tier, and never its secret.
+//
+// @decision(DL-077)
+func TestTheSessionViewNamesItsRoutedCredentials(t *testing.T) {
+	f, _ := routedLaunchFixture(t)
+	f.id = f.create(repoReq("alpha"))
+	f.events(f.id)
+	resp, body := f.do(http.MethodGet, "/api/v1/sessions/"+f.id, nil)
+	var view SessionView
+	if err := json.Unmarshal(body, &view); err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET = %d: %s", resp.StatusCode, body)
+	}
+	if len(view.RoutedCredentials) != 1 || view.RoutedCredentials[0].Name != "acme-npm" ||
+		view.RoutedCredentials[0].Hosts[0] != "npm.acme.com" || view.RoutedCredentials[0].Tier != "user" {
+		t.Errorf("view = %+v", view.RoutedCredentials)
+	}
+	if strings.Contains(string(body), "secret-acme") {
+		t.Errorf("the view carries a secret: %s", body)
+	}
+}

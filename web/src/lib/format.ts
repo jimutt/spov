@@ -694,3 +694,40 @@ export function verdictSummary(gates: { outcome: string }[]): { mark: Mark; word
   if (!other) return { mark: "done", word: "Passed", open: false };
   return { mark: "done", word: `Passed, ${other} unverified`, open: false };
 }
+
+/** A routed credential's route, as the API carries it. */
+export interface RoutedRoute {
+  hosts: string[];
+  paths?: string[] | null;
+  scheme: string;
+  user?: string;
+  header?: string;
+  preset?: string;
+}
+
+/**
+ * routedCredentialLine writes a routed credential's route out: its hosts,
+ * any path prefixes, and how the secret is sent. Never the secret, which
+ * no view carries.
+ *
+ * @decision(DL-077)
+ */
+export function routedCredentialLine(r: RoutedRoute): string {
+  let where = r.hosts.join(", ");
+  if (r.paths && r.paths.length > 0) where += " " + r.paths.join(", ");
+  const how =
+    r.scheme === "basic" ? `Basic as ${r.user ?? ""}` : r.scheme === "header" ? `in ${r.header ?? "a header"}` : "as a bearer";
+  return `${where}, ${how}`;
+}
+
+/**
+ * routedCredentialTag is the routed credential's kind and whose it is.
+ *
+ * @decision(DL-077)
+ */
+export function routedCredentialTag(tier?: string, preset?: string): string {
+  let tag = preset ? `${preset}, routed` : "routed";
+  if (tier === "org") tag += ", the organisation's";
+  else if (tier === "user") tag += ", your own";
+  return tag;
+}

@@ -1557,6 +1557,24 @@ export interface components {
             /** @description Seed the repository from a local git branch and commit */
             sync?: components["schemas"]["SessionSyncRequest"];
         };
+        SessionRoutedCredentialView: {
+            /** @description The header it is set in */
+            header?: string;
+            hosts: string[] | null;
+            name: string;
+            /** @description The path prefixes it is set on; every path when absent */
+            paths?: string[] | null;
+            preset?: string;
+            /** @enum {string} */
+            scheme: "bearer" | "basic" | "header";
+            /**
+             * @description Whose credential it is: the user's own, or the organisation's
+             * @enum {string}
+             */
+            tier: "user" | "org";
+            /** @description The Basic username */
+            user?: string;
+        };
         SessionSyncRequest: {
             /** @description 40-character hex commit SHA of the local HEAD */
             base_commit: string;
@@ -1611,6 +1629,8 @@ export interface components {
             name: string;
             owner_id: string;
             repos: components["schemas"]["RepoRef"][] | null;
+            /** @description The routed credentials the proxy holds for this session, with their hosts */
+            routed_credentials?: components["schemas"]["SessionRoutedCredentialView"][] | null;
             sandbox: components["schemas"]["SandboxConfigView"];
             sandbox_id?: string;
             /** @enum {string} */

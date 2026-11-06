@@ -158,6 +158,10 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	if err := s.refuseRoutedNames(ctx, p.OrgID, p.UserID, req.Routed); err != nil {
 		return store.Session{}, err
 	}
+	// @decision(DL-077)
+	if err := s.refuseRoutesWithoutProxy(ctx, p.OrgID, p.UserID, req.Routed); err != nil {
+		return store.Session{}, err
+	}
 	// The caller's own limits, checked before anything billable. The
 	// size limits refuse here; the concurrency limit is counted inside
 	// the insert's transaction below, or two creates on different

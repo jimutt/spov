@@ -96,6 +96,10 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	if err := s.refuseRoutedNames(ctx, p.OrgID, p.UserID, sreq.Routed); err != nil {
 		return store.Job{}, err
 	}
+	// @decision(DL-077)
+	if err := s.refuseRoutesWithoutProxy(ctx, p.OrgID, p.UserID, sreq.Routed); err != nil {
+		return store.Job{}, err
+	}
 	// The caller's own limits, checked before anything billable. The
 	// size limits refuse here; the concurrency limit is counted inside
 	// the insert's transaction, since two creates on different replicas

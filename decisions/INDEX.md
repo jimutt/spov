@@ -3,7 +3,7 @@
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
 | DL-078 | A forge token also reads its forge's package registry, for the session's own namespaces | proposed | git | routed-credentials, git, credentials, proxy, packages |
-| DL-077 | A server without the proxy refuses to attach a routed credential, and the session page names each one with its hosts | proposed | server | routed-credentials, credentials, security, web |
+| DL-077 | A server without the proxy refuses to attach a routed credential, and the session page names each one with its hosts | accepted | server | routed-credentials, credentials, security, web |
 | DL-076 | Presets for npm, Maven, NuGet and PyPI fill in a routed credential's scheme and write the client's config, and Java trusts the sandbox's CA | proposed | sandbox | routed-credentials, sandbox, presets, toolchain |
 | DL-075 | Every session gets the routed credentials it can by default, narrowed by the credential, the project file or the launch, with a default of its own for jobs | accepted | server | routed-credentials, credentials, config, jobs |
 | DL-074 | An admin defines the organisation's routed credentials, sealed under the organisation's AAD and audited | proposed | server | routed-credentials, credentials, admin, security |
