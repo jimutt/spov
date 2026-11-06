@@ -47,7 +47,7 @@ func TestIntegrationScenarioSeedUsers(t *testing.T) {
 		}
 	}
 	env := &Env{Out: os.Stdout, Err: os.Stderr, Environ: config.MapEnv{Vars: vars}, Workdir: t.TempDir()}
-	st, closeStore, err := env.openStore(ctx, false)
+	st, closeStore, _, err := env.openStore(ctx, false, config.Defaults(), func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}

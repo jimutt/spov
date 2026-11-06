@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"github.com/jimutt/spov/internal/config"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -83,7 +84,7 @@ func newImageBuildCmd(env *Env) *cobra.Command {
 				return err
 			}
 			warn := func(msg string) { _, _ = fmt.Fprintln(env.Err, "spov serve image build: "+msg) }
-			st, closeStore, err := env.openStore(cmd.Context(), false)
+			st, closeStore, _, err := env.openStore(cmd.Context(), false, config.Config{}, warn)
 			if err != nil {
 				return err
 			}
@@ -183,7 +184,7 @@ func newImagePruneCmd(env *Env) *cobra.Command {
 				return fmt.Errorf("this sandbox provider cannot delete images")
 			}
 			warn := func(msg string) { _, _ = fmt.Fprintln(env.Err, "spov serve image prune: "+msg) }
-			st, closeStore, err := env.openStore(cmd.Context(), false)
+			st, closeStore, _, err := env.openStore(cmd.Context(), false, config.Config{}, warn)
 			if err != nil {
 				return err
 			}

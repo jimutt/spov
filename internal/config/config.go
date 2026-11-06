@@ -58,6 +58,11 @@ type Config struct {
 	//
 	// @decision(DL-086)
 	Snapshots Snapshots `koanf:"snapshots"`
+	// History is how long a local server keeps a stopped session's
+	// history. It means nothing to a hosted server or the CLI.
+	//
+	// @decision(DL-093)
+	History History `koanf:"history"`
 	// Prep configures the control plane's own model call, which
 	// prepares a job's goal before its sandbox exists. Empty means the
 	// provider is detected from the environment, which is what a
@@ -123,6 +128,15 @@ type Snapshots struct {
 	// MaxPerUser caps one user's kept snapshots, oldest pruned first;
 	// 0 is no cap.
 	MaxPerUser int `koanf:"max_per_user" json:"max_per_user" yaml:"max_per_user"`
+}
+
+// History configures a local server's session journal.
+//
+// @decision(DL-093)
+type History struct {
+	// Retention is how long after it stopped a session's history is
+	// kept; 0 keeps it forever.
+	Retention time.Duration `koanf:"retention" json:"retention" yaml:"retention"`
 }
 
 // Server is where the CLI finds its spov server. Empty means none is

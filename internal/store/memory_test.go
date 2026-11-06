@@ -138,3 +138,28 @@ func TestMemoryIndexesFollowARolledBackTransaction(t *testing.T) {
 		t.Errorf("%d conversations after the rollback", len(convs))
 	}
 }
+
+// The contract holds for a memory store that journals every write, and
+// each case's store reopens from its journal without error.
+//
+// @decision(DL-091)
+func TestJournaledMemoryMeetsTheContract(t *testing.T) {
+	storetest.Run(t, func(t *testing.T) store.Store {
+		dir := t.TempDir()
+		m := store.NewMemory()
+		j, err := store.OpenJournal(dir, m, store.JournalOptions{Warn: func(s string) { t.Error(s) }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_ = j.Close()
+			again, err := store.OpenJournal(dir, store.NewMemory(), store.JournalOptions{Warn: func(s string) { t.Error(s) }})
+			if err != nil {
+				t.Errorf("reopen: %v", err)
+				return
+			}
+			_ = again.Close()
+		})
+		return m
+	})
+}

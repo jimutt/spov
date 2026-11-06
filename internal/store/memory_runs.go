@@ -32,6 +32,7 @@ func (s memRuns) Insert(_ context.Context, r Run) error {
 	}
 	s.m.runs[r.SessionID] = append(s.m.runs[r.SessionID], r)
 	sort.Slice(s.m.runs[r.SessionID], func(i, j int) bool { return s.m.runs[r.SessionID][i].N < s.m.runs[r.SessionID][j].N })
+	s.m.emitRow(r.SessionID)
 	return nil
 }
 
@@ -42,6 +43,7 @@ func (s memRuns) Update(_ context.Context, r Run) error {
 		if have.N == r.N && have.OrgID == r.OrgID {
 			r.OwnerID, r.StartedAt = have.OwnerID, have.StartedAt
 			runs[i] = r
+			s.m.emitRow(r.SessionID)
 			return nil
 		}
 	}
@@ -101,5 +103,6 @@ func (s memRuns) Reopen(_ context.Context, orgID, sessionID string) error {
 	if cur.SnapshotState == SnapshotFailed {
 		cur.SnapshotState = SnapshotPending
 	}
+	s.m.emitRow(sessionID)
 	return nil
 }

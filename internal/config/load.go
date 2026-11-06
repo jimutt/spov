@@ -70,6 +70,8 @@ var userOnly = []userOnlyKey{
 	{"platforms", "", ""},
 	// @decision(DL-086)
 	{"snapshots", "", ""},
+	// @decision(DL-093)
+	{"history", "", ""},
 }
 
 type userOnlyKey struct{ key, shown, instead string }

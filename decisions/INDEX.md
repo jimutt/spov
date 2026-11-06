@@ -2,6 +2,9 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-093 | A local server prunes a stopped session's history 30 days after it stopped, configurable, and never while its snapshot is kept | accepted | server | local-history, retention, config |
+| DL-092 | The local journal is a directory per session: session.json rewritten whole, and transcript.jsonl appended record by record | accepted | server | local-history, store, format |
+| DL-091 | A local server keeps its sessions in a journal on disk, with the memory store as its engine | accepted | server | local-history, store, local-mode, snapshot-resume |
 | DL-090 | Resume is offered on a stopped session's page, in its composer, by spov resume and by spov attach, worded for what will come back | accepted | web | snapshot-resume, web, cli, composer, attach |
 | DL-089 | Without a snapshot, a resume clones as at launch and imports each conversation from the store | accepted | server | snapshot-resume, recorder, opencode, store |
 | DL-088 | A resume boots from the newest run's exit snapshot, waiting for one still being taken, and the entrypoint takes up the restored workspace | accepted | opencode | snapshot-resume, entrypoint, sandbox |

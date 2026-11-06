@@ -116,6 +116,9 @@ type apiFixture struct {
 	// adjustDeps, when set, changes the server's deps after they are
 	// wired and before it starts.
 	adjustDeps func(*server.Deps)
+	// closeStore releases the server's store, the local journal's lock
+	// included, before a restart opens it again.
+	closeStore func()
 	t          *testing.T
 	wd         string
 	provider   *sandbox.Fake
@@ -235,10 +238,19 @@ func (f *apiFixture) startServer() {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	f.deps, _, err = f.serverEnv.serverDeps(context.Background(), res.Config, f.provider, f.token, true)
+	if f.closeStore != nil {
+		f.closeStore()
+	}
+	f.deps, f.closeStore, err = f.serverEnv.serverDeps(context.Background(), res.Config, f.provider, f.token, true)
 	if err != nil {
 		f.t.Fatal(err)
 	}
+	f.t.Cleanup(func() {
+		if f.closeStore != nil {
+			f.closeStore()
+			f.closeStore = nil
+		}
+	})
 	// The credential store and verifier, as `spov serve` wires them.
 	//
 	// @decision(DL-042)

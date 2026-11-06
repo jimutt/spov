@@ -69,6 +69,13 @@ type Memory struct {
 	// the callback returns, so a retained view fails instead of racing.
 	inTx bool
 	done bool
+	// sink receives every committed write the local journal keeps, and
+	// pending holds a transaction view's until it commits. Both are nil
+	// unless OpenJournal set a sink.
+	//
+	// @decision(DL-091)
+	sink    func([]change)
+	pending *[]change
 }
 
 // NewMemory returns an empty memory store.
@@ -192,6 +199,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	jobs := cloneMap(m.jobs)
 	runs := cloneRuns(m.runs)
 	var undo []func()
+	var pending []change
 	pos := m.eventPos
 	view := &Memory{Now: m.Now, sessions: m.sessions, mints: m.mints,
 		users: m.users, tokens: m.tokens, deviceCodes: m.deviceCodes,
@@ -199,7 +207,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		orgCredentials: m.orgCredentials, adminEvents: m.adminEvents,
 		conversations: m.conversations, messages: m.messages, events: m.events,
 		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
-		jobs: m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true}
+		jobs: m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending}
 	committed := false
 	defer func() {
 		view.done = true
@@ -208,6 +216,10 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 			m.eventPos = view.eventPos
 			// A slice appended to in the view is the view's own header.
 			m.adminEvents = view.adminEvents
+			// @decision(DL-091)
+			if m.sink != nil && len(pending) > 0 {
+				m.sink(pending)
+			}
 			return
 		}
 		m.sessions, m.mints = sessions, mints
@@ -292,6 +304,7 @@ func (s memSessions) Create(_ context.Context, sess Session) error {
 	sess.GitTokenMintedAt, sess.GitTokenExpiresAt = nil, nil
 	sess.OpenCodeGrant = 0
 	s.m.sessions[sess.ID] = copySession(sess)
+	s.m.emitRow(sess.ID)
 	return nil
 }
 
@@ -375,6 +388,7 @@ func (s memSessions) MarkStopped(_ context.Context, orgID, id string, state Sess
 	if runs := s.m.runs[id]; len(runs) > 0 && runs[len(runs)-1].EndedAt == nil {
 		runs[len(runs)-1].EndedAt = &stopped
 	}
+	s.m.emitRow(id)
 	// @decision(DL-034)
 	delete(s.m.proxyCAs, id)
 	return true, nil
@@ -406,6 +420,7 @@ func (s memSessions) Update(_ context.Context, sess Session) error {
 	// @decision(DL-015)
 	sess.OpenCodeGrant = cur.OpenCodeGrant
 	s.m.sessions[sess.ID] = copySession(sess)
+	s.m.emitRow(sess.ID)
 	return nil
 }
 
@@ -422,6 +437,7 @@ func (s memSessions) SetGitToken(_ context.Context, orgID, id string, minted, ex
 	cur.GitTokenMintedAt, cur.GitTokenExpiresAt = &m, &e
 	cur.UpdatedAt = s.m.now()
 	s.m.sessions[id] = cur
+	s.m.emitRow(id)
 	return nil
 }
 
@@ -470,6 +486,7 @@ func (s memSessions) SetOpenCodeGrant(_ context.Context, orgID, id string, gener
 	cur.OpenCodeGrant = generation
 	cur.UpdatedAt = s.m.now()
 	s.m.sessions[id] = cur
+	s.m.emitRow(id)
 	return nil
 }
 
@@ -513,6 +530,7 @@ func (s memSessions) RequestCancel(_ context.Context, orgID, id string, at time.
 	cur.CancelRequestedAt = &when
 	cur.UpdatedAt = s.m.now()
 	s.m.sessions[id] = cur
+	s.m.emitRow(id)
 	return true, nil
 }
 
@@ -1124,6 +1142,7 @@ func (s memConversations) UpsertConversation(_ context.Context, c Conversation) 
 		old := s.m.conversations[cur.ID]
 		s.m.conversations[cur.ID] = *cur
 		s.m.journal(func() { s.m.conversations[old.ID] = old })
+		s.m.emit(change{session: cur.SessionID, conv: cur})
 		return *cur, nil
 	}
 	if _, ok := s.m.conversations[c.ID]; ok {
@@ -1135,6 +1154,8 @@ func (s memConversations) UpsertConversation(_ context.Context, c Conversation) 
 	c.UpdatedAt = now
 	s.m.conversations[c.ID] = c
 	s.m.journal(func() { delete(s.m.conversations, c.ID) })
+	stored := c
+	s.m.emit(change{session: c.SessionID, conv: &stored})
 	return c, nil
 }
 
@@ -1181,6 +1202,13 @@ func (s memConversations) PutMessages(_ context.Context, msgs []Message) (int, e
 		}
 	}
 	changed := 0
+	var stored []Message
+	// @decision(DL-091)
+	defer func() {
+		if len(stored) > 0 {
+			s.m.emit(change{session: stored[0].SessionID, msgs: stored})
+		}
+	}()
 	for _, msg := range msgs {
 		if cur := s.messageByKey(msg.ConversationID, msg.OpenCodeID); cur != nil {
 			if cur.Role == msg.Role && cur.Text == msg.Text && cur.At.Equal(msg.At) &&
@@ -1192,6 +1220,7 @@ func (s memConversations) PutMessages(_ context.Context, msgs []Message) (int, e
 			cur.Raw = copyBytes(msg.Raw)
 			s.m.messages[cur.ID] = *cur
 			s.m.journal(func() { s.m.messages[old.ID] = old })
+			stored = append(stored, *cur)
 			changed++
 			continue
 		}
@@ -1214,6 +1243,7 @@ func (s memConversations) PutMessages(_ context.Context, msgs []Message) (int, e
 			delete(s.m.messages, msg.ID)
 			delete(s.m.messageKeys, key)
 		})
+		stored = append(stored, msg)
 		changed++
 	}
 	return changed, nil
@@ -1308,6 +1338,10 @@ func (s memConversations) PutEvents(_ context.Context, evs []Event) ([]Event, er
 		s.m.indexEvent(ev)
 		out = append(out, copyEvent(ev))
 	}
+	// @decision(DL-091)
+	if len(out) > 0 {
+		s.m.emit(change{session: out[0].SessionID, evs: out})
+	}
 	return out, nil
 }
 
@@ -1383,6 +1417,7 @@ func (s memConversations) SetSeqOffset(_ context.Context, orgID, conversationID 
 	c.SeqBase, c.SeqAfter = base, after
 	s.m.conversations[conversationID] = c
 	s.m.journal(func() { s.m.conversations[old.ID] = old })
+	s.m.emit(change{session: c.SessionID, conv: &c})
 	return nil
 }
 

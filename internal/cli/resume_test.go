@@ -3,10 +3,13 @@ package cli
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jimutt/spov/internal/config"
 	"github.com/jimutt/spov/internal/server"
 	"github.com/jimutt/spov/internal/server/client"
 	"github.com/jimutt/spov/internal/store"
@@ -172,5 +175,52 @@ func TestWhatCannotBeResumedSaysWhy(t *testing.T) {
 	f := resumeFixture(t)
 	if _, _, err := runWith(t, f.env, "resume", "work", "--yes", "--timeout", "100h"); err == nil || !strings.Contains(err.Error(), "resume work") {
 		t.Errorf("a refused resume: %v", err)
+	}
+}
+
+// A local server keeps its sessions: after a restart the stopped
+// session is still listed and resumes, and its history is on disk in
+// the documented layout.
+//
+// @decision(DL-091) @decision(DL-092)
+func TestALocalServerResumesAfterARestart(t *testing.T) {
+	f := newAPIFixture(t)
+	data := t.TempDir()
+	f.http.Close()
+	f.srv.Close()
+	f.serverEnv.Environ.(config.MapEnv).Vars["XDG_DATA_HOME"] = data
+	f.startServer()
+	f.env.Client = client.New(f.http.URL, f.token)
+	if !f.deps.Persistent {
+		t.Fatal("a local server with a data directory is not persistent")
+	}
+	if _, _, err := runWith(t, f.env, "fly", "--name", "kept", "--keep"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runWith(t, f.env, "stop", "kept"); err != nil {
+		t.Fatal(err)
+	}
+	f.http.Close()
+	f.srv.Close()
+	f.startServer()
+	f.env.Client = client.New(f.http.URL, f.token)
+	if f.state("kept") != store.StateStopped {
+		t.Fatal("the stopped session was forgotten across the restart")
+	}
+	if _, stderr, err := runWith(t, f.env, "resume", "kept", "--yes", "--keep"); err != nil {
+		t.Fatalf("resume after a restart: %v\n%s", err, stderr)
+	}
+	if f.state("kept") != store.StateRunning {
+		t.Error("the resumed session is not running")
+	}
+	dirs, _ := os.ReadDir(filepath.Join(data, "spov", "sessions"))
+	found := false
+	for _, d := range dirs {
+		if _, err := os.Stat(filepath.Join(data, "spov", "sessions", d.Name(), "session.json")); err == nil {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no session.json under %s: %v", data, dirs)
 	}
 }
