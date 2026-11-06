@@ -1,5 +1,6 @@
 // Command spov-proxy runs in a sandbox's sidecar and adds credentials to
-// forge and model provider requests from the main container. It is started with its CA and
+// forge, model provider and routed-credential requests from the main
+// container. It is started with its CA and
 // credentials in its environment; `spov-proxy set-token <platform>`
 // replaces one platform's token with the one on stdin, and
 // `spov-proxy set-key <ENV>` one model provider's key.
@@ -93,7 +94,9 @@ func serve() error {
 		Rewrite:  store.Rewrite,
 		Secrets:  store.Secrets,
 		Streamed: store.Streamed,
-		Audit:    func(e credproxy.Entry) { _ = audit.Encode(e) },
+		// @decision(DL-072)
+		RouteName: store.RouteName,
+		Audit:     func(e credproxy.Entry) { _ = audit.Encode(e) },
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "spov-proxy: "+format+"\n", args...)
 		},

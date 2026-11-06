@@ -221,7 +221,7 @@ func (s *Service) recreateSidecar(ctx context.Context, sess store.Session, h san
 	//
 	// @decision(DL-034)
 	ps, err := session.NewProxySidecar(ctx, func(context.Context) (string, error) { return image, nil },
-		tokens, selections, session.KeyProviders(keys, prep.ProviderAPIs()), egress, s.deps.Now(), s.proxyCAFor(ctx, sess))
+		tokens, selections, session.KeyProviders(keys, prep.ProviderAPIs()), nil, egress, s.deps.Now(), s.proxyCAFor(ctx, sess))
 	if err != nil {
 		return err
 	}
