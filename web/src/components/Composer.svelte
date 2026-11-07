@@ -2,7 +2,11 @@
   // Talk to a running session. POSTs /api/v1/sessions/{ref}/messages.
   // Everything that is a function is in ../lib/steer.ts.
   //
-  // @decision(DL-059) @decision(DL-019) @decision(DL-052)
+  // Below `md` it is a compact bar: a one-line field that grows with what
+  // is typed, a round Send, and one chip that opens the model and the
+  // choice of what follows. The same elements make up the desktop form.
+  //
+  // @decision(DL-059) @decision(DL-019) @decision(DL-052) @decision(DL-106)
   import { tick } from 'svelte';
   import { api, unwrap } from '../lib/api/client';
   import {
@@ -25,6 +29,7 @@
     stop,
     stopOutcome,
   } from '../lib/steer';
+  import Icon from './Icon.svelte';
   import InfoToggle from './InfoToggle.svelte';
   import ModelSwitch from './ModelSwitch.svelte';
   import Problem from './Problem.svelte';
@@ -157,6 +162,24 @@
   const status = $derived(composerStatus(jobState, inFlight, asking));
   const explained = $derived(controlsNote(jobState, stoppable, releasable));
   let controlsOpen = $state(false);
+  // Whether the options a phone folds away are open.
+  //
+  // @decision(DL-106)
+  let optionsOpen = $state(false);
+  const modelShort = $derived(model ? (model.split('#')[0].split('/').pop() ?? model) : '');
+  const chip = $derived(
+    `${modelShort || 'Options'}${choosesAfter && following === 'handover' ? ' · hand over' : ''}`,
+  );
+  // The field grows with its text on a phone, to five lines or so. On a
+  // wider screen it is the reader's to resize.
+  //
+  // @decision(DL-106)
+  $effect(() => {
+    void text;
+    if (!box || window.matchMedia?.('(min-width: 48rem)').matches !== false) return;
+    box.style.height = 'auto';
+    box.style.height = `${Math.min(box.scrollHeight, 128)}px`;
+  });
   let noteOpen = $state(false);
   let resuming = $state(false);
   let resumeFailure = $state<unknown>(undefined);
@@ -214,7 +237,7 @@
   // tab order agree.
   //
   // @decision(DL-056)
-  const pane = 'mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-md';
+  const pane = 'mb-3 max-lg:mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-md';
   const kbd = 'rounded-[3px] border border-b-2 border-rule-2 bg-raised px-1 font-sans text-xs text-soft';
 
   async function submit(event: SubmitEvent) {
@@ -276,7 +299,7 @@
      the taller document. Indented by the transcript's gutter, so it
      sits under the words. @decision(DL-059) @decision(DL-057) -->
 <section
-  class="mt-8 max-w-[var(--log-w)]"
+  class="mt-8 max-w-[var(--log-w)] max-lg:mt-0 max-lg:max-w-none"
   aria-label="Talk to this session"
 >
   {#if failure}
@@ -334,27 +357,49 @@
   {/if}
 
   {#if allowed.can}
-    <form onsubmit={submit} data-testid="composer">
+    <form
+      onsubmit={submit}
+      data-testid="composer"
+      class="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 md:flex md:flex-wrap md:items-center"
+    >
       <label class="sr-only" for="composer-text">Message</label>
       <textarea
         id="composer-text"
         bind:this={box}
         bind:value={text}
         onkeydown={onKeydown}
-        rows="3"
+        rows="1"
+        enterkeyhint="send"
         disabled={sending}
-        class="{fieldBase} resize-y px-3 py-2.5 text-read"
+        class="{fieldBase} resize-none px-3 py-2.5 text-read max-md:max-h-32 max-md:min-h-11 md:min-h-[5.75rem] md:resize-y"
         placeholder="Message this session"
       ></textarea>
 
-      <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
-        <button
-          type="submit"
-          data-testid="composer-send"
-          class={primary}
-          disabled={sending || problem !== ''}>{sending ? 'Sending…' : 'Send'}</button
-        >
+      <button
+        type="submit"
+        data-testid="composer-send"
+        class="{primary} max-md:size-11 max-md:rounded-full max-md:p-0"
+        disabled={sending || problem !== ''}
+        ><Icon name="send" class="size-5 md:hidden" /><span class="max-md:sr-only">{sending ? 'Sending…' : 'Send'}</span></button
+      >
 
+      <button
+        type="button"
+        class="col-span-2 inline-flex min-w-0 cursor-pointer items-center gap-1.5 justify-self-start border-0 bg-transparent p-0 text-sm text-soft focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 md:hidden"
+        aria-expanded={optionsOpen}
+        aria-controls="composer-options"
+        data-testid="composer-options-toggle"
+        onclick={() => (optionsOpen = !optionsOpen)}
+      >
+        <Icon name="sliders" class="size-4 shrink-0" />
+        <span class="truncate">{chip}</span>
+        <Icon name="chevron" class="size-3 shrink-0 transition-transform {optionsOpen ? '-rotate-90' : 'rotate-90'}" />
+      </button>
+
+      <!-- What a phone folds away; on a wider screen the wrapper is not
+           there and its contents lie in the form's own row.
+           @decision(DL-106) -->
+      <div id="composer-options" class="{optionsOpen ? 'flex' : 'hidden'} col-span-2 flex-col gap-3 md:contents">
         <!-- On a running job only: what follows this one message.
              @decision(DL-059) @decision(DL-052) -->
         {#if choosesAfter}
@@ -378,24 +423,24 @@
           <ModelSwitch {ref} current={model} />
         {/if}
 
-        <span class="text-sm text-faint sm:ml-auto"
+        <span class="text-sm text-faint max-md:hidden md:ml-auto"
           ><kbd class={kbd}>Enter</kbd> to send, <kbd class={kbd}>Shift</kbd> + <kbd class={kbd}>Enter</kbd> for a new
           line</span
         >
-      </div>
 
-      <!-- Says when the message is read and what follows it; names
-           Interrupt only while it is on the page.
-           @decision(DL-059) -->
-      <p class="mt-2 mb-0 flex max-w-[68ch] items-center gap-1.5 text-sm text-soft">
-        {SendShort}
-        <span data-testid="composer-note-info"
-          ><InfoToggle label="When the agent reads it" controls="composer-note" bind:open={noteOpen} /></span
-        >
-      </p>
-      {#if noteOpen}
-        <p id="composer-note" class="mt-1 mb-0 max-w-[68ch] text-sm text-soft" data-testid="composer-note">{note}</p>
-      {/if}
+        <!-- Says when the message is read and what follows it; names
+             Interrupt only while it is on the page.
+             @decision(DL-059) -->
+        <p class="m-0 flex max-w-[68ch] items-center gap-1.5 text-sm text-soft md:mt-0 md:w-full">
+          {SendShort}
+          <span data-testid="composer-note-info"
+            ><InfoToggle label="When the agent reads it" controls="composer-note" bind:open={noteOpen} /></span
+          >
+        </p>
+        {#if noteOpen}
+          <p id="composer-note" class="m-0 max-w-[68ch] text-sm text-soft md:w-full" data-testid="composer-note">{note}</p>
+        {/if}
+      </div>
     </form>
   {:else}
     <!-- The reason, not an absent box — the same reasoning DL-013 gives

@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type IconName = 'chevron' | 'down' | 'external' | 'cross' | 'sun' | 'moon' | 'info';
+  export type IconName = 'chevron' | 'down' | 'external' | 'cross' | 'sun' | 'moon' | 'info' | 'menu' | 'back' | 'send' | 'sliders';
 </script>
 
 <script lang="ts">
@@ -35,6 +35,16 @@
   {:else if name === 'info'}
     <circle cx="12" cy="12" r="9" />
     <path d="M12 11v5M12 8h.01" />
+  {:else if name === 'menu'}
+    <path d="M4 7h16M4 12h16M4 17h16" />
+  {:else if name === 'back'}
+    <path d="M15 5l-7 7 7 7" />
+  {:else if name === 'send'}
+    <path d="M12 19V5M5 12l7-7 7 7" />
+  {:else if name === 'sliders'}
+    <path d="M4 7h10M18 7h2M4 17h2M10 17h10" />
+    <circle cx="16" cy="7" r="2" />
+    <circle cx="8" cy="17" r="2" />
   {:else if name === 'moon'}
     <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
   {/if}

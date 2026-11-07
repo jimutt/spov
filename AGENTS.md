@@ -124,6 +124,13 @@ The Modal SDK is pre-1.0 and ships breaking minor releases. Keep its exact pin i
 - Both listings are newest first and paged by an ID cursor (`limit`, `before`; the response's `next` and `total`), default 50 and at most 200 (`server.pageSize`, `pageOf`). The session-state stream sends the newest `limit` sessions plus every live one (`Service.StreamList`), which is what keeps the limit meter exact; older pages are read once through "Show older" (`web/src/lib/paging.ts`) and are not live (DL-012, DL-060).
 - Session-list job badges: `SessionView.job` carries id, kind, state and `partial`, never a report's body. `partial` comes from `partialOf`, which `JobView.Partial` uses too, and `decorationStamp` hashes exactly what the badge carries (`sessionJobView`) (DL-060). A partial success is `succeeded` drawn with the `part` mark and "Succeeded, partly" (`jobMark`, `jobWord`), never a state of its own.
 
+### The phone layout
+
+- Below `md` the header is one bar with a menu; below `lg` the session page has its own bar, its sidebar is a sheet, and its composer is docked to the foot of the screen. The row of the session list is five lines led by the repository (`repoHeadline`), because a session's name says little. From `lg` up the page is as before (DL-106).
+- CSS decides what is drawn and jsdom has none, so the tests assert markup state (`aria-expanded`, the chip's words, where a send scrolls), and only a browser shows the layout. Look at it at 390 px, 768 px and 1280 px before a change to it (DL-106).
+- The sidebar is one element that is a sheet or a sidebar, never two copies, and the composer's options sit in one wrapper that a phone folds away (`md:contents` on a wider screen). A new control goes in the one place (DL-106).
+- A send re-arms the tail latch, and while it is armed any growth of the page is followed (a `ResizeObserver` on `body`), or the page settles short of the end behind the dock (DL-106, DL-057).
+
 ### Starting a job from the browser (`/jobs/new`)
 
 - `/jobs/new` POSTs `/api/v1/jobs`, the same endpoint `spov jobs create` uses. CSRF protection is `BrowserGuard` alone and no token is added (DL-061), so relaxing the guard affects this form.

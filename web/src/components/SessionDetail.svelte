@@ -2,7 +2,7 @@
   // One session: its state, what it was asked for, and its conversation.
   // Reads from the store, not the sandbox.
   //
-  // @decision(DL-058) @decision(DL-018) @decision(DL-057)
+  // @decision(DL-058) @decision(DL-018) @decision(DL-057) @decision(DL-106)
   import { tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { api, unwrap } from '../lib/api/client';
@@ -26,7 +26,9 @@
     jobRunning,
     kindName,
     lifetime,
+    listState,
     money,
+    repoHeadline,
     repoNames,
     sentence,
     sessionMark,
@@ -143,7 +145,10 @@
   // @decision(DL-059)
   let echoes = $state<Echo[]>([]);
   const track: EchoTrack = {
-    open: (e: Echo) => (echoes = [...echoes, e]),
+    open: (e: Echo) => {
+      echoes = [...echoes, e];
+      void followSend();
+    },
     sent: (key: string, id: string) =>
       (echoes = echoes.map((e) => (e.key === key ? { ...e, id, sending: false } : e))),
     failed: (key: string) => (echoes = echoes.filter((e) => e.key !== key)),
@@ -639,6 +644,15 @@
     if (before !== undefined && after !== undefined && after !== before) scroller()?.scrollBy(0, after - before);
     anchoring();
   }
+  // Sending is a request to see the answer: the page returns to the end
+  // and follows again, wherever the reader had scrolled to.
+  //
+  // @decision(DL-106) @decision(DL-057)
+  async function followSend(): Promise<void> {
+    start = undefined;
+    await tick();
+    requestAnimationFrame(toEnd);
+  }
   function toEnd(): void {
     const el = scroller();
     if (!el) return;
@@ -655,6 +669,60 @@
   $effect(() => {
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
+  });
+  // The page also follows growth no event announces: a font arriving, an
+  // image, the dock changing height. Only while the latch is armed, as
+  // with a new block, so a reader up the page is left where they are.
+  //
+  // @decision(DL-106) @decision(DL-057)
+  $effect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(() => {
+      const el = scroller();
+      if (!el) return;
+      const to = tail.onGrow(el);
+      if (to !== undefined) el.scrollTo({ top: to, behavior: 'auto' });
+      measure();
+    });
+    watch.observe(document.body);
+    return () => watch.disconnect();
+  });
+  // Below `lg` the sidebar is a sheet over the page, opened from the
+  // title bar. Escape closes it, focus moves in on open and back to the
+  // button on close, and the page behind does not scroll.
+  //
+  // @decision(DL-106)
+  let infoOpen = $state(false);
+  let infoButton = $state<HTMLElement | null>(null);
+  let infoClose = $state<HTMLElement | null>(null);
+  // The height of the docked composer, for the control that floats above it.
+  let dockH = $state(0);
+  let dock = $state<HTMLElement | null>(null);
+  $effect(() => {
+    if (!dock) return;
+    const el = dock;
+    const read = () => (dockH = Math.round(el.getBoundingClientRect().height));
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(read);
+    watch.observe(el);
+    return () => watch.disconnect();
+  });
+  $effect(() => {
+    if (!infoOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') infoOpen = false;
+    };
+    window.addEventListener('keydown', onKey);
+    const restore = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const frame = requestAnimationFrame(() => infoClose?.focus());
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = restore;
+      cancelAnimationFrame(frame);
+      infoButton?.focus();
+    };
   });
   // The preview's keyboard and focus behaviour, in one effect. Escape
   // is bound on the window so it works without a click inside first;
@@ -710,14 +778,100 @@
 {:else if session.error}
   <Problem error={session.error} what="this session" />
 {:else if s}
-  <div class="grid grid-cols-1 gap-[var(--col-gap)] lg:grid-cols-[minmax(0,1fr)_var(--side-w)]">
+  <!-- Below `lg` the docked composer is the last thing on the page, so
+       the main column's own bottom padding is taken back.
+       @decision(DL-106) -->
+  <div
+    class="grid grid-cols-1 gap-[var(--col-gap)] max-lg:-mb-[var(--main-pad-y)] lg:grid-cols-[minmax(0,1fr)_var(--side-w)]"
+    style:--dock-h="{dockH}px"
+  >
+    <!-- The clock bar, in the page's head from `lg` and in the details
+         sheet below it. @decision(DL-057) @decision(DL-106) -->
+    {#snippet clockStrip(klass: string)}
+      {#if bar}
+        <div class={klass} role="img" aria-label={bar.label}>
+          <div class="relative h-1 bg-sunk">
+            <span
+              class="absolute inset-y-0 left-0 {bar.warn || !bar.now ? 'bg-gold' : 'bg-olive'}"
+              style={`width:${(bar.fraction * 100).toFixed(1)}%`}
+            ></span>
+            {#if bar.now}
+              <span
+                class="absolute -top-1 -bottom-1 w-0.5 -translate-x-1/2 bg-ink"
+                style={`left:${(bar.fraction * 100).toFixed(1)}%`}
+              ></span>
+            {/if}
+          </div>
+          <div class="relative mt-1.5 flex justify-between gap-4 text-sm text-soft tabular-nums" aria-hidden="true">
+            <span>{bar.start}</span>
+            <!-- Hidden near either end, where it would sit on top of
+                 the end captions. -->
+            {#if bar.now && bar.fraction > 0.15 && bar.fraction < 0.75}
+              <span
+                class="absolute -translate-x-1/2 text-ink max-sm:hidden"
+                style={`left:${(bar.fraction * 100).toFixed(1)}%`}>{bar.now}</span
+              >
+            {/if}
+            <span class={bar.warn ? 'font-semibold text-gold-t' : ''}
+              >{bar.endLabel} <b class="font-semibold {bar.warn ? 'text-gold-t' : 'text-ink'}">{bar.endValue}</b></span
+            >
+          </div>
+        </div>
+      {/if}
+    {/snippet}
     <!-- Ordered rather than laid out in source order: below `lg` the
          grid is one column, and a page that opens at the end must not
          open on "Cost so far". @decision(DL-057) -->
     <div class="order-2 min-w-0 lg:order-1">
+      <!-- Below `lg`: one slim bar that stays on screen, with the way back,
+           the title, the state and the button for everything else. The
+           page's own header has scrolled away by then.
+           @decision(DL-106) -->
+      {#if true}
+        {@const st = listState(s)}
+        {@const lead = repoHeadline(s)}
+        <div
+          class="sticky top-0 z-10 -mx-[var(--page-pad-x)] -mt-[var(--main-pad-y)] mb-4 flex items-center gap-1 border-b border-rule bg-raised px-1.5 py-1.5 lg:hidden"
+          data-testid="session-bar"
+        >
+          <a
+            href="/"
+            aria-label="Back to the sessions"
+            class="grid size-10 shrink-0 place-items-center rounded-ctl text-ink no-underline focus-visible:outline-2 focus-visible:outline-olive focus-visible:-outline-offset-2"
+          >
+            <Icon name="back" class="size-5" />
+          </a>
+          <div class="min-w-0 flex-1">
+            <p class="m-0 truncate text-base leading-tight font-semibold">
+              {#if lead}<span class="font-normal text-soft">{lead.owner}</span>{lead.name}{#if lead.more > 0}<span
+                    class="ml-1.5 text-sm font-normal text-soft">+{lead.more}</span
+                  >{/if}{:else}{s.name || s.id}{/if}
+            </p>
+            <p class="m-0 flex min-w-0 items-center gap-x-2 text-sm whitespace-nowrap text-soft">
+              <StateMark mark={st.mark} word={st.word} />
+              {#if st.why}<span class="truncate">{st.why}</span>
+              {:else}<span class="tabular-nums">{duration(age(s, now))}</span>{/if}
+              {#if lead}<span class="min-w-0 truncate">{s.name || s.id}</span>{/if}
+            </p>
+          </div>
+          <button
+            type="button"
+            bind:this={infoButton}
+            class="grid size-10 shrink-0 cursor-pointer place-items-center rounded-ctl border-0 bg-transparent text-ink focus-visible:outline-2 focus-visible:outline-olive focus-visible:-outline-offset-2"
+            aria-label="Session details"
+            aria-expanded={infoOpen}
+            aria-controls="session-details"
+            data-testid="session-details-open"
+            onclick={() => (infoOpen = !infoOpen)}
+          >
+            <Icon name="info" class="size-5" />
+          </button>
+        </div>
+      {/if}
+
       <!-- The title, one facts line, and the clock bar.
            @decision(DL-057) -->
-      <div class="mb-7">
+      <div class="mb-7 max-lg:hidden">
         <h1 class="m-0 mb-1.5 text-xl font-semibold tracking-[-0.01em] [overflow-wrap:anywhere]">
           {s.name || s.id}
         </h1>
@@ -737,36 +891,7 @@
             <span>Sandbox <span class="font-mono text-ink">{s.sandbox_id}</span></span>
           {/if}
         </div>
-        {#if bar}
-          <div class="mt-4 max-w-[72ch]" role="img" aria-label={bar.label}>
-            <div class="relative h-1 bg-sunk">
-              <span
-                class="absolute inset-y-0 left-0 {bar.warn || !bar.now ? 'bg-gold' : 'bg-olive'}"
-                style={`width:${(bar.fraction * 100).toFixed(1)}%`}
-              ></span>
-              {#if bar.now}
-                <span
-                  class="absolute -top-1 -bottom-1 w-0.5 -translate-x-1/2 bg-ink"
-                  style={`left:${(bar.fraction * 100).toFixed(1)}%`}
-                ></span>
-              {/if}
-            </div>
-            <div class="relative mt-1.5 flex justify-between gap-4 text-sm text-soft tabular-nums" aria-hidden="true">
-              <span>{bar.start}</span>
-              <!-- Hidden near either end, where it would sit on top of
-                   the end captions. -->
-              {#if bar.now && bar.fraction > 0.15 && bar.fraction < 0.75}
-                <span
-                  class="absolute -translate-x-1/2 text-ink max-sm:hidden"
-                  style={`left:${(bar.fraction * 100).toFixed(1)}%`}>{bar.now}</span
-                >
-              {/if}
-              <span class={bar.warn ? 'font-semibold text-gold-t' : ''}
-                >{bar.endLabel} <b class="font-semibold {bar.warn ? 'text-gold-t' : 'text-ink'}">{bar.endValue}</b></span
-              >
-            </div>
-          </div>
-        {/if}
+        {@render clockStrip('mt-4 max-w-[72ch]')}
       </div>
 
       {#if s.error}
@@ -1014,6 +1139,16 @@
         <div class="mt-4"><Problem error={messageCancelFailure} what="cancelling that message" /></div>
       {/if}
 
+      <!-- Below `lg` the composer is docked to the foot of the screen, as in
+           any chat, and rides above the keyboard. Its height is published
+           as --dock-h for "Jump to latest". @decision(DL-106) -->
+      <div
+        class={composerShown(s.state, tailEnded) || (s.resume && resumeOffered(s.state, s.resume) && !job)
+          ? 'max-lg:sticky max-lg:bottom-0 max-lg:z-10 max-lg:-mx-[var(--page-pad-x)] max-lg:border-t max-lg:border-rule max-lg:bg-raised max-lg:px-[var(--page-pad-x)] max-lg:pt-2 max-lg:pb-[calc(0.5rem+env(safe-area-inset-bottom))]'
+          : ''}
+        bind:this={dock}
+        data-testid="dock"
+      >
       {#if composerShown(s.state, tailEnded)}
         <Composer
           {ref}
@@ -1030,6 +1165,7 @@
       {:else if s.resume && resumeOffered(s.state, s.resume) && !job}
         <ResumeComposer {ref} resume={s.resume} onResumed={reread} />
       {/if}
+      </div>
     </div>
 
     <!-- Shown whenever the reader is not AT the end, measured fresh —
@@ -1043,7 +1179,7 @@
          around. -->
     {#if !atEnd}
       <div
-        class="pointer-events-none fixed bottom-6 left-1/2 z-10 flex w-full max-w-[var(--page-w)] -translate-x-1/2 px-[var(--page-pad-x)] lg:pr-[calc(var(--side-w)+var(--col-gap)+var(--page-pad-x))]"
+        class="pointer-events-none fixed bottom-[calc(var(--dock-h,0px)+0.75rem)] left-1/2 z-10 lg:bottom-6 flex w-full max-w-[var(--page-w)] -translate-x-1/2 px-[var(--page-pad-x)] lg:pr-[calc(var(--side-w)+var(--col-gap)+var(--page-pad-x))]"
       >
         <!-- Capped at --log-w and centred inside that, matching the
              transcript's own rows — centring on the grid column
@@ -1066,10 +1202,26 @@
          the transcript, and a sticky element never moves within its own
          box — so without it, sticky would do nothing. Groups are set
          apart by space, not rules. @decision(DL-057) -->
+    <!-- Below `lg` it is the sheet the title bar opens, full screen over
+         the page; from `lg` it is the sticky sidebar. One element, so the
+         page holds a single copy of every control in it.
+         @decision(DL-106) -->
     <aside
-      class="order-1 flex flex-col gap-7 text-md lg:order-2 lg:sticky lg:top-[calc(var(--header-h)+var(--main-pad-y))] lg:max-h-[calc(100vh-var(--header-h)-var(--main-pad-y)-1rem)] lg:self-start lg:overflow-y-auto"
+      id="session-details"
+      class="{infoOpen
+        ? 'max-lg:fixed max-lg:inset-0 max-lg:z-30 max-lg:flex max-lg:overflow-y-auto max-lg:bg-paper max-lg:px-4 max-lg:pb-10'
+        : 'hidden'} order-1 flex-col gap-7 text-md lg:order-2 lg:flex lg:sticky lg:top-[calc(var(--header-h)+var(--main-pad-y))] lg:max-h-[calc(100vh-var(--header-h)-var(--main-pad-y)-1rem)] lg:self-start lg:overflow-y-auto"
       aria-label="About this session"
     >
+      <div
+        class="sticky top-0 z-10 -mx-4 -mb-3 flex items-center justify-between gap-3 border-b border-rule bg-raised px-4 py-2 lg:hidden"
+      >
+        <span class="text-base font-semibold">Session details</span>
+        <button type="button" bind:this={infoClose} class={secondary} onclick={() => (infoOpen = false)}>Close</button>
+      </div>
+      {#if bar}
+        <div class="lg:hidden">{@render clockStrip('')}</div>
+      {/if}
       <!-- Repeats the heading: on a long transcript it is far up the
            page, and a scrolled reader loses track of which session
            this is. -->

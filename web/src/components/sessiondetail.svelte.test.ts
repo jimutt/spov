@@ -46,6 +46,7 @@ const stub = vi.hoisted(() => {
   let jobsAnswer = true;
   let credentials: Record<string, unknown>[] | undefined;
   let resume: Record<string, unknown> | undefined;
+  let session: Record<string, unknown> = {};
   let logOpens = 0;
 
   const json = (body: unknown, status = 200) =>
@@ -123,7 +124,7 @@ const stub = vi.hoisted(() => {
       if (!jobsAnswer) return new Promise<Response>(() => {});
       return json({ jobs });
     }
-    if (url.pathname.startsWith("/api/v1/sessions/")) return json({ ...SESSION, state, credentials, resume });
+    if (url.pathname.startsWith("/api/v1/sessions/")) return json({ ...SESSION, ...session, state, credentials, resume });
     return new Response(null, { status: 404 });
   });
   globalThis.fetch = fetched as unknown as typeof globalThis.fetch;
@@ -139,6 +140,7 @@ const stub = vi.hoisted(() => {
     jobReads: () => jobReads,
     refuseDelete: (status: number, problem: Record<string, unknown>) =>
       (deleteAnswer = { status, problem }),
+    setSession: (fields: Record<string, unknown>) => (session = fields),
     reset: () => {
       bodies.splice(0, bodies.length);
       posted.splice(0, posted.length);
@@ -150,6 +152,7 @@ const stub = vi.hoisted(() => {
       jobReads = 0;
       credentials = undefined;
       resume = undefined;
+      session = {};
       logOpens = 0;
     },
     withResume: (r: Record<string, unknown>) => (resume = r),
@@ -771,5 +774,71 @@ describe("resuming a stopped session", () => {
     expect(target.querySelector('[data-testid="resume-session"]')).toBeNull();
     unmount(c);
     target.remove();
+  });
+});
+
+// Below `lg` the sidebar is a sheet opened from a slim title bar, and a
+// sent message always brings the page back to the end. CSS decides what is
+// drawn and jsdom has none, so these assert the state the markup carries
+// and where the page was told to scroll.
+//
+// @decision(DL-106) @decision(DL-057)
+describe("the session page on a phone", () => {
+  it("opens the details from the title bar and closes them with Escape", async () => {
+    const page = await open();
+    const opener = page.control("session-details-open")!;
+    const sheet = page.target.querySelector("#session-details")!;
+    expect(opener.getAttribute("aria-expanded")).toBe("false");
+    expect(sheet.className).not.toContain("max-lg:fixed");
+
+    opener.click();
+    flushSync();
+    expect(opener.getAttribute("aria-expanded")).toBe("true");
+    expect(sheet.className).toContain("max-lg:fixed");
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    flushSync();
+    expect(opener.getAttribute("aria-expanded")).toBe("false");
+    expect(sheet.className).not.toContain("max-lg:fixed");
+    page.done();
+  });
+
+  it("leads the bar with the repository when the session has one", async () => {
+    stub.setSession({ repos: [{ platform: "github", owner: "acme", name: "storefront" }] });
+    const page = await open();
+    const bar = page.control("session-bar")!;
+    expect(bar.textContent).toContain("acme/storefront");
+    expect(bar.textContent).toContain("live");
+    page.done();
+  });
+
+  it("returns to the end when a message is sent from further up the page", async () => {
+    const page = await open();
+    // A page a long way from its end: the latch is released by a move up.
+    let top = 0;
+    const el = document.documentElement;
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => 5000 });
+    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => 700 });
+    Object.defineProperty(el, "scrollTop", { configurable: true, get: () => top });
+    try {
+      top = 3000;
+      window.dispatchEvent(new Event("scroll"));
+      top = 100;
+      window.dispatchEvent(new Event("scroll"));
+      await settle();
+
+      const scrolled = vi.spyOn(Element.prototype, "scrollTo");
+      page.box()!.value = "one more thing";
+      page.box()!.dispatchEvent(new Event("input", { bubbles: true }));
+      flushSync();
+      page.send().click();
+      await settle();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scrolled).toHaveBeenCalledWith({ top: 5000, behavior: "auto" });
+      scrolled.mockRestore();
+    } finally {
+      for (const key of ["scrollHeight", "clientHeight", "scrollTop"]) delete (el as unknown as Record<string, unknown>)[key];
+      page.done();
+    }
   });
 });

@@ -176,6 +176,29 @@ export function repoNames(s: Session): string[] {
   return (s.repos ?? []).map((r) => `${r.owner}/${r.name}`);
 }
 
+/** What a phone's row and title bar lead with. @decision(DL-106) */
+export interface Headline {
+  /** The first repository's namespace, with its trailing slash. */
+  owner: string;
+  /** Its name. */
+  name: string;
+  /** How many more repositories the session holds. */
+  more: number;
+}
+
+/**
+ * repoHeadline is the repository a session is about, which is what tells
+ * one session from another when none has a name worth reading. Null for
+ * a session with no repository, which then leads with its own name.
+ *
+ * @decision(DL-106)
+ */
+export function repoHeadline(s: Session): Headline | null {
+  const repos = s.repos ?? [];
+  if (repos.length === 0) return null;
+  return { owner: `${repos[0].owner}/`, name: repos[0].name, more: repos.length - 1 };
+}
+
 /**
  * speaker is what a transcript calls whoever said this. Lives here so
  * the list and the page cannot disagree on it.

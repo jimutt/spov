@@ -111,6 +111,8 @@ interface Drawn {
   inFlight?: boolean;
   /** Supplied when a test needs to control WHEN the re-read lands. */
   onJobChanged?: () => void | Promise<void>;
+  /** The session's model, which the composer's chip names. */
+  model?: string;
 }
 
 function draw(jobState?: JobState, opts: Drawn = {}) {
@@ -127,6 +129,7 @@ function draw(jobState?: JobState, opts: Drawn = {}) {
       jobState,
       jobId: given ?? undefined,
       inFlight: opts.inFlight ?? false,
+      model: opts.model,
       onEcho: track,
       onJobChanged: changed,
     },
@@ -155,6 +158,8 @@ function draw(jobState?: JobState, opts: Drawn = {}) {
     resumeNote: () => opened("composer-controls-info", "composer-resume-note"),
     note: () => opened("composer-note-info", "composer-note"),
     refusal: () => pick("composer-refusal")?.textContent ?? "",
+    chip: () => pick<HTMLButtonElement>("composer-options-toggle")!,
+    options: () => target.querySelector("#composer-options") as HTMLElement,
     form: () => pick<HTMLFormElement>("composer") as HTMLFormElement,
     done: () => {
       unmount(app);
@@ -680,6 +685,44 @@ describe("resuming a job", () => {
     await settle();
     expect(c.target.querySelector('[role="alert"]')?.textContent).toContain("cannot be resumed");
     expect(c.resume()!.disabled).toBe(false);
+    c.done();
+  });
+});
+
+// Below `md` the model and the choice of what follows are behind one chip.
+// CSS decides what is drawn, and jsdom has none, so these assert the chip's
+// words and the state it toggles.
+//
+// @decision(DL-106) @decision(DL-014) @decision(DL-059)
+describe("the options a phone folds away", () => {
+  it("names the model on the chip and opens the options on a press", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5#high" });
+    expect(c.chip().textContent).toContain("claude-sonnet-4-5");
+    expect(c.chip().textContent).not.toContain("anthropic/");
+    expect(c.chip().getAttribute("aria-expanded")).toBe("false");
+    expect(c.options().className).toContain("hidden");
+
+    c.chip().click();
+    flushSync();
+    expect(c.chip().getAttribute("aria-expanded")).toBe("true");
+    expect(c.options().className).not.toContain("hidden");
+    expect(c.options().contains(c.after())).toBe(true);
+    c.done();
+  });
+
+  it("says on the chip that the next message hands the job over", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5" });
+    expect(c.chip().textContent).not.toContain("hand over");
+    c.after()!.value = "handover";
+    c.after()!.dispatchEvent(new Event("change", { bubbles: true }));
+    flushSync();
+    expect(c.chip().textContent).toContain("hand over");
+    c.done();
+  });
+
+  it("falls back to a plain word when no model is known", () => {
+    const c = draw("running");
+    expect(c.chip().textContent).toContain("Options");
     c.done();
   });
 });

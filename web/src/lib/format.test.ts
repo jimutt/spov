@@ -26,6 +26,7 @@ import {
   lifetime,
   live,
   money,
+  repoHeadline,
   repoNames,
   resources,
   tone,
@@ -192,6 +193,18 @@ describe('summaries', () => {
     expect(resources({ cpu: 2, memory_mib: 4096 })).toBe('2 cpu, 4096 MiB');
     expect(resources({})).toBe('');
     expect(resources(undefined)).toBe('');
+  });
+
+  test('repoHeadline leads with the first repository and counts the rest', () => {
+    const repo = (owner: string, name: string) => ({ platform: 'github', owner, name });
+    expect(repoHeadline(session({ repos: [repo('acme', 'widgets')] }))).toEqual({ owner: 'acme/', name: 'widgets', more: 0 });
+    expect(repoHeadline(session({ repos: [repo('acme', 'widgets'), repo('acme', 'tokens'), repo('x', 'y')] }))).toEqual({
+      owner: 'acme/',
+      name: 'widgets',
+      more: 2,
+    });
+    expect(repoHeadline(session({ repos: [] }))).toBeNull();
+    expect(repoHeadline(session({ repos: null }))).toBeNull();
   });
 
   test('repoNames is owner/name', () => {
