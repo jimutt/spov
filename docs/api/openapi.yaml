@@ -571,7 +571,7 @@ components:
           readOnly: true
           type: string
         conversation:
-          description: OpenCode conversation id; required when the session has more than one
+          description: OpenCode conversation id; omitted, the session's oldest
           type: string
       type: object
     Interrupted:
@@ -1046,7 +1046,7 @@ components:
           readOnly: true
           type: string
         conversation:
-          description: OpenCode conversation id; required when the session has more than one
+          description: OpenCode conversation id; omitted, the session's oldest
           type: string
         model:
           description: The model to switch to, as provider/model
@@ -2164,7 +2164,7 @@ components:
             - handover
           type: string
         conversation:
-          description: OpenCode conversation id; required when the session has more than one
+          description: OpenCode conversation id; omitted, the session's oldest
           type: string
         delivery:
           description: steer (the default) reaches the agent at its next step, once the running tool call has finished; queue waits for the whole turn to end
@@ -4875,12 +4875,12 @@ paths:
           schema:
             description: The message's msg_ id
             type: string
-        - description: OpenCode conversation id; required when the session has more than one
+        - description: OpenCode conversation id; omitted, the session's oldest
           explode: false
           in: query
           name: conversation
           schema:
-            description: OpenCode conversation id; required when the session has more than one
+            description: OpenCode conversation id; omitted, the session's oldest
             type: string
       responses:
         "202":

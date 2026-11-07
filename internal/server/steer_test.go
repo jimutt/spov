@@ -796,22 +796,39 @@ func TestACancelInASessionWithNoConversationIsAConflict(t *testing.T) {
 	}
 }
 
-// With several conversations the caller names one. Choosing would be a
-// guess, and the wrong guess puts a reader's message in front of an
-// agent they were not talking to.
+// With several conversations an unnamed send goes to the oldest: the
+// person's own. Anything later is the agent's own or a race stray, so
+// guessing the oldest is not guessing. A named conversation is still
+// honoured.
 //
-// @decision(DL-019)
-func TestSeveralConversationsMustBeNamed(t *testing.T) {
-	f := newSteerFixture(t, "ses_1", "ses_2")
+// @decision(DL-109)
+func TestSeveralConversationsSteerToTheOldestUnnamed(t *testing.T) {
+	f := newSteerFixture(t)
 	ctx := context.Background()
-	_, err := f.svc.Steer(ctx, f.p, f.sess.ID, SteerRequest{Text: "hello"})
-	if !errors.Is(err, ErrInvalidRequest) {
-		t.Fatalf("err = %v, want an invalid request", err)
+	older := f.svc.deps.Now()
+	for i, id := range []string{"ses_1", "ses_2"} {
+		if _, err := f.svc.deps.Store.Conversations().UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(f.svc.deps.Now()), OrgID: f.sess.OrgID, SessionID: f.sess.ID, OpenCodeID: id,
+			CreatedAt: older.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if n := len(f.calls()); n != 0 {
-		t.Errorf("the sandbox saw %d prompts, want none", n)
+	sent, err := f.svc.Steer(ctx, f.p, f.sess.ID, SteerRequest{Text: "hello"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	sent, err := f.svc.Steer(ctx, f.p, f.sess.ID, SteerRequest{Conversation: "ses_2", Text: "hello"})
+	if sent.Conversation != "ses_1" {
+		t.Errorf("conversation = %q, want ses_1, the oldest", sent.Conversation)
+	}
+	calls := f.calls()
+	if len(calls) != 1 {
+		t.Fatalf("the sandbox saw %d prompts, want 1", len(calls))
+	}
+	if !strings.HasSuffix(calls[0].path, "/api/session/ses_1/prompt") {
+		t.Errorf("path = %q, want the oldest conversation's own prompt endpoint", calls[0].path)
+	}
+	sent, err = f.svc.Steer(ctx, f.p, f.sess.ID, SteerRequest{Conversation: "ses_2", Text: "hello"})
 	if err != nil {
 		t.Fatal(err)
 	}
