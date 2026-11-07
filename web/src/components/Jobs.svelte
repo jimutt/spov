@@ -3,7 +3,11 @@
   // need. A row links to the job's session page; there is no job detail
   // route. Polled, and a store read, so no sandbox is touched.
   //
-  // @decision(DL-060) @decision(DL-057) @decision(DL-018)
+  // Below `md` the page is a single line of limit and Start, a filter row
+  // that does not wrap, and rows of four lines or fewer: the goal, the
+  // state and kind with the time, and how it came out.
+  //
+  // @decision(DL-060) @decision(DL-057) @decision(DL-018) @decision(DL-106)
   import { untrack } from 'svelte';
   import { api, unwrap } from '../lib/api/client';
   import { resource } from '../lib/resource.svelte';
@@ -127,26 +131,34 @@
 
 </script>
 
-<div class="mb-2.5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-  <h1 class={pageTitle}>Jobs</h1>
-  <a class={primary} href="/jobs/new/">Start a job</a>
+<!-- The limit and Start share a line on a phone, whose header already
+     names the page. @decision(DL-106) -->
+<div class="max-md:mb-4 max-md:flex max-md:items-center max-md:justify-between max-md:gap-3">
+  <div class="mb-2.5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 max-md:order-2 max-md:mb-0">
+    <h1 class="{pageTitle} max-md:sr-only">Jobs</h1>
+    <a class={primary} href="/jobs/new/">Start a job</a>
+  </div>
+
+  <!-- The job limit, as the sessions page's summary line draws it.
+       @decision(DL-060) -->
+  <div class="mb-5 text-md text-soft max-md:order-1 max-md:mb-0 max-md:text-sm">
+    {#if inProgress.data}
+      <LimitMeter used={inProgress.data.total} limit={jobLimit} noun="jobs in progress" testid="limit-jobs" />
+    {/if}
+  </div>
 </div>
 
-<!-- The job limit, as the sessions page's summary line draws it.
-     @decision(DL-060) -->
-<div class="mb-5 text-md text-soft">
-  {#if inProgress.data}
-    <LimitMeter used={inProgress.data.total} limit={jobLimit} noun="jobs in progress" testid="limit-jobs" />
-  {/if}
-</div>
-
-<div class="mb-5 flex flex-wrap gap-1.5" role="group" aria-label="Show">
+<div
+  class="mb-5 flex flex-wrap gap-1.5 max-md:-mx-4 max-md:mb-3 max-md:flex-nowrap max-md:overflow-x-auto max-md:px-4 max-md:pb-1"
+  role="group"
+  aria-label="Show"
+>
   {#each FILTERS as f (f.show)}
     <button
       type="button"
       data-testid={`jobs-show-${f.show}`}
       aria-pressed={show === f.show}
-      class="cursor-pointer rounded-ctl border px-3 py-1 text-md focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 {show ===
+      class="cursor-pointer rounded-ctl border px-3 py-1 text-md whitespace-nowrap max-md:shrink-0 focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 {show ===
       f.show
         ? 'border-olive bg-raised font-medium text-ink'
         : 'border-rule-2 text-soft hover:bg-raised hover:text-ink'}"
@@ -186,37 +198,44 @@
       {#each rows as job (job.id)}
         {@const outcome = outcomeOf(job)}
         <div
-          class="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-rule px-2 pt-3.5 pb-4 hover:bg-raised has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-olive md:grid-cols-[124px_minmax(0,1fr)_96px] md:gap-x-5 md:gap-y-0"
+          class="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-rule px-2 pt-3.5 pb-4 max-md:py-3 hover:bg-raised has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-olive md:grid-cols-[124px_minmax(0,1fr)_96px] md:gap-x-5 md:gap-y-0"
           role="row"
           data-testid="jobs-row"
         >
-          <span class="pt-0.5 text-md max-md:col-start-1 max-md:row-start-1" role="cell">
-            <StateMark mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial)} />
+          <span class="pt-0.5 text-md max-md:col-start-1 max-md:row-start-2 max-md:pt-0 max-md:text-sm" role="cell">
+            <StateMark mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial)} /><span
+              class="text-soft before:mx-2 before:content-['·'] md:hidden">{kindName(job.kind)} job</span
+            >
           </span>
-          <div class="min-w-0 max-md:col-span-2 max-md:row-start-2" role="cell">
+          <div class="min-w-0 max-md:contents" role="cell">
             <a
-              class="text-base font-semibold text-ink no-underline after:absolute after:inset-0 focus-visible:outline-none"
+              class="text-base font-semibold text-ink no-underline after:absolute after:inset-0 focus-visible:outline-none max-md:col-span-2 max-md:row-start-1 max-md:line-clamp-2"
               href={`/session/?id=${encodeURIComponent(job.session_id)}`}>{goalLine(job.goal) || job.id}</a
             >
-            <p class="m-0 mt-0.5 text-md text-soft">{kindName(job.kind)} job</p>
+            <p class="m-0 mt-0.5 text-md text-soft max-md:hidden">{kindName(job.kind)} job</p>
             {#if outcome.kind === 'link'}
               <!-- Above the row's own stretched link, so it opens the
                    pull request rather than the session. -->
               <a
-                class="relative z-[1] mt-1 flex max-w-full items-center gap-1 font-mono text-md text-soft hover:text-ink"
+                class="relative z-[1] mt-1 flex max-w-full items-center gap-1 font-mono text-md text-soft hover:text-ink max-md:col-span-2 max-md:row-start-3 max-md:mt-0 max-md:font-sans max-md:text-sm"
                 href={outcome.href}
                 target="_blank"
                 rel="noreferrer noopener"
-                ><span class="truncate">{outcome.text}</span><Icon name="external" class="size-3.5 shrink-0" /></a
+                ><span class="truncate max-md:hidden">{outcome.text}</span><span class="truncate md:hidden">{outcome.short}</span><Icon name="external" class="size-3.5 shrink-0" /></a
               >
             {:else if outcome.kind === 'note'}
-              <p class="m-0 mt-1 line-clamp-2 max-w-[70ch] text-md {outcome.tone === 'fail' ? 'text-rust' : 'text-soft'}">
+              <p
+                class="m-0 mt-1 line-clamp-2 max-w-[70ch] text-md max-md:col-span-2 max-md:row-start-3 max-md:mt-0 max-md:text-sm {outcome.tone ===
+                'fail'
+                  ? 'text-rust'
+                  : 'text-soft'}"
+              >
                 {outcome.text}
               </p>
             {/if}
           </div>
           <span
-            class="pt-0.5 text-right text-md text-soft tabular-nums max-md:col-start-2 max-md:row-start-1"
+            class="pt-0.5 text-right text-md text-soft tabular-nums max-md:col-start-2 max-md:row-start-2 max-md:pt-0 max-md:text-sm"
             role="cell">{duration(jobAge(job, now))}</span
           >
         </div>

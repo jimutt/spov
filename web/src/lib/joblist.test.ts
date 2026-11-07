@@ -5,6 +5,7 @@ import {
   GROUP,
   goalLine,
   jobAge,
+  linkLabel,
   outcomeOf,
   searchFor,
   showFrom,
@@ -58,6 +59,34 @@ describe("the jobs page's filters", () => {
   });
 });
 
+describe("a link's short label", () => {
+  // @decision(DL-106) @decision(DL-051)
+  it("names the repository and the change as its forge writes them", () => {
+    const url = "https://github.com/acme/app/pull/7";
+    expect(linkLabel({ repository: "acme/app", number: 7, forge: "github" }, url)).toBe("acme/app #7");
+    expect(linkLabel({ repository: "grp/sub/app", number: 5, forge: "gitlab" }, "https://gitlab.com/x")).toBe(
+      "grp/sub/app !5",
+    );
+  });
+
+  it("falls back to the address without its scheme when the deliverable does not say", () => {
+    expect(linkLabel({ repository: "acme/app" }, "https://www.forge.example/acme/app/pulls/7")).toBe(
+      "forge.example/acme/app/pulls/7",
+    );
+    expect(linkLabel({}, "http://forge.example/x")).toBe("forge.example/x");
+  });
+
+  it("is what a job's linked outcome carries beside the whole address", () => {
+    const url = "https://github.com/acme/app/pull/7";
+    const j = job({
+      kind: "pr",
+      state: "succeeded",
+      deliverables: [{ kind: "pr", status: "verified", url, repository: "acme/app", number: 7, forge: "github" }],
+    });
+    expect(outcomeOf(j)).toEqual({ kind: "link", href: url, text: url, short: "acme/app #7" });
+  });
+});
+
 describe("a row", () => {
   // @decision(DL-060)
   it("shows the first line of the goal that has anything on it", () => {
@@ -79,7 +108,7 @@ describe("a row", () => {
     });
     expect(
       outcomeOf(job({ kind: "pr", state: "succeeded", deliverables: [pr("verified", url)] })),
-    ).toEqual({ kind: "link", href: url, text: url });
+    ).toEqual({ kind: "link", href: url, text: url, short: url.replace("https://", "") });
     expect(
       outcomeOf(
         job({ kind: "pr", state: "succeeded", deliverables: [pr("verified", url), pr("verified", url)] }),

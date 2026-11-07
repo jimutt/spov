@@ -1,4 +1,4 @@
-import { deliveredSummary, pullRequests } from "./deliverables";
+import { changeRef, deliveredSummary, pullRequests } from "./deliverables";
 import { live, sentence, type Job, type Session } from "./format";
 import type { JobState } from "./steer";
 
@@ -83,9 +83,22 @@ export function goalLine(goal: string): string {
 
 /** One row's outcome line: a link, a note, or nothing. */
 export type Outcome =
-  | { kind: "link"; href: string; text: string }
+  | { kind: "link"; href: string; text: string; short: string }
   | { kind: "note"; text: string; tone: "soft" | "fail" }
   | { kind: "none" };
+
+/**
+ * linkLabel is a change request's address as short as a phone can read:
+ * "acme/app #7", or "acme/app !7" on GitLab, from what the deliverable
+ * says of itself. A deliverable that does not say which falls back to
+ * its address without the scheme.
+ *
+ * @decision(DL-106) @decision(DL-051)
+ */
+export function linkLabel(d: { repository?: string; number?: number; forge?: string }, url: string): string {
+  if (d.repository && d.number) return `${d.repository} ${changeRef(d.forge, d.number)}`;
+  return url.replace(/^https?:\/\/(www\.)?/, "");
+}
 
 /**
  * outcomeOf says how a job came out, or what it is waiting on. One
@@ -99,7 +112,7 @@ export function outcomeOf(j: Job): Outcome {
   const verified = pullRequests(j).filter((d) => d.status === "verified" && /^https?:\/\//.test(d.url ?? ""));
   if (verified.length === 1 && !j.partial) {
     const url = verified[0].url as string;
-    return { kind: "link", href: url, text: url };
+    return { kind: "link", href: url, text: url, short: linkLabel(verified[0], url) };
   }
   const delivered = deliveredSummary(j);
   if (delivered && j.state === "succeeded") {
