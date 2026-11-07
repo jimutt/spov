@@ -3,7 +3,7 @@
   // able to render a signed-out state rather than redirect. It probes
   // /me through `probe` for exactly that reason.
   //
-  // @decision(DL-055) @decision(DL-018) @decision(DL-060)
+  // @decision(DL-055) @decision(DL-018) @decision(DL-060) @decision(DL-106)
   import { ApiError, api, probe, loginURL, unwrap } from '../lib/api/client';
   // Aliased: `Problem` is also the error component imported below.
   import type { Problem as ProblemBody } from '../lib/api/client';
@@ -162,11 +162,13 @@
 {:else if probeError}
   <Problem error={probeError} what="your account" />
 {:else if checked}
-  <div class="mb-2.5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-    <h1 class={pageTitle}>Sessions</h1>
+  <div class="mb-2.5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 max-md:mb-3">
+    <!-- The header's menu button already says where a phone is, so the
+         heading is for a screen reader there. @decision(DL-106) -->
+    <h1 class="{pageTitle} max-md:sr-only">Sessions</h1>
     <!-- The two launch forms' entry points besides the empty state.
          @decision(DL-061) -->
-    <div class="flex flex-wrap gap-2">
+    <div class="flex flex-wrap gap-2 max-md:grid max-md:w-full max-md:grid-cols-2">
       <a class={secondary} href="/jobs/new/">Start a job</a>
       <a class={primary} href="/sessions/new/">Start a session</a>
     </div>
@@ -176,11 +178,11 @@
        limits, then spend, which says "at least" in words. A job's session
        counts as its job, not as a session.
        @decision(DL-060) @decision(DL-009) -->
-  <div class="mb-7 flex flex-wrap items-center gap-x-7 gap-y-1.5 text-md text-soft">
+  <div class="mb-7 flex flex-wrap items-center gap-x-7 gap-y-1.5 text-md text-soft max-md:mb-4 max-md:gap-x-5 max-md:text-sm">
     <LimitMeter used={use.sessions} limit={sessionLimit} noun="sessions" testid="limit-sessions" />
     <LimitMeter used={use.jobs} limit={jobLimit} noun="jobs" testid="limit-jobs" />
     {#if usage.data}
-      <span
+      <span class="max-md:hidden"
         >{since ? `${since}: ` : ''}<b class="font-semibold text-ink tabular-nums">{usage.data.sessions}</b>
         {usage.data.sessions === 1 ? 'session' : 'sessions'},
         <b class="font-semibold text-ink tabular-nums">{usage.data.running_hours}</b> sandbox hours</span

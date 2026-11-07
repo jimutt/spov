@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 
 /**
@@ -111,6 +111,8 @@ interface Drawn {
   inFlight?: boolean;
   /** Supplied when a test needs to control WHEN the re-read lands. */
   onJobChanged?: () => void | Promise<void>;
+  /** The session's model, which the composer's chip names. */
+  model?: string;
 }
 
 function draw(jobState?: JobState, opts: Drawn = {}) {
@@ -127,6 +129,7 @@ function draw(jobState?: JobState, opts: Drawn = {}) {
       jobState,
       jobId: given ?? undefined,
       inFlight: opts.inFlight ?? false,
+      model: opts.model,
       onEcho: track,
       onJobChanged: changed,
     },
@@ -155,6 +158,8 @@ function draw(jobState?: JobState, opts: Drawn = {}) {
     resumeNote: () => opened("composer-controls-info", "composer-resume-note"),
     note: () => opened("composer-note-info", "composer-note"),
     refusal: () => pick("composer-refusal")?.textContent ?? "",
+    chip: () => pick<HTMLButtonElement>("composer-options-toggle")!,
+    options: () => target.querySelector("#composer-options") as HTMLElement,
     form: () => pick<HTMLFormElement>("composer") as HTMLFormElement,
     done: () => {
       unmount(app);
@@ -681,5 +686,107 @@ describe("resuming a job", () => {
     expect(c.target.querySelector('[role="alert"]')?.textContent).toContain("cannot be resumed");
     expect(c.resume()!.disabled).toBe(false);
     c.done();
+  });
+});
+
+// Below `md` the model and the choice of what follows are behind one chip.
+// CSS decides what is drawn, and jsdom has none, so these assert the chip's
+// words and the state it toggles.
+//
+// @decision(DL-106) @decision(DL-014) @decision(DL-059)
+describe("the options a phone folds away", () => {
+  it("names the model on the chip and opens the options on a press", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5#high" });
+    expect(c.chip().textContent).toContain("claude-sonnet-4-5");
+    expect(c.chip().textContent).not.toContain("anthropic/");
+    expect(c.chip().getAttribute("aria-expanded")).toBe("false");
+    expect(c.options().className).toContain("hidden");
+
+    c.chip().click();
+    flushSync();
+    expect(c.chip().getAttribute("aria-expanded")).toBe("true");
+    expect(c.options().className).not.toContain("hidden");
+    expect(c.options().contains(c.after())).toBe(true);
+    c.done();
+  });
+
+  it("says on the chip that the next message hands the job over", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5" });
+    expect(c.chip().textContent).not.toContain("hand over");
+    c.after()!.value = "handover";
+    c.after()!.dispatchEvent(new Event("change", { bubbles: true }));
+    flushSync();
+    expect(c.chip().textContent).toContain("hand over");
+    c.done();
+  });
+
+  it("falls back to a plain word when no model is known", () => {
+    const c = draw("running");
+    expect(c.chip().textContent).toContain("Options");
+    c.done();
+  });
+});
+
+// Enter on a touch screen writes a new line and the button sends. The
+// pointer is what decides, so the stub answers only the coarse query.
+//
+// @decision(DL-106) @decision(DL-059)
+describe("Enter on a touch screen", () => {
+  const real = window.matchMedia;
+  const coarse = (on: boolean) => {
+    window.matchMedia = ((q: string) => ({ matches: on && q.includes("pointer: coarse") })) as typeof window.matchMedia;
+  };
+  afterEach(() => {
+    window.matchMedia = real;
+  });
+
+  function typed(c: ReturnType<typeof draw>, words: string) {
+    c.box()!.value = words;
+    c.box()!.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+  }
+
+  it("leaves Enter to write a new line, and sends from the button", async () => {
+    coarse(true);
+    const c = draw("running");
+    typed(c, "first line");
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    c.box()!.dispatchEvent(enter);
+    await settle();
+    expect(enter.defaultPrevented).toBe(false);
+    expect(stub.bodies()).toHaveLength(0);
+    expect(c.box()!.getAttribute("enterkeyhint")).toBe("enter");
+
+    c.button()!.click();
+    await settle();
+    expect(stub.bodies()).toHaveLength(1);
+    stub.answer();
+    await settle();
+    c.done();
+  });
+
+  it("still sends on Ctrl-Enter, for a tablet with a keyboard", async () => {
+    coarse(true);
+    const c = draw("running");
+    typed(c, "from a keyboard");
+    c.box()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+    await settle();
+    expect(stub.bodies()).toHaveLength(1);
+    stub.answer();
+    await settle();
+    c.done();
+  });
+
+  it("says Enter sends only where Enter does", () => {
+    coarse(false);
+    const keyboard = draw("running");
+    expect(keyboard.target.textContent).toContain("to send");
+    expect(keyboard.box()!.getAttribute("enterkeyhint")).toBe("send");
+    keyboard.done();
+
+    coarse(true);
+    const touch = draw("running");
+    expect(touch.target.textContent).not.toContain("to send");
+    touch.done();
   });
 });

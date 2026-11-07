@@ -12,12 +12,18 @@ import '../styles/global.css';
 import ThemeToggle from '../components/ThemeToggle.svelte';
 import Logo from '../components/Logo.svelte';
 import Identity from '../components/Identity.svelte';
+import Icon from '../components/Icon.svelte';
 
 interface Props {
   title: string;
+  /**
+   * Below `lg` the header scrolls away with the page instead of staying
+   * on screen, for a page that brings its own bar (the session page).
+   */
+  stickyFromLg?: boolean;
 }
 
-const { title } = Astro.props;
+const { title, stickyFromLg = false } = Astro.props;
 
 // The nav's active item is known at build time: these are static pages.
 const here = Astro.url.pathname.replace(/\/+$/, '') || '/';
@@ -29,13 +35,17 @@ const nav = [
   { href: '/tokens/', label: 'Tokens', match: ['/tokens'] },
   { href: '/settings/', label: 'Settings', match: ['/settings'] },
 ];
+const current = nav.find((item) => item.match.some((m) => here === m || here.startsWith(`${m}/`)));
 ---
 
 <!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- resizes-content: an on-screen keyboard shrinks the page rather than
+         covering it, so a bar docked to the bottom rides above the keys.
+         @decision(DL-106) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
     <title>{title}</title>
     <!-- Carries its own colours: a favicon is fetched outside the page
          and cannot inherit currentColor. @decision(DL-056) -->
@@ -64,8 +74,19 @@ const nav = [
          transcript. Needs an opaque background — bg-raised — since the
          transcript scrolls under it.
          @decision(DL-057) -->
+    <!-- Sticky, so the session page can follow the end of a growing
+         transcript. Needs an opaque background — bg-raised — since the
+         transcript scrolls under it. Below `md` it is one bar: the
+         wordmark and a menu button, with the navigation, the account
+         and the theme in the panel the button opens. The same elements
+         are the desktop row, so each is rendered once.
+         @decision(DL-057) @decision(DL-106) -->
     <header
-      class="sticky top-0 z-20 flex flex-wrap items-center gap-x-7 gap-y-2 border-b border-rule bg-raised px-6 py-2.5"
+      class:list={[
+        'group top-0 z-20 flex items-center gap-x-7 border-b border-rule bg-raised px-4 py-1.5 md:px-6 md:py-2.5',
+        stickyFromLg ? 'max-lg:relative lg:sticky' : 'sticky',
+      ]}
+      data-menu="closed"
     >
       <!-- Decorative: the name is right beside it in text. The wordmark
            is the name alone, in the UI face.
@@ -77,28 +98,44 @@ const nav = [
         <Logo size={20} />
         <span>spov</span>
       </a>
-      <nav class="flex flex-wrap gap-x-5 text-base text-soft">
-        {
-          nav.map((item) => {
-            const on = item.match.some((m) => here === m || here.startsWith(`${m}/`));
-            return (
-              <a
-                href={item.href}
-                class:list={[
-                  'border-b-2 pt-1.5 pb-1 no-underline hover:text-ink focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-[3px]',
-                  on ? 'border-olive font-medium text-ink' : 'border-transparent text-soft',
-                ]}
-                aria-current={on ? 'page' : undefined}
-              >
-                {item.label}
-              </a>
-            );
-          })
-        }
-      </nav>
-      <div class="ml-auto flex items-center gap-4">
-        <Identity client:load />
-        <ThemeToggle client:load />
+      <button
+        type="button"
+        class="-mr-2 ml-auto inline-flex cursor-pointer items-center gap-2 rounded-ctl border-0 bg-transparent px-2 py-2 text-base text-ink focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 md:hidden"
+        aria-expanded="false"
+        aria-controls="site-menu"
+        data-menu-button
+      >
+        <span>{current?.label ?? 'Menu'}</span>
+        <Icon name="menu" class="size-5 group-data-[menu=open]:hidden" />
+        <Icon name="cross" class="hidden size-5 group-data-[menu=open]:block" />
+      </button>
+      <div
+        id="site-menu"
+        class="absolute inset-x-0 top-full hidden flex-col gap-1 border-b border-rule bg-raised px-4 pb-3 shadow-sm max-md:group-data-[menu=open]:flex md:contents"
+      >
+        <nav class="flex flex-col text-base text-soft md:flex-row md:flex-wrap md:gap-x-5">
+          {
+            nav.map((item) => {
+              const on = item.match.some((m) => here === m || here.startsWith(`${m}/`));
+              return (
+                <a
+                  href={item.href}
+                  class:list={[
+                    'border-olive py-2.5 no-underline hover:text-ink focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-[3px] max-md:border-l-[3px] max-md:pl-3 md:border-b-2 md:pt-1.5 md:pb-1',
+                    on ? 'font-medium text-ink' : 'border-transparent text-soft',
+                  ]}
+                  aria-current={on ? 'page' : undefined}
+                >
+                  {item.label}
+                </a>
+              );
+            })
+          }
+        </nav>
+        <div class="mt-1 flex items-center justify-between gap-4 border-t border-rule pt-3 md:ml-auto md:mt-0 md:border-0 md:p-0">
+          <Identity client:load />
+          <ThemeToggle client:load />
+        </div>
       </div>
     </header>
     <!-- --main-pad-y rather than a utility class, so a sticky element
@@ -108,6 +145,23 @@ const nav = [
     <main class="mx-auto max-w-[var(--page-w)] px-[var(--page-pad-x)] py-[var(--main-pad-y)]">
       <slot />
     </main>
+    <!-- The menu button of the one-bar header. Closed by Escape, by a
+         press anywhere outside the header, and by following a link,
+         which is a page load. @decision(DL-106) -->
+    <script is:inline>
+      (() => {
+        const header = document.querySelector('header');
+        const button = header && header.querySelector('[data-menu-button]');
+        if (!header || !button) return;
+        const set = (open) => {
+          header.dataset.menu = open ? 'open' : 'closed';
+          button.setAttribute('aria-expanded', String(open));
+        };
+        button.addEventListener('click', () => set(header.dataset.menu !== 'open'));
+        document.addEventListener('keydown', (e) => e.key === 'Escape' && set(false));
+        document.addEventListener('click', (e) => header.contains(e.target) || set(false));
+      })();
+    </script>
     <!-- The header's height, published as --header-h so a sticky
          element below it can clear it. Measured rather than written
          down: the header wraps on a narrow viewport and follows the

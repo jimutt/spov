@@ -87,6 +87,19 @@
   --col-gap: 2.5rem;
 }
 
+/* Below `lg` the page is one column on a screen that is not much wider
+   than the text, so its margins give back some of it. The sticky sidebar
+   that reads --main-pad-y exists only from `lg` up, so this cannot move
+   it.
+
+   @decision(DL-106) */
+@media (width < 64rem) {
+  :root {
+    --main-pad-y: 1rem;
+    --page-pad-x: 1rem;
+  }
+}
+
 /* The dark values, written once and applied by both selectors. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {

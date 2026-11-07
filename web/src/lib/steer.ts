@@ -99,24 +99,43 @@ export function draftProblem(text: string): string {
 }
 
 /**
- * sendsOnEnter reports whether this keystroke is a send: Enter sends,
- * Shift-Enter starts a new line, and the Enter that commits an IME
- * candidate (`isComposing`) is not a send.
+ * sendsOnEnter reports whether this keystroke is a send. With a keyboard
+ * as the main input, Enter sends and Shift-Enter starts a new line. On a
+ * touch screen (`touch`) Enter is a new line, since the on-screen key is
+ * where a person writes one and the button is what sends; Ctrl or
+ * Cmd-Enter still sends, for a tablet with a keyboard. The Enter that
+ * commits an IME candidate (`isComposing`) is never a send.
  *
- * @decision(DL-059) @decision(DL-061)
+ * @decision(DL-059) @decision(DL-061) @decision(DL-106)
  */
-export function sendsOnEnter(e: {
-  key: string;
-  shiftKey?: boolean;
-  isComposing?: boolean;
-  keyCode?: number;
-}): boolean {
+export function sendsOnEnter(
+  e: {
+    key: string;
+    shiftKey?: boolean;
+    ctrlKey?: boolean;
+    metaKey?: boolean;
+    isComposing?: boolean;
+    keyCode?: number;
+  },
+  touch = false,
+): boolean {
   if (e.key !== "Enter") return false;
-  if (e.shiftKey) return false;
   // 229 is the legacy signal for the same thing, still sent by some
   // browsers alongside `isComposing`.
   if (e.isComposing || e.keyCode === 229) return false;
-  return true;
+  if (touch) return Boolean(e.ctrlKey || e.metaKey);
+  return !e.shiftKey;
+}
+
+/**
+ * touchFirst reports whether the main pointer is a finger: a phone, or a
+ * tablet. Decided by the pointer and not by the width of the window, so
+ * a narrow desktop window keeps Enter to send.
+ *
+ * @decision(DL-106)
+ */
+export function touchFirst(): boolean {
+  return typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches === true;
 }
 
 /**
