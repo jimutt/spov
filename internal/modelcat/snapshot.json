@@ -725,18 +725,25 @@
   ],
   "opencode": [
    {
+    "id": "iceman-free",
+    "name": "Iceman Free",
+    "released": "2026-11-06",
+    "context": 262144,
+    "output": 131072
+   },
+   {
+    "id": "inkling-2-small-free",
+    "name": "Inkling 2 Small Free",
+    "released": "2026-11-05",
+    "context": 1048576,
+    "output": 131072
+   },
+   {
     "id": "crouton-alpha-free",
     "name": "Crouton Alpha Free",
     "released": "2026-11-03",
     "context": 1048576,
     "output": 270000
-   },
-   {
-    "id": "pulse-alpha-free",
-    "name": "Pulse Alpha Free",
-    "released": "2026-11-02",
-    "context": 1048576,
-    "output": 131072
    },
    {
     "id": "flint-40b-free",
@@ -1526,6 +1533,20 @@
    }
   ],
   "openrouter": [
+   {
+    "id": "liquid/lfm-3-1.7b",
+    "name": "LFM3-1.7B",
+    "released": "2026-11-06",
+    "context": 262144,
+    "output": 8192
+   },
+   {
+    "id": "liquid/lfm-3-1.7b:free",
+    "name": "LFM3-1.7B (free)",
+    "released": "2026-11-06",
+    "context": 262144,
+    "output": 8192
+   },
    {
     "id": "ricursiveai/ripple-65b-preview",
     "name": "Ripple 65B Preview",
@@ -2854,7 +2875,7 @@
     "name": "MiniMax-M2.5",
     "released": "2026-02-12",
     "context": 204800,
-    "output": 32768
+    "output": 58982
    },
    {
     "id": "z-ai/glm-5",
@@ -3431,6 +3452,13 @@
     "output": 102400
    },
    {
+    "id": "cohere/command-a",
+    "name": "Command A",
+    "released": "2025-03-13",
+    "context": 256000,
+    "output": 8192
+   },
+   {
     "id": "google/gemma-3-12b-it",
     "name": "Gemma 3 12B IT",
     "released": "2025-03-12",
@@ -3450,6 +3478,13 @@
     "released": "2025-02-17",
     "context": 32768,
     "output": 26214
+   },
+   {
+    "id": "cohere/command-r7b-12-2024",
+    "name": "Command R7B",
+    "released": "2024-12-13",
+    "context": 128000,
+    "output": 4000
    },
    {
     "id": "meta-llama/llama-3.3-70b-instruct",
@@ -3759,6 +3794,7 @@
    "nemotron-3-super-free",
    "nemotron-3-ultra-free",
    "north-mini-code-free",
+   "pulse-alpha-free",
    "qwen3-coder",
    "qwen3.6-plus-free",
    "ring-2.6-1t-free",
@@ -3791,5 +3827,5 @@
    "z-ai/glm-4.5"
   ]
  },
- "as_of": "2026-11-06T00:00:00Z"
+ "as_of": "2026-11-07T00:00:00Z"
 }
