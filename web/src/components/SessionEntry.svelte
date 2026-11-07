@@ -1,18 +1,19 @@
 <script lang="ts">
-  // One row of the session list's table: state, session, started,
-  // running for, and cost. The last thing said is the session cell's
-  // caption, answered from the store in one query for the whole page.
+  // One row of the session list's table: state, session, started and
+  // running for. The last thing said is the session cell's caption,
+  // answered from the store in one query for the whole page.
   //
   // The meta line carries the kind and the repositories; requested
   // resources and the sandbox id are on the session page.
   //
   // Below `md` the row is five short lines (repository and time; state;
-  // kind and name; the last words; running time and cost) instead of the
-  // table's columns, and the lifetime bar is left for the page. The
-  // repository leads, because a session's name says little.
+  // kind and name; the last words; running time) instead of the table's
+  // columns, and the lifetime bar is left for the page. The repository
+  // leads, because a session's name says little.
   //
   // @decision(DL-058) @decision(DL-055) @decision(DL-060) @decision(DL-106)
-  import { age, duration, kindName, lifetime, listState, live, money, repoHeadline, repoNames, speaker, when } from '../lib/format';
+  // @decision(DL-107)
+  import { age, duration, kindName, lifetime, listState, live, repoHeadline, repoNames, speaker, when } from '../lib/format';
   import type { Session } from '../lib/format';
   import { resumableLine } from '../lib/resume';
   import StateMark from './StateMark.svelte';
@@ -37,7 +38,7 @@
 </script>
 
 <div
-  class="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-rule px-2 pt-3.5 pb-4 max-md:py-3 hover:bg-raised has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-olive md:grid-cols-[124px_minmax(0,1fr)_120px_132px_84px] md:gap-x-5 md:gap-y-0"
+  class="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-rule px-2 pt-3.5 pb-4 max-md:py-3 hover:bg-raised has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-olive md:grid-cols-[124px_minmax(0,1fr)_120px_132px] md:gap-x-5 md:gap-y-0"
   role="row"
 >
   <span class="pt-0.5 text-md max-md:col-start-1 max-md:row-start-2 max-md:pt-0" role="cell">
@@ -91,11 +92,4 @@
     </div>
     <span class="text-sm {life.warn ? 'font-semibold text-gold-t' : 'text-soft max-md:hidden'} {life.warn ? 'max-md:ml-2' : ''}">{life.note}</span>
   </div>
-
-  <!-- The column header says "at least"; on a phone it is hidden, so
-       the cell says it. @decision(DL-009) @decision(DL-060) -->
-  <span
-    class="pt-0.5 text-right text-md text-ink tabular-nums max-md:col-start-2 max-md:row-start-5 max-md:pt-0 max-md:text-sm"
-    role="cell"><span class="text-soft md:hidden">at least&nbsp;</span>{money(session.estimated_cost)}</span
-  >
 </div>

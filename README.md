@@ -169,7 +169,7 @@ point. Jobs need a server with a database, which the Compose file in
 
 A server with a database also serves a web dashboard, signed in to with
 GitHub, to start, watch and steer sessions and jobs, answer the agent's
-questions, and see what they cost. See
+questions, and see what their sandboxes cost. See
 [The server and the dashboard](docs/server.md).
 
 ## How it works

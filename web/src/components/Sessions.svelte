@@ -10,7 +10,7 @@
   import { sessionsStream } from '../lib/api/live';
   import { resource } from '../lib/resource.svelte';
   import type { Session } from '../lib/format';
-  import { byLiveThenRecent, money } from '../lib/format';
+  import { byLiveThenRecent } from '../lib/format';
   import { limitUse } from '../lib/joblist';
   import { PageSize, appendPage, merged, olderLabel, sessionsCursor } from '../lib/paging';
   import LimitMeter from './LimitMeter.svelte';
@@ -175,9 +175,10 @@
   </div>
 
   <!-- One summary line in place of the metrics row: both concurrency
-       limits, then spend, which says "at least" in words. A job's session
-       counts as its job, not as a session.
-       @decision(DL-060) @decision(DL-009) -->
+       limits, then the month's sessions and sandbox hours. A job's session
+       counts as its job, not as a session. Cost lives on the usage page
+       and beside the sandbox, never as a total here.
+       @decision(DL-060) @decision(DL-107) -->
   <div class="mb-7 flex flex-wrap items-center gap-x-7 gap-y-1.5 text-md text-soft max-md:mb-4 max-md:gap-x-5 max-md:text-sm">
     <LimitMeter used={use.sessions} limit={sessionLimit} noun="sessions" testid="limit-sessions" />
     <LimitMeter used={use.jobs} limit={jobLimit} noun="jobs" testid="limit-jobs" />
@@ -187,9 +188,7 @@
         {usage.data.sessions === 1 ? 'session' : 'sessions'},
         <b class="font-semibold text-ink tabular-nums">{usage.data.running_hours}</b> sandbox hours</span
       >
-      <span>Spend at least <b class="font-semibold text-rust tabular-nums">{money(usage.data.estimated_cost)}</b></span>
     {/if}
-    <a class="{link} text-soft" href="/usage/#how-spend-is-estimated">How spend is estimated</a>
   </div>
 
   {#if streamError}
@@ -207,19 +206,18 @@
       <code class="bg-sunk px-1 font-mono text-md text-ink">spov fly</code> from a terminal.
     </p>
   {:else}
-    <!-- A table: columns let the eye run down one fact. The header says
-         "at least" for every cost below it. @decision(DL-060) -->
+    <!-- A table: columns let the eye run down one fact.
+         @decision(DL-060) @decision(DL-107) -->
     <div class="border-t border-rule" role="table" aria-label="Sessions">
       <div role="rowgroup">
         <div
-          class="grid grid-cols-[124px_minmax(0,1fr)_120px_132px_84px] gap-x-5 border-b border-rule px-2 py-2 text-sm text-soft max-md:sr-only"
+          class="grid grid-cols-[124px_minmax(0,1fr)_120px_132px] gap-x-5 border-b border-rule px-2 py-2 text-sm text-soft max-md:sr-only"
           role="row"
         >
           <span role="columnheader">State</span>
           <span role="columnheader">Session</span>
           <span role="columnheader">Started</span>
           <span role="columnheader">Running for</span>
-          <span class="text-right" role="columnheader">Cost, at least</span>
         </div>
       </div>
       <div role="rowgroup">

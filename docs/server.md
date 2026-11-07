@@ -50,7 +50,7 @@ A server with a database also serves a dashboard, signed in to with GitHub.
 allowlist.
 
 - **Sessions**: every session, live, with its state, its job if it has one,
-  its age and an estimated cost.
+  and its age.
 - **Jobs**: every job, filtered by All, Active, Needs you (blocked or steered)
   and Finished, with each job's outcome.
 - **Start a session** and **Start a job**: from a form each, with a picker of
@@ -65,7 +65,8 @@ allowlist.
     back or reopen a stopped session, **Cancel job** and **End session**. The
     last two act only on a second press;
   - what credentials and environment variables the sandbox was given.
-- **Usage**: sessions, sandbox hours and estimated spend this month.
+- **Usage**: sessions, sandbox hours and estimated sandbox cost this month.
+  Model token cost is marked as not yet tracked.
 - **Tokens**: your CLI tokens, which you can revoke.
 - **Settings**: your stored credentials and OpenCode connection, default
   model, git access, job time limit and git identity. An admin also stores the
