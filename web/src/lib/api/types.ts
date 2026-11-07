@@ -990,7 +990,7 @@ export interface components {
              * @example https://example.com/schemas/InterruptRequest.json
              */
             readonly $schema?: string;
-            /** @description OpenCode conversation id; required when the session has more than one */
+            /** @description OpenCode conversation id; omitted, the session's oldest */
             conversation?: string;
         };
         Interrupted: {
@@ -1221,7 +1221,7 @@ export interface components {
              * @example https://example.com/schemas/ModelSwitch.json
              */
             readonly $schema?: string;
-            /** @description OpenCode conversation id; required when the session has more than one */
+            /** @description OpenCode conversation id; omitted, the session's oldest */
             conversation?: string;
             /** @description The model to switch to, as provider/model */
             model: string;
@@ -1764,7 +1764,7 @@ export interface components {
              * @enum {string}
              */
             after?: "continue" | "handover";
-            /** @description OpenCode conversation id; required when the session has more than one */
+            /** @description OpenCode conversation id; omitted, the session's oldest */
             conversation?: string;
             /**
              * @description steer (the default) reaches the agent at its next step, once the running tool call has finished; queue waits for the whole turn to end
@@ -4820,7 +4820,7 @@ export interface operations {
     "cancel-message": {
         parameters: {
             query?: {
-                /** @description OpenCode conversation id; required when the session has more than one */
+                /** @description OpenCode conversation id; omitted, the session's oldest */
                 conversation?: string;
             };
             header?: never;

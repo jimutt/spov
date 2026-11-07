@@ -45,10 +45,10 @@ var ErrJobNotInterruptible = errors.New("server: this job's turn cannot be inter
 // @decision(DL-053)
 type InterruptRequest struct {
 	// Conversation is resolved as a message's is: against the store's own
-	// rows, and omitted only when the session has exactly one.
+	// rows; omitted, the session's oldest.
 	//
 	// @decision(DL-019)
-	Conversation string `json:"conversation,omitempty" doc:"OpenCode conversation id; required when the session has more than one"`
+	Conversation string `json:"conversation,omitempty" doc:"OpenCode conversation id; omitted, the session's oldest"`
 }
 
 // Interrupted is what the sandbox answered.

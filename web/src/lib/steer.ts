@@ -268,11 +268,11 @@ function sentOnly(state: string | undefined, after: After, known: boolean): stri
 
 /**
  * toSteerRequest builds the body POST /api/v1/sessions/{ref}/messages
- * takes. It names no conversation on purpose: the server resolves an
- * omitted one and refuses a session with several. Delivery and after
+ * takes. It names no conversation on purpose: the server steers an
+ * omitted one into the session's oldest. Delivery and after
  * are always sent, though steer and continue are the server's defaults.
  *
- * @decision(DL-059) @decision(DL-019) @decision(DL-052)
+ * @decision(DL-059) @decision(DL-019) @decision(DL-052) @decision(DL-109)
  */
 export function toSteerRequest(text: string, delivery: Delivery, id: string, after: After = "continue"): SteerRequest {
   return { text: text.trim(), id, delivery, after };
