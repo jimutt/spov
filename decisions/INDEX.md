@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-104 | spov resume syncs a synced session back on exit, and keeps it running outside its checkout | proposed | cli | sync, resume |
 | DL-099 | The README is for a first-time user; building from source lives in docs/development.md | accepted | cli | docs, onboarding, distribution |
 | DL-098 | A transcript resume of a synced session is seeded from a bundle the CLI sends, else from the default branch | accepted | server | sync, resume |
 | DL-097 | A user environment variable may not set what spov itself sets or relies on, and is bounded | accepted | sandbox | sandbox-env, sandbox, security |
