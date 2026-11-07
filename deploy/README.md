@@ -67,6 +67,18 @@ Register the OAuth app on GitHub with the callback
 `$SPOV_PUBLIC_URL/oauth/github/callback`. A staging deployment needs its
 own app, since the callback is part of the registration.
 
+The app needs no configuration on GitHub's side: spov requests
+`read:user` and `user:email` itself on every login
+(`internal/auth/github.go`), and GitHub shows that consent screen to the
+user. `user:email` is required rather than convenient — a private address
+is only in `/user/emails`, and the login identity is the address that is
+both primary and verified there. The device flow (`spov login`) is spov's
+own authorization server (`/device/code`, `/device/token`, approval at
+`/device`); GitHub is never a party to it, so there is nothing
+device-related to enable on GitHub.
+
+@decision(DL-105)
+
 ### The allowlist
 
 **The allowlist lives in the database**, and is managed through the API.
@@ -209,6 +221,22 @@ org tier uses its credentials for every session.
 | `SPOV_GITHUB_APP_ID`, `SPOV_GITHUB_APP_PRIVATE_KEY` | The org tier for GitHub — one App for everyone (DL-041). An admin can store it in Settings instead, sealed in the database; when these are set they win and Settings only shows it. See [GitHub access](../docs/github-access.md). |
 | `SPOV_PLATFORM_TOKEN_<NAME>` | The org tier for one configured platform, named after it: a platform called `codefloe` reads `SPOV_PLATFORM_TOKEN_CODEFLOE`. Non-alphanumerics become `_`. |
 
+### One person, no organisation credential
+
+A single-operator deployment needs no org tier at all: configure OAuth,
+log in, and store a personal token in the dashboard's Settings or with
+`spov credentials add github`. Launches use your own credential first;
+the deployment tier is only a fallback, and omitting it is a supported
+shape rather than a missing step. `SPOV_CREDENTIAL_KEY` is still worth
+setting: without it the server stores no user credentials at all.
+
+An org token variable attaches to a platform in the server's user file
+([The server's user file](#the-servers-user-file)): a variable naming no
+declared platform is ignored. Declare the platform before setting the
+variable.
+
+@decision(DL-105)
+
 Each key seals under a version derived from the key itself, so a key
 always opens what it sealed and the order the two variables are set in
 does not matter.
@@ -255,6 +283,34 @@ later decision.
 organisation's credential needs `SPOV_GIT_ALLOW_ALL` for `all`), how to move the
 App from the environment into Settings, and what replacing or removing it does
 to running sessions.
+
+## The server's user file
+
+`spov serve` reads its user file and the environment only, never a
+`.spov.yaml`. The environment carries secrets and the visible origin;
+everything else server-wide lives in the user file:
+`platforms` (which the org-tier token variables attach to),
+`git.allow_all`, `sandbox` defaults, `quotas`, and `prep`. See
+[`docs/configuration.md`](../docs/configuration.md) for every key; no key
+in the file takes a secret.
+
+The file ships with the deployment files and every template mounts it,
+so there is nothing to provide from outside — fill in the account and
+deploy:
+
+- **Kamal and Compose** mount `deploy/server-config.yaml` at
+  `/home/nonroot/.config/spov/config.yaml` in the container
+  (`$XDG_CONFIG_HOME/spov/config.yaml`).
+- **Kubernetes** embeds the same content in the `spov-server-config`
+  ConfigMap (`deploy/k8s/server-config.yaml`), mounted at the same path.
+  The manifests are standalone plain YAML, so the two copies must be kept
+  in step.
+
+Without a declared platform the matching org token variable does
+nothing, and launches cannot name that platform — including launches on
+a user's own stored credential.
+
+@decision(DL-105)
 
 ## Quotas
 
@@ -520,9 +576,32 @@ root with `deploy/Dockerfile`. Fill in the registry, server and host, and
 put secrets in `deploy/kamal/.kamal/secrets`, which is gitignored and kept
 out of the image's build context.
 
+Place the server's user file on the host before the first deploy, next to
+the allowlist seed — Kamal does not sync relative volume sources, and the
+remote docker resolves them against the SSH session's working directory
+instead of the repository:
+
+```sh
+scp deploy/server-config.yaml <user>@<host>:/etc/spov/server-config.yaml
+```
+
+To run a published release instead of building, pull it and name its tag —
+nothing else in the config changes, and the builder section is unused:
+
+```sh
+kamal deploy -c deploy/kamal/config/deploy.yml --skip-push --version 0.2.1
+```
+
+Images carry the `service=spov` label Kamal inspects from v0.2.1; older
+tags are refused with Kamal's own "missing the 'service' label" error.
+`:latest` is available but a version tag is reproducible, so prefer it.
+
+@decision(DL-105)
+
 ## Kubernetes
 
 `deploy/k8s/` is plain YAML: a Deployment with the three probes, a
 Service, a migrate Job to run before rolling the Deployment, a ConfigMap
-for the allowlist seed, and a Secret template. Pin the image by digest. Helm is not adopted until
+for the allowlist seed, a ConfigMap for the server's user file, and a
+Secret template. Pin the image by digest. Helm is not adopted until
 someone needs it.

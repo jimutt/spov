@@ -67,6 +67,36 @@ env:
 # @decision(DL-007)
 volumes:
   - "/etc/spov:/etc/spov:ro"
+  # The server's own user file, shipped as deploy/server-config.yaml:
+  # platforms, git.allow_all, sandbox defaults. Fill in the account
+  # there, place it on the host (see deploy/README.md), and keep this
+  # absolute: Kamal passes relative host paths through to the remote
+  # docker, which resolves them against the SSH session's working
+  # directory instead. Without a declared platform the matching org
+  # token variable does nothing.
+  #
+  # @decision(DL-105)
+  - "/etc/spov/server-config.yaml:/home/nonroot/.config/spov/config.yaml:ro"
+
+# A Postgres the app can reach, for a single host with no managed
+# database. Uncomment, generate POSTGRES_PASSWORD, set SPOV_DATABASE_URL
+# to postgres://spov:<password>@spov-postgres:5432/spov, and give the
+# port a free loopback number of its own.
+#
+# @decision(DL-105)
+# accessories:
+#   postgres:
+#     image: postgres:18
+#     host: <your-server-ip>
+#     port: "127.0.0.1:5637:5432"
+#     env:
+#       clear:
+#         POSTGRES_DB: spov
+#         POSTGRES_USER: spov
+#       secret:
+#         - POSTGRES_PASSWORD
+#     directories:
+#       - spov-postgres-data:/var/lib/postgresql
 
 # Below Kubernetes' 30s default and above the server's 20s budget, so
 # the process finishes its own drain rather than being killed.

@@ -1,0 +1,33 @@
+# The server's own user file, mounted at the path the server reads
+# ($XDG_CONFIG_HOME/spov/config.yaml, /home/nonroot/.config/spov/config.yaml
+# in the image). It mirrors deploy/server-config.yaml, which Kamal and
+# Compose mount directly; manifests here are standalone plain YAML, so
+# the content is repeated and the two must be kept in step.
+#
+# Fill in the account, then apply. An organisation token variable
+# (SPOV_PLATFORM_TOKEN_<NAME>) attaches to the platform of that name
+# below — a variable naming no declared platform is ignored.
+#
+# @decision(DL-105)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spov-server-config
+data:
+  config.yaml: |
+    version: 1
+
+    platforms:
+      - name: github
+        kind: github
+        # base_url defaults to https://github.com; set it for GHE.
+        account: <your-github-account>   # the user the org PAT belongs to, or the org a GitHub App is installed on
+
+    # Single operator: the deployment's own credential may serve `all` git
+    # access, so jobs and browser launches are never needlessly narrowed.
+    # git:
+    #   allow_all: true
+
+    # Keep sandboxes near the deployment; broad (us, eu, ap) or narrow (eu-west, ...).
+    # sandbox:
+    #   regions: [eu]

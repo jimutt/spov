@@ -110,6 +110,13 @@ services:
       #
       # @decision(DL-007)
       - "${SPOV_ALLOWLIST_SOURCE:-./allowlist.example}:/etc/spov/allowlist:ro"
+      # The server's own user file, shipped as deploy/server-config.yaml
+      # (platforms, git.allow_all, sandbox defaults). Fill in the
+      # account there; without a declared platform the matching org
+      # token variable does nothing (see deploy/README.md).
+      #
+      # @decision(DL-105)
+      - ./server-config.yaml:/home/nonroot/.config/spov/config.yaml:ro
     # No healthcheck: the image is distroless, so it has no shell, no
     # curl and no wget, and the binary has no self-probe subcommand. A
     # `/spov version` check would prove only that the file is

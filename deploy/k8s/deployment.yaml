@@ -37,6 +37,13 @@ spec:
             - name: allowlist
               mountPath: /etc/spov
               readOnly: true
+            # The server's own user file (platforms, git.allow_all,
+            # sandbox defaults); see the spov-server-config ConfigMap.
+            #
+            # @decision(DL-105)
+            - name: server-config
+              mountPath: /home/nonroot/.config/spov
+              readOnly: true
           # Liveness never touches Postgres: a database blip would
           # otherwise restart every replica at once.
           livenessProbe:
@@ -60,6 +67,8 @@ spec:
       volumes:
         - name: allowlist
           configMap: { name: spov-allowlist }
+        - name: server-config
+          configMap: { name: spov-server-config }
 ---
 apiVersion: v1
 kind: Service
