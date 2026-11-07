@@ -111,6 +111,42 @@ func TestAgentsMarkdownCarriesNoCredential(t *testing.T) {
 	}
 }
 
+// A refused forge command is reported, not answered with a login or a
+// request for a token. The guide says so for every CLI, and claims
+// nothing about where a credential is held, which a sandbox without the
+// proxy differs on.
+//
+// @decision(DL-108)
+func TestTheGuideSaysARefusedForgeCommandIsNotAnExpiredToken(t *testing.T) {
+	md := AgentsMarkdown([]WorkspaceRepo{
+		{Slug: "acme/api", Dir: "api", Platform: "gh", Host: "github.com", CLI: CLIGh},
+	}, "")
+	flat := strings.Join(strings.Fields(md), " ")
+	for _, want := range []string{
+		"## When a forge command is refused",
+		"401, 403 or 404", "Do not run `gh auth login`", "do not ask for a token",
+		"exact command and its exact error message",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("guide lacks %q:\n%s", want, md)
+		}
+	}
+	// What is held where, and what is renewed or attached, differs by
+	// forge, token kind and whether the sandbox has the proxy.
+	for _, claim := range []string{"sidecar", "proxy", "outside this sandbox", "placeholder", "renew", "attach"} {
+		if strings.Contains(strings.ToLower(md), claim) {
+			t.Errorf("guide says how a credential is held or kept (%q):\n%s", claim, md)
+		}
+	}
+	section := strings.Index(md, "## When a forge command is refused")
+	if section < strings.Index(md, "## Opening pull requests") || section > strings.Index(md, "## Scratchpad") {
+		t.Error("the section is not between opening pull requests and the scratchpad")
+	}
+	if none := AgentsMarkdown(nil, ""); strings.Contains(none, "forge command is refused") {
+		t.Errorf("a workspace with no repository is told about forge commands:\n%s", none)
+	}
+}
+
 func TestCLIForKind(t *testing.T) {
 	tests := []struct {
 		kind string

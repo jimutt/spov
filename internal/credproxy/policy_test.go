@@ -127,6 +127,107 @@ func TestAGitHubPATIsNarrowedExceptOnGraphQL(t *testing.T) {
 	})
 }
 
+// A GitHub PAT is also given its credential on read-only Actions,
+// releases and search, so gh run, gh workflow, gh release and gh search
+// are not anonymous, and still on none of the writes, the secrets or
+// another repository's.
+//
+// @decision(DL-107)
+func TestAGitHubPATGetsReadOnlyActionsReleasesAndSearch(t *testing.T) {
+	pat := Platform{Name: "gh", Kind: KindGitHub, Host: "github.com", User: "u", Token: "github_pat_x",
+		Repos: []string{"acme/app"}}
+	checkPolicy(t, pat, []policyCase{
+		{"GET", "https://api.github.com/repos/acme/app/actions/runs?per_page=20", true},
+		{"GET", "https://api.github.com/repos/acme/app/actions/runs/7", true},
+		{"GET", "https://api.github.com/repos/acme/app/actions/runs/7/jobs", true},
+		{"GET", "https://api.github.com/repos/acme/app/actions/runs/7/logs", true},
+		{"HEAD", "https://api.github.com/repos/acme/app/actions/runs/7/logs", true},
+		{"GET", "https://api.github.com/repos/acme/app/actions/jobs/9/logs", true},
+		{"GET", "https://api.github.com/repos/acme/app/actions/workflows", true},
+		{"GET", "https://api.github.com/repos/acme/app/actions/workflows/3/runs", true},
+		{"GET", "https://api.github.com/repos/acme/app/actions/artifacts", true},
+		{"GET", "https://api.github.com/repos/acme/app/actions/runs/7/artifacts", true},
+		{"GET", "https://api.github.com/repos/acme/app/releases", true},
+		{"GET", "https://api.github.com/repos/acme/app/releases/tags/v1", true},
+		{"GET", "https://api.github.com/repos/acme/app/releases/assets/5", true},
+		{"GET", "https://api.github.com/search/issues?q=x", true},
+		{"GET", "https://api.github.com/search/code?q=x", true},
+		// Writes are refused: a rerun, a cancel, a dispatch, a release.
+		{"POST", "https://api.github.com/repos/acme/app/actions/runs/7/rerun", false},
+		{"POST", "https://api.github.com/repos/acme/app/actions/runs/7/cancel", false},
+		{"POST", "https://api.github.com/repos/acme/app/actions/workflows/3/dispatches", false},
+		{"DELETE", "https://api.github.com/repos/acme/app/actions/runs/7", false},
+		{"POST", "https://api.github.com/repos/acme/app/releases", false},
+		{"DELETE", "https://api.github.com/repos/acme/app/releases/1", false},
+		{"POST", "https://api.github.com/search/issues", false},
+		// The rest of Actions stays refused by absence.
+		{"GET", "https://api.github.com/repos/acme/app/actions/secrets", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions/variables", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions/runners", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions/permissions", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions/oidc/customization/sub", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions/caches", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions", false},
+		// Only the session's repositories, and no deeper search path.
+		{"GET", "https://api.github.com/repos/acme/other/actions/runs", false},
+		{"GET", "https://api.github.com/repos/acme/other/releases", false},
+		{"GET", "https://api.github.com/search", false},
+		{"GET", "https://api.github.com/search/issues/extra", false},
+		{"GET", "https://uploads.github.com/repos/acme/app/releases/1/assets", false},
+		// The path is checked by whole segments, after cleaning.
+		{"GET", "https://api.github.com/repos/acme/app/actions/runs/../secrets", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions/runs/%2e%2e/secrets", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions%2Fsecrets", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions/runs/", false},
+		{"GET", "https://api.github.com/repos/acme/app/releases//1", false},
+		{"GET", "https://api.github.com/search/issues/", false},
+		{"GET", "https://api.github.com/repos/acme/app/actionsx/runs", false},
+		{"GET", "https://api.github.com/repos/acme/app/actions/runsx", false},
+		{"GET", "https://api.github.com/repos/acme/app/releasesx", false},
+		{"HEAD", "https://api.github.com/search/issues?q=x", true},
+		{"GET", "https://github.com/search/issues", false},
+		{"GET", "https://github.com/acme/app/actions/runs", false},
+	})
+	ghe := Platform{Name: "ghe", Kind: KindGitHub, Host: "ghe.example.com", User: "u", Token: "ghp_x",
+		Repos: []string{"acme/app"}}
+	checkPolicy(t, ghe, []policyCase{
+		{"GET", "https://ghe.example.com/api/v3/repos/acme/app/actions/runs", true},
+		{"GET", "https://ghe.example.com/api/v3/repos/acme/app/releases", true},
+		{"GET", "https://ghe.example.com/api/v3/search/issues?q=x", true},
+		{"POST", "https://ghe.example.com/api/v3/repos/acme/app/actions/runs/1/rerun", false},
+		{"GET", "https://ghe.example.com/api/v3/repos/acme/app/actions/secrets", false},
+		{"GET", "https://ghe.example.com/api/v3/repos/acme/other/actions/runs", false},
+		{"GET", "https://ghe.example.com/repos/acme/app/actions/runs", false},
+		{"GET", "https://ghe.example.com/search/issues", false},
+	})
+	// Under git access all, any repository's Actions are read, and
+	// nothing else widens.
+	all := pat
+	all.AllRepos = true
+	checkPolicy(t, all, []policyCase{
+		{"GET", "https://api.github.com/repos/acme/other/actions/runs", true},
+		{"GET", "https://api.github.com/repos/acme/other/actions/secrets", false},
+		{"POST", "https://api.github.com/repos/acme/other/actions/runs/7/rerun", false},
+	})
+}
+
+// Forgejo and Gitea have their own Actions API and get none of the
+// GitHub reads.
+//
+// @decision(DL-107)
+func TestForgejoAndGiteaGetNoneOfTheGitHubActionsReads(t *testing.T) {
+	for _, kind := range []string{KindForgejo, KindGitea} {
+		p := Platform{Name: "f", Kind: kind, Host: "forge.example.com", User: "u", Token: "t",
+			Repos: []string{"acme/app"}}
+		checkPolicy(t, p, []policyCase{
+			{"GET", "https://forge.example.com/api/v1/repos/acme/app/actions/runs", false},
+			{"GET", "https://forge.example.com/api/v1/repos/acme/app/releases", false},
+			{"GET", "https://forge.example.com/api/v1/search/issues", false},
+			{"GET", "https://forge.example.com/api/v1/repos/acme/app/pulls", true},
+		})
+	}
+}
+
 // A GitHub App token is narrowed by GitHub, so it is added anywhere on
 // its hosts.
 //
