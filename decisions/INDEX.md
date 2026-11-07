@@ -2,7 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-106 | On a phone the header is one bar, a session is known by its repository, and the session page keeps its title and composer on screen | accepted | web | web, mobile, layout, composer |
+| DL-106 | On a phone the header is one bar, a session is known by its repository, and the session page keeps its title and composer on screen | accepted | web | web, mobile, layout, composer, jobs |
 | DL-105 | Deployment guides orient around the prebuilt release image, with a shipped server user file and a single-operator path | accepted | server | deployment, hosted, docs |
 | DL-104 | spov resume syncs a synced session back on exit, and keeps it running outside its checkout | proposed | cli | sync, resume |
 | DL-103 | spov jobs wait blocks until a job finishes and exits by its outcome | proposed | cli | sync-jobs, jobs, cli, orchestration |

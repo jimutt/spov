@@ -129,6 +129,8 @@ The Modal SDK is pre-1.0 and ships breaking minor releases. Keep its exact pin i
 - Below `md` the header is one bar with a menu; below `lg` the session page has its own bar, its sidebar is a sheet, and its composer is docked to the foot of the screen. The row of the session list is five lines led by the repository (`repoHeadline`), because a session's name says little. From `lg` up the page is as before (DL-106).
 - CSS decides what is drawn and jsdom has none, so the tests assert markup state (`aria-expanded`, the chip's words, where a send scrolls), and only a browser shows the layout. Look at it at 390 px, 768 px and 1280 px before a change to it (DL-106).
 - The sidebar is one element that is a sheet or a sidebar, never two copies, and the composer's options sit in one wrapper that a phone folds away (`md:contents` on a wider screen). A new control goes in the one place (DL-106).
+- On a touch screen (`pointer: coarse`, `touchFirst`) Enter writes a new line and only the button, or Ctrl or Cmd-Enter, sends; with a keyboard as the main input Enter sends as DL-059 says. Decided by the pointer and never by the width, and the "Enter to send" hint is drawn only where it is true (DL-106; `steer.test.ts`, "Enter on a touch screen" in `composer.svelte.test.ts`).
+- The jobs page below `md` is a single limit-and-Start line, one scrolling filter row and rows of four lines at most; a linked pull request reads `owner/repo #7` through `linkLabel` there and the whole address from `md` (DL-106).
 - A send re-arms the tail latch, and while it is armed any growth of the page is followed (a `ResizeObserver` on `body`), or the page settles short of the end behind the dock (DL-106, DL-057).
 
 ### Starting a job from the browser (`/jobs/new`)
