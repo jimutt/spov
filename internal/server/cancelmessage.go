@@ -157,7 +157,7 @@ func (s *Service) recordCancel(ctx context.Context, p auth.Principal, sess store
 type cancelMessageInput struct {
 	Ref          string `path:"ref" doc:"Session ID or name"`
 	ID           string `path:"id" doc:"The message's msg_ id"`
-	Conversation string `query:"conversation" doc:"OpenCode conversation id; required when the session has more than one"`
+	Conversation string `query:"conversation" doc:"OpenCode conversation id; omitted, the session's oldest"`
 }
 
 type cancelMessageOutput struct {

@@ -4,6 +4,7 @@
 |----|-------|--------|-----------|------|
 | DL-108 | The workspace guide says that a refused forge command is not an expired token | accepted | opencode | gh-pat-reads, workspace, credentials |
 | DL-107 | A GitHub PAT also gets its credential on read-only Actions, releases and search | accepted | sandbox | gh-pat-reads, credentials, proxy |
+| DL-109 | An unnamed send steers into the session's oldest conversation | accepted | server | steering, conversations, subagent |
 | DL-106 | On a phone the header is one bar, a session is known by its repository, and the session page keeps its title and composer on screen | accepted | web | web, mobile, layout, composer, jobs |
 | DL-105 | Deployment guides orient around the prebuilt release image, with a shipped server user file and a single-operator path | accepted | server | deployment, hosted, docs |
 | DL-104 | spov resume syncs a synced session back on exit, and keeps it running outside its checkout | proposed | cli | sync, resume |

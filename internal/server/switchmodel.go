@@ -37,9 +37,9 @@ const eventModelSelected = "session.model.selected"
 type ModelSwitch struct {
 	// Model is a provider/model[#variant] reference.
 	Model string `json:"model" minLength:"1" maxLength:"256" doc:"The model to switch to, as provider/model"`
-	// Conversation is the OpenCode session to switch; it may be omitted
-	// only when the session has exactly one.
-	Conversation string `json:"conversation,omitempty" doc:"OpenCode conversation id; required when the session has more than one"`
+	// Conversation is the OpenCode session to switch; omitted, the
+	// session's oldest.
+	Conversation string `json:"conversation,omitempty" doc:"OpenCode conversation id; omitted, the session's oldest"`
 }
 
 // SwitchedModel is the switch the sandbox took.

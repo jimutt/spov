@@ -101,9 +101,10 @@ var ErrNoConversation = errors.New("server: the session has no conversation reco
 //
 // @decision(DL-019)
 type SteerRequest struct {
-	// Conversation is the OpenCode session id to send into. It may be
-	// omitted only when the session has exactly one conversation.
-	Conversation string `json:"conversation,omitempty" doc:"OpenCode conversation id; required when the session has more than one"`
+	// Conversation is the OpenCode session id to send into. Omitted,
+	// the session's oldest: the person's own, since anything later is
+	// the agent's own or a race stray.
+	Conversation string `json:"conversation,omitempty" doc:"OpenCode conversation id; omitted, the session's oldest"`
 	// Text is what the person typed.
 	Text string `json:"text" minLength:"1" maxLength:"16384" doc:"The message to send"`
 	// Delivery is steer or queue; omitted means steer.
@@ -386,9 +387,12 @@ func jobRefusesAMessage(state store.JobState) (string, bool) {
 
 // steerInto resolves which conversation the message goes to, against
 // the store's own rows and never on the caller's word, since OpenCode
-// ids are unique per session only.
+// ids are unique per session only. Unnamed, it is the oldest: the
+// person's own, which firstConversation or jobConversation opened for
+// them, since anything later is the agent's own (DL-045) or the stray
+// second half of a first-message race. Naming one still names it.
 //
-// @decision(DL-019)
+// @decision(DL-019) @decision(DL-109)
 func (s *Service) steerInto(ctx context.Context, sess store.Session, named string) (string, error) {
 	convs, err := s.deps.Store.Conversations().ListConversations(ctx, sess.OrgID, sess.ID)
 	if err != nil {
@@ -409,11 +413,10 @@ func (s *Service) steerInto(ctx context.Context, sess store.Session, named strin
 		// A send creates one (firstConversation); a cancel has nothing
 		// to cancel in.
 		return "", ErrNoConversation
-	case 1:
-		return convs[0].OpenCodeID, nil
 	default:
-		return "", fmt.Errorf("%w: this session has %d conversations; name one",
-			ErrInvalidRequest, len(convs))
+		// Oldest first (DL-025): one conversation is convs[0] as
+		// before, and several no longer refuse.
+		return convs[0].OpenCodeID, nil
 	}
 }
 
@@ -421,9 +424,12 @@ func (s *Service) steerInto(ctx context.Context, sess store.Session, named strin
 // landing, as jobConversation does a job's, and records it. Serialised
 // per session and re-checked inside, so concurrent first sends on one
 // replica create one. Steer keeps the id it returns, so withConnection
-// running its closure twice does not create a second.
+// running its closure twice does not create a second. A second row that
+// landed between the caller's own list and this one (a cross-replica
+// first-message race) resolves the same way an unnamed send does: the
+// oldest.
 //
-// @decision(DL-019)
+// @decision(DL-019) @decision(DL-109)
 func (s *Service) firstConversation(ctx context.Context, conn Connection, sess store.Session) (string, error) {
 	unlock := s.firstSends.lock(sess.ID)
 	defer unlock()
@@ -433,10 +439,8 @@ func (s *Service) firstConversation(ctx context.Context, conn Connection, sess s
 	}
 	switch len(convs) {
 	case 0:
-	case 1:
-		return convs[0].OpenCodeID, nil
 	default:
-		return "", fmt.Errorf("%w: this session has %d conversations; name one", ErrInvalidRequest, len(convs))
+		return convs[0].OpenCodeID, nil
 	}
 	id, err := createConversation(ctx, conn, sessionDir(sess))
 	if err != nil {

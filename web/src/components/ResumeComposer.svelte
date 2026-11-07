@@ -48,8 +48,8 @@
       await resumed(
         (body) => api.POST('/api/v1/sessions/{ref}/resume', { params: { path: { ref } }, body }),
         // No conversation named, as the composer names none: the server
-        // takes the only one, and refuses rather than guess among
-        // several. @decision(DL-019)
+        // steers an omitted one into the session's oldest.
+        // @decision(DL-019) @decision(DL-109)
         { text: text.trim(), id: newMessageID() },
       );
       text = '';

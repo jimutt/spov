@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/jobs"
@@ -477,25 +478,43 @@ func TestTheReserveIsTakenOnlyWhenAStopWouldMint(t *testing.T) {
 }
 
 // The conversation is resolved against the store's own rows, exactly
-// as a message's is.
+// as a message's is: unnamed, the oldest; named, the one named.
 //
-// @decision(DL-053) @decision(DL-019)
+// @decision(DL-053) @decision(DL-109)
 func TestAnInterruptNamesAConversationTheSessionHas(t *testing.T) {
-	f := newInterruptFixture(t, store.JobRunning, "ses_1", "ses_2")
-	// Several, and none named: refused rather than guessed between.
-	if _, err := f.svc.Interrupt(context.Background(), f.p, f.sess.ID, InterruptRequest{}); !errors.Is(err, ErrInvalidRequest) {
-		t.Errorf("err = %v, want a refusal to guess between two conversations", err)
+	f := newInterruptFixture(t, store.JobRunning)
+	ctx := context.Background()
+	// A person's conversation and a later one of the agent's own, in
+	// creation order: the agent's subagent cannot predate the session
+	// it was spawned from.
+	older := f.svc.deps.Now()
+	for i, id := range []string{"ses_1", "ses_2"} {
+		if _, err := f.svc.deps.Store.Conversations().UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(f.svc.deps.Now()), OrgID: f.sess.OrgID, SessionID: f.sess.ID, OpenCodeID: id,
+			CreatedAt: older.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Several, and none named: the oldest, which is the person's own.
+	// Anything later is the agent's own or a race stray.
+	got, err := f.svc.Interrupt(ctx, f.p, f.sess.ID, InterruptRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Conversation != "ses_1" {
+		t.Errorf("conversation = %q, want ses_1, the oldest unnamed", got.Conversation)
+	}
+	if n := len(f.stops()); n != 1 {
+		t.Fatalf("the sandbox saw %d interrupts, want 1", n)
 	}
 	// Named, and not this session's.
-	_, err := f.svc.Interrupt(context.Background(), f.p, f.sess.ID, InterruptRequest{Conversation: "ses_elsewhere"})
+	_, err = f.svc.Interrupt(ctx, f.p, f.sess.ID, InterruptRequest{Conversation: "ses_elsewhere"})
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Errorf("err = %v, want a refusal for a conversation this session does not have", err)
 	}
-	if n := len(f.stops()); n != 0 {
-		t.Errorf("the sandbox saw %d interrupts for a conversation it was never given", n)
-	}
 	// Named, and this session's.
-	got, err := f.svc.Interrupt(context.Background(), f.p, f.sess.ID, InterruptRequest{Conversation: "ses_2"})
+	got, err = f.svc.Interrupt(ctx, f.p, f.sess.ID, InterruptRequest{Conversation: "ses_2"})
 	if err != nil {
 		t.Fatal(err)
 	}
