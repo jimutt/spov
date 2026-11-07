@@ -1,0 +1,26 @@
+# The server's user file, shipped with the deployment files and mounted
+# by every template. The server reads this file and the environment
+# only, never a .spov.yaml; no key here takes a secret. Fill in the
+# account, then deploy.
+#
+# An organisation token variable (SPOV_PLATFORM_TOKEN_<NAME>) attaches
+# to the platform of that name below — a variable naming no declared
+# platform is ignored.
+#
+# @decision(DL-105)
+version: 1
+
+platforms:
+  - name: github
+    kind: github
+    # base_url defaults to https://github.com; set it for GHE.
+    account: <your-github-account>   # the user the org PAT belongs to, or the org a GitHub App is installed on
+
+# Single operator: the deployment's own credential may serve `all` git
+# access, so jobs and browser launches are never needlessly narrowed.
+# git:
+#   allow_all: true
+
+# Keep sandboxes near the deployment; broad (us, eu, ap) or narrow (eu-west, ...).
+# sandbox:
+#   regions: [eu]
