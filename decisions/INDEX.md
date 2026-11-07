@@ -3,6 +3,10 @@
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
 | DL-104 | spov resume syncs a synced session back on exit, and keeps it running outside its checkout | proposed | cli | sync, resume |
+| DL-103 | spov jobs wait blocks until a job finishes and exits by its outcome | proposed | cli | sync-jobs, jobs, cli, orchestration |
+| DL-102 | A sync job's state is exported over the API, and applied or released by the CLI | proposed | jobs | sync-jobs, jobs, sync, api |
+| DL-101 | A sync job is stopped and judged on its live sandbox, finishes, and holds the sandbox for a bounded time | proposed | jobs | sync-jobs, jobs, sync, gates |
+| DL-100 | A sync job starts from the local checkout and leaves its work in the repository | proposed | jobs | sync-jobs, jobs, sync |
 | DL-099 | The README is for a first-time user; building from source lives in docs/development.md | accepted | cli | docs, onboarding, distribution |
 | DL-098 | A transcript resume of a synced session is seeded from a bundle the CLI sends, else from the default branch | accepted | server | sync, resume |
 | DL-097 | A user environment variable may not set what spov itself sets or relies on, and is bounded | accepted | sandbox | sandbox-env, sandbox, security |
