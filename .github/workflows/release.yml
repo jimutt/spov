@@ -98,6 +98,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          # Kamal requires the image to carry the service label; without it
+          # `kamal deploy` refuses the pulled image.
+          labels: service=spov
           build-args: |
             VERSION=${{ steps.tags.outputs.version }}
             COMMIT=${{ github.sha }}
