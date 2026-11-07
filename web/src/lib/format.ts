@@ -581,9 +581,9 @@ export const PROXIED_NOTES: Record<CredentialKind, string> = {
     "Held by spov's proxy, out of the agent's reach, and used only for these repositories' code, pull requests and issues.",
 };
 
-/** What a GitHub PAT still reaches through the proxy. @decision(DL-034) */
+/** What a GitHub PAT still reaches through the proxy. @decision(DL-034) @decision(DL-107) */
 export const PAT_GRAPHQL_NOTE =
-  " GitHub's GraphQL API names no repository, so there it reaches whatever it was created to reach.";
+  " GitHub's GraphQL API and search name no repository, so there it reaches whatever it was created to reach.";
 
 /** What a GitLab token still reaches through the proxy. @decision(DL-034) */
 export const GITLAB_GRAPHQL_NOTE =

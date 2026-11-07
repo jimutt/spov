@@ -107,6 +107,9 @@ For a stored token, the proxy allows:
   issues, and commenting on them. On GitHub, Forgejo and Gitea this includes
   reviews, so a token can approve a pull request there; on GitLab approving is
   refused;
+- on GitHub, a personal access token also reads the session's repositories'
+  Actions (runs, jobs, logs, workflows and artifacts) and releases, and searches
+  (DL-107). It cannot rerun, cancel or dispatch a workflow;
 - on GitLab, the project by its full path or by the numeric ID spov looked up
   at launch (DL-034).
 
@@ -122,7 +125,8 @@ repository the token reaches rather than the session's.
 
 GraphQL names no repository, so a GitHub personal access token reaches there
 whatever it was created to reach, and a GitLab one whatever its account can,
-merging included. The session page says so for those tokens.
+merging included. GitHub's search names none either, and reads across whatever
+the token reaches. The session page says so for those tokens.
 
 Under the `install` and `agent` egress presets, a session can reach its own
 forges' hosts (DL-031), unless a forge is addressed by an IP or a single-label
