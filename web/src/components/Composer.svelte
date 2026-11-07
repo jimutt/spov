@@ -27,6 +27,7 @@
     sendability,
     sendsOnEnter,
     stop,
+    touchFirst,
     stopOutcome,
   } from '../lib/steer';
   import Icon from './Icon.svelte';
@@ -285,8 +286,13 @@
     }
   }
 
+  // On a touch screen Enter writes a new line and the button sends.
+  //
+  // @decision(DL-106)
+  const touch = touchFirst();
+
   function onKeydown(event: KeyboardEvent) {
-    if (!sendsOnEnter(event)) return;
+    if (!sendsOnEnter(event, touch)) return;
     event.preventDefault();
     void go('steer');
   }
@@ -369,7 +375,7 @@
         bind:value={text}
         onkeydown={onKeydown}
         rows="1"
-        enterkeyhint="send"
+        enterkeyhint={touch ? 'enter' : 'send'}
         disabled={sending}
         class="{fieldBase} resize-none px-3 py-2.5 text-read max-md:max-h-32 max-md:min-h-11 md:min-h-[5.75rem] md:resize-y"
         placeholder="Message this session"
@@ -423,10 +429,12 @@
           <ModelSwitch {ref} current={model} />
         {/if}
 
-        <span class="text-sm text-faint max-md:hidden md:ml-auto"
-          ><kbd class={kbd}>Enter</kbd> to send, <kbd class={kbd}>Shift</kbd> + <kbd class={kbd}>Enter</kbd> for a new
-          line</span
-        >
+        {#if !touch}
+          <span class="text-sm text-faint md:ml-auto"
+            ><kbd class={kbd}>Enter</kbd> to send, <kbd class={kbd}>Shift</kbd> + <kbd class={kbd}>Enter</kbd> for a new
+            line</span
+          >
+        {/if}
 
         <!-- Says when the message is read and what follows it; names
              Interrupt only while it is on the page.

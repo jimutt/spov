@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync, mount, unmount } from "svelte";
 
 /**
@@ -724,5 +724,69 @@ describe("the options a phone folds away", () => {
     const c = draw("running");
     expect(c.chip().textContent).toContain("Options");
     c.done();
+  });
+});
+
+// Enter on a touch screen writes a new line and the button sends. The
+// pointer is what decides, so the stub answers only the coarse query.
+//
+// @decision(DL-106) @decision(DL-059)
+describe("Enter on a touch screen", () => {
+  const real = window.matchMedia;
+  const coarse = (on: boolean) => {
+    window.matchMedia = ((q: string) => ({ matches: on && q.includes("pointer: coarse") })) as typeof window.matchMedia;
+  };
+  afterEach(() => {
+    window.matchMedia = real;
+  });
+
+  function typed(c: ReturnType<typeof draw>, words: string) {
+    c.box()!.value = words;
+    c.box()!.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+  }
+
+  it("leaves Enter to write a new line, and sends from the button", async () => {
+    coarse(true);
+    const c = draw("running");
+    typed(c, "first line");
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    c.box()!.dispatchEvent(enter);
+    await settle();
+    expect(enter.defaultPrevented).toBe(false);
+    expect(stub.bodies()).toHaveLength(0);
+    expect(c.box()!.getAttribute("enterkeyhint")).toBe("enter");
+
+    c.button()!.click();
+    await settle();
+    expect(stub.bodies()).toHaveLength(1);
+    stub.answer();
+    await settle();
+    c.done();
+  });
+
+  it("still sends on Ctrl-Enter, for a tablet with a keyboard", async () => {
+    coarse(true);
+    const c = draw("running");
+    typed(c, "from a keyboard");
+    c.box()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+    await settle();
+    expect(stub.bodies()).toHaveLength(1);
+    stub.answer();
+    await settle();
+    c.done();
+  });
+
+  it("says Enter sends only where Enter does", () => {
+    coarse(false);
+    const keyboard = draw("running");
+    expect(keyboard.target.textContent).toContain("to send");
+    expect(keyboard.box()!.getAttribute("enterkeyhint")).toBe("send");
+    keyboard.done();
+
+    coarse(true);
+    const touch = draw("running");
+    expect(touch.target.textContent).not.toContain("to send");
+    touch.done();
   });
 });

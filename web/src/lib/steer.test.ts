@@ -178,6 +178,18 @@ describe("the keyboard", () => {
     expect(sendsOnEnter({ key: "a" })).toBe(false);
   });
 
+  // @decision(DL-106) @decision(DL-059)
+  it("writes a new line on Enter on a touch screen, and sends on Ctrl or Cmd-Enter", () => {
+    expect(sendsOnEnter({ key: "Enter" }, true)).toBe(false);
+    expect(sendsOnEnter({ key: "Enter", shiftKey: true }, true)).toBe(false);
+    expect(sendsOnEnter({ key: "Enter", ctrlKey: true }, true)).toBe(true);
+    expect(sendsOnEnter({ key: "Enter", metaKey: true }, true)).toBe(true);
+    expect(sendsOnEnter({ key: "a", ctrlKey: true }, true)).toBe(false);
+    // The default is the keyboard's rule.
+    expect(sendsOnEnter({ key: "Enter", ctrlKey: true })).toBe(true);
+    expect(sendsOnEnter({ key: "Enter", isComposing: true, ctrlKey: true }, true)).toBe(false);
+  });
+
   // An IME commits its candidate with Enter. Without this, accepting a
   // suggestion posts a half-typed word — every time, for anyone typing
   // Japanese, Chinese or Korean.
