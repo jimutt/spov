@@ -1470,7 +1470,7 @@
             <dd class="m-0 text-right">{sentence(s.egress)}</dd>
           {/if}
           <!-- A floor, and sandbox compute only: model tokens are not
-               metered. @decision(DL-107) -->
+               metered. @decision(DL-110) -->
           <dt class="text-soft">Sandbox cost</dt>
           <dd class="m-0 text-right text-rust tabular-nums">at least {money(s.estimated_cost)}</dd>
         </dl>

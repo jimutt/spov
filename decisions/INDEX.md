@@ -2,8 +2,8 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-110 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
 | DL-109 | An unnamed send steers into the session's oldest conversation | accepted | server | steering, conversations, subagent |
-| DL-107 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
 | DL-106 | On a phone the header is one bar, a session is known by its repository, and the session page keeps its title and composer on screen | accepted | web | web, mobile, layout, composer, jobs |
 | DL-105 | Deployment guides orient around the prebuilt release image, with a shipped server user file and a single-operator path | accepted | server | deployment, hosted, docs |
 | DL-104 | spov resume syncs a synced session back on exit, and keeps it running outside its checkout | proposed | cli | sync, resume |

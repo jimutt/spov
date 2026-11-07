@@ -5,7 +5,7 @@ import { flushSync, mount, unmount } from "svelte";
  * The usage page, mounted, for the two things the markup has to keep
  * apart: the sandbox figure and the model-token gap.
  *
- * @decision(DL-107)
+ * @decision(DL-110)
  */
 
 vi.hoisted(() => {

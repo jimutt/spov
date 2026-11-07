@@ -12,7 +12,7 @@
   // leads, because a session's name says little.
   //
   // @decision(DL-058) @decision(DL-055) @decision(DL-060) @decision(DL-106)
-  // @decision(DL-107)
+  // @decision(DL-110)
   import { age, duration, kindName, lifetime, listState, live, repoHeadline, repoNames, speaker, when } from '../lib/format';
   import type { Session } from '../lib/format';
   import { resumableLine } from '../lib/resume';
