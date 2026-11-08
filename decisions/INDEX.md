@@ -14,7 +14,7 @@
 | DL-107 | A GitHub PAT also gets its credential on read-only Actions, releases and search | accepted | sandbox | gh-pat-reads, credentials, proxy |
 | DL-106 | On a phone the header is one bar, a session is known by its repository, and the session page keeps its title and composer on screen | accepted | web | web, mobile, layout, composer, jobs |
 | DL-105 | Deployment guides orient around the prebuilt release image, with a shipped server user file and a single-operator path | accepted | server | deployment, hosted, docs |
-| DL-104 | spov resume syncs a synced session back on exit, and keeps it running outside its checkout | proposed | cli | sync, resume |
+| DL-104 | spov resume syncs a synced session back on exit, and keeps it running outside its checkout | accepted | cli | sync, resume |
 | DL-103 | spov jobs wait blocks until a job finishes and exits by its outcome | proposed | cli | sync-jobs, jobs, cli, orchestration |
 | DL-102 | A sync job's state is exported over the API, and applied or released by the CLI | proposed | jobs | sync-jobs, jobs, sync, api |
 | DL-101 | A sync job is stopped and judged on its live sandbox, finishes, and holds the sandbox for a bounded time | proposed | jobs | sync-jobs, jobs, sync, gates |
