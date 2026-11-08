@@ -5,7 +5,7 @@
 | DL-116 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
 | DL-115 | A session's last-message preview comes from its root conversations, never from a subagent | accepted | server | subagents |
 | DL-114 | Only the job's own conversation can be a person's: the supervisor reads takeovers, withdrawals and the verdict's "a person wrote" from it alone | accepted | jobs | subagents |
-| DL-113 | A subagent opens in its own read-only view on the session page, with a way back, its siblings and a list in the sidebar | proposed | web | subagents |
+| DL-113 | A subagent opens in its own read-only view on the session page, with a way back, its siblings and a list in the sidebar | accepted | web | subagents |
 | DL-112 | A subagent is one card in its parent's transcript: its call, state and latest action, opened inline, with asks kept in view | accepted | web | subagents |
 | DL-111 | The main transcript draws the root conversation only, and a subagent never speaks as the reader | accepted | web | subagents |
 | DL-110 | A conversation records its parent, read from OpenCode when the recorder first sees it, and the wire says which conversations are subagents | accepted | server | subagents |

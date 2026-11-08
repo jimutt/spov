@@ -2,7 +2,7 @@
   // One session: its state, what it was asked for, and its conversation.
   // Reads from the store, not the sandbox.
   //
-  // @decision(DL-058) @decision(DL-018) @decision(DL-057) @decision(DL-106)
+  // @decision(DL-058) @decision(DL-018) @decision(DL-057) @decision(DL-106) @decision(DL-113)
   import { tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { api, unwrap } from '../lib/api/client';
@@ -98,9 +98,21 @@
     watchesForAResume,
   } from '../lib/resume';
   import { currentModel } from '../lib/modelpick';
+  import { stateMark, stateWord as subagentWord } from '../lib/subagent';
+  import {
+    agentOf,
+    isPlainClick,
+    scopeOf,
+    siblingsOf,
+    subagentTree,
+    trailTo,
+    viewHref,
+  } from '../lib/subagentview';
   import AskCard from './AskCard.svelte';
   import EventRun from './EventRun.svelte';
+  import SubagentBar from './SubagentBar.svelte';
   import SubagentCard from './SubagentCard.svelte';
+  import SubagentPrompt from './SubagentPrompt.svelte';
   import Composer from './Composer.svelte';
   import ConfirmAct from './ConfirmAct.svelte';
   import Icon from './Icon.svelte';
@@ -121,6 +133,11 @@
   // segment away, sending this credentialed request to a path the
   // caller never named.
   const ref = /^\.+$/.test(named) ? '' : named;
+  // The subagent whose view is open, "" for the main conversation. Read
+  // here for the same reason, and again on navigation (below).
+  //
+  // @decision(DL-113)
+  let agent = $state(search === null ? '' : agentOf(search));
 
   // Raw, not proxied: both are only ever replaced whole, and a deep
   // proxy over a long conversation makes every read of it a trap.
@@ -285,7 +302,17 @@
    * @decision(DL-058)
    */
   const timelines = $derived(buildTimelines(conversations, activity, echoing, inboxEnded));
-  const blocks = $derived(blocksOf(condense(timelines.entries)));
+  // The subagents the page holds, and the view the address names: a
+  // subagent's own list when it is one of them, else the main
+  // conversation. An id that is none of them is a note, never an error,
+  // and only once the conversations are read, or a direct link would
+  // flash it.
+  //
+  // @decision(DL-113)
+  const tree = $derived(subagentTree(timelines));
+  const viewing = $derived(agent && tree.byId.has(agent) ? agent : '');
+  const unknownAgent = $derived(agent !== '' && readTranscript && viewing === '');
+  const blocks = $derived(blocksOf(condense(viewing ? (timelines.children.get(viewing) ?? []) : timelines.entries)));
 
   // Only a window of the newest blocks is drawn. It slides while the
   // page follows the tail and is held once the reader leaves the end.
@@ -673,6 +700,29 @@
     anchoring();
     measure();
   }
+  // Switching view: the address is pushed (or read back on Back and
+  // Forward) and the page changes what it draws from what it already
+  // holds. The log is not reopened and nothing is requested. The window
+  // and the tail latch start again, as for a page just opened.
+  //
+  // @decision(DL-113) @decision(DL-070) @decision(DL-057)
+  function show(next: string): void {
+    if (next === agent) return;
+    agent = next;
+    infoOpen = false;
+    void followSend();
+  }
+  function go(ev: MouseEvent, next: string): void {
+    if (!isPlainClick(ev)) return;
+    ev.preventDefault();
+    if (next !== agent) history.pushState(null, '', viewHref(ref, next));
+    show(next);
+  }
+  $effect(() => {
+    const onPop = () => show(agentOf(location.search));
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  });
   $effect(() => {
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
@@ -918,6 +968,24 @@
         {@render clockStrip('mt-4 max-w-[72ch]')}
       </div>
 
+      <!-- A subagent's view: the way back, its heading and its siblings.
+           An id this session does not have is a quiet note over the main
+           conversation. @decision(DL-113) -->
+      {#if viewing}
+        <SubagentBar
+          session={s.name || s.id}
+          trail={trailTo(tree, viewing)}
+          siblings={siblingsOf(tree, viewing)}
+          waiting={askingIn(scopeOf(tree, viewing)).length}
+          href={(id) => viewHref(ref, id)}
+          onview={go}
+        />
+      {:else if unknownAgent}
+        <p class="{row} mb-6 text-md text-soft" data-testid="subagent-unknown">
+          This session has no subagent with that id, so this is the main conversation.
+        </p>
+      {/if}
+
       {#if s.error}
         <div class="mb-6"><Problem error={new Error(s.error)} what="this session" /></div>
       {/if}
@@ -955,7 +1023,11 @@
             <span class="h-px flex-1 bg-rule" aria-hidden="true"></span>
           </div>
         {/if}
-        {#if block.kind === 'message'}
+        {#if block.kind === 'message' && block.entry.role === 'prompt'}
+          <!-- What the parent agent asked this subagent: in its view
+               only. @decision(DL-111) @decision(DL-113) -->
+          <div class="{row} mb-5"><SubagentPrompt text={block.entry.text} /></div>
+        {:else if block.kind === 'message'}
           {@const synthetic = block.entry.role === 'synthetic'}
           {@const mine = block.entry.role === 'user'}
           <!-- Only a SYNTHETIC's text is read as the stop marker, or a
@@ -1079,6 +1151,8 @@
               {askingIn}
               onjump={jumpToAsk}
               {markdown}
+              href={(id) => viewHref(ref, id)}
+              onview={go}
             />
           </div>
         {:else}
@@ -1097,7 +1171,9 @@
            nothing to say. -->
       {#if readTranscript && blocks.length === 0 && openWarnings.length === 0}
         <div class={row}>
-          <p class="m-0 text-soft">Nothing has been said in this session yet.</p>
+          <p class="m-0 text-soft">
+            {viewing ? 'Nothing has been recorded from this subagent yet.' : 'Nothing has been said in this session yet.'}
+          </p>
         </div>
       {/if}
 
@@ -1124,13 +1200,21 @@
            any chat, and rides above the keyboard. Its height is published
            as --dock-h for "Jump to latest". @decision(DL-106) -->
       <div
-        class={composerShown(s.state, tailEnded) || (s.resume && resumeOffered(s.state, s.resume) && !job)
+        class={!viewing && (composerShown(s.state, tailEnded) || (s.resume && resumeOffered(s.state, s.resume) && !job))
           ? 'max-lg:sticky max-lg:bottom-0 max-lg:z-10 max-lg:-mx-[var(--page-pad-x)] max-lg:border-t max-lg:border-rule max-lg:bg-raised max-lg:px-[var(--page-pad-x)] max-lg:pt-2 max-lg:pb-[calc(0.5rem+env(safe-area-inset-bottom))]'
           : ''}
         bind:this={dock}
         data-testid="dock"
       >
-      {#if composerShown(s.state, tailEnded)}
+      {#if viewing}
+        <!-- No composer, no Interrupt and no Resume: a message goes to the
+             main conversation (DL-109), and a send that appeared here
+             would read as one to the subagent. @decision(DL-113) -->
+        <p class="{row} mt-6 mb-0 text-md text-soft" data-testid="subagent-readonly">
+          You are reading a subagent. Messages go to
+          <a class="underline" href={viewHref(ref)} onclick={(ev) => go(ev, '')}>the main conversation</a>.
+        </p>
+      {:else if composerShown(s.state, tailEnded)}
         <Composer
           {ref}
           {inFlight}
@@ -1244,6 +1328,34 @@
           <div class="mt-3"><Problem error={resumeFailure} what="resuming the session" /></div>
         {/if}
       </section>
+
+      {#if tree.order.length > 0}
+        <!-- The session's subagents, nested under their parents, each a
+             link to its view. Facts only. In this one sidebar, which is
+             the sheet below `lg`. @decision(DL-113) @decision(DL-106) -->
+        <section data-testid="subagents">
+          <h2 class="m-0 mb-2 text-base font-semibold">Subagents</h2>
+          <ul class="m-0 flex list-none flex-col gap-1.5 p-0">
+            {#each tree.order as node (node.id)}
+              <li style:padding-left="{node.depth * 0.875}rem">
+                <a
+                  class="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2 text-ink no-underline hover:underline focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 {node.id === viewing ? 'font-semibold' : ''}"
+                  href={viewHref(ref, node.id)}
+                  aria-current={node.id === viewing ? 'page' : undefined}
+                  data-testid="subagent-link"
+                  onclick={(ev) => go(ev, node.id)}
+                >
+                  <span class="min-w-0 truncate" title={node.label}>{node.label}</span>
+                  <span class="inline-flex items-center gap-2 text-sm font-normal text-soft">
+                    <StateMark mark={stateMark(node.state)} word={subagentWord(node.state)} />
+                    <span class="tabular-nums">{node.calls === 1 ? '1 call' : `${node.calls} calls`}</span>
+                  </span>
+                </a>
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
 
       {#if job}
         <!-- Shown here rather than on a page of its own — see
