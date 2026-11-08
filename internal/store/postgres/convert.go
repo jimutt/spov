@@ -304,10 +304,14 @@ func mapErr(op string, err error) error {
 
 // @decision(DL-017)
 func conversationFromRow(r sqlcgen.Conversation) store.Conversation {
-	return store.Conversation{
+	c := store.Conversation{
 		ID: r.ID, OrgID: r.OrgID, SessionID: r.SessionID, OpenCodeID: r.OpencodeID, Title: r.Title,
 		Info: r.Info, SeqBase: r.SeqBase, SeqAfter: r.SeqAfter, CreatedAt: goTime(r.CreatedAt), UpdatedAt: goTime(r.UpdatedAt),
 	}
+	if r.ParentOpencodeID != nil {
+		c.ParentOpenCodeID = *r.ParentOpencodeID
+	}
+	return c
 }
 
 // nonEmpty is b, or nil when it is empty, so an upsert's coalesce keeps

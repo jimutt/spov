@@ -35,6 +35,10 @@ type fakeSandbox struct {
 	// conversation's /message answer.
 	listing  string
 	messages map[string]string
+	// infos is what GET /api/session/{id} answers, by id; an id it lacks
+	// answers a root's info, and infoErr fails every such read.
+	infos   map[string]string
+	infoErr error
 	// stream is the current span's frames; closing it ends the stream.
 	stream chan string
 	// dialErr, when set, makes the next dial fail.
@@ -47,7 +51,7 @@ type fakeSandbox struct {
 }
 
 func newFakeSandbox(t testing.TB) *fakeSandbox {
-	return &fakeSandbox{t: t, reads: map[string]int{}, listing: `{"data":[]}`, messages: map[string]string{}, stream: make(chan string, 64)}
+	return &fakeSandbox{t: t, reads: map[string]int{}, listing: `{"data":[]}`, messages: map[string]string{}, infos: map[string]string{}, stream: make(chan string, 64)}
 }
 
 func (f *fakeSandbox) connect(_ context.Context, p auth.Principal, _ store.Session) (Connection, error) {
@@ -113,6 +117,15 @@ func (f *fakeSandbox) fetch(_ context.Context, _ Connection, path string) ([]byt
 		return []byte(f.listing), nil
 	}
 	route, query, _ := strings.Cut(path, "?")
+	if id, ok := strings.CutPrefix(route, "/api/session/"); ok && !strings.Contains(id, "/") {
+		if f.infoErr != nil {
+			return nil, f.infoErr
+		}
+		if info, ok := f.infos[id]; ok {
+			return []byte(`{"data":` + info + `}`), nil
+		}
+		return []byte(`{"data":{"id":"` + id + `"}}`), nil
+	}
 	for id, body := range f.messages {
 		if route == "/api/session/"+id+"/message" {
 			return pageOfMessages(f.t, body, query), nil
@@ -172,13 +185,22 @@ func pageOfMessages(t testing.TB, body, rawQuery string) []byte {
 }
 
 // counts is a snapshot for assertions.
+// infoReads is how often one conversation's info was read.
+func (f *fakeSandbox) infoReads(id string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reads["/api/session/"+id]
+}
+
 func (f *fakeSandbox) counts() (connects, dials, sessionReads, messageReads int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for path, n := range f.reads {
-		if path == "/api/session" {
+		route, _, _ := strings.Cut(path, "?")
+		switch {
+		case path == "/api/session":
 			sessionReads += n
-		} else {
+		case strings.HasSuffix(route, "/message"):
 			messageReads += n
 		}
 	}

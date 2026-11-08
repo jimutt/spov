@@ -146,12 +146,17 @@ const (
 // writes nothing and reads no sandbox; the gates themselves are the
 // pure judge.
 //
-// @decision(DL-050) @decision(DL-018)
+// @decision(DL-050) @decision(DL-018) @decision(DL-114)
 func (s *Supervisor) Judge(ctx context.Context, job store.Job) (Verdict, error) {
 	events, err := s.jobEvents(ctx, job)
 	if err != nil {
 		return Verdict{}, err
 	}
+	own, err := s.ownConversation(ctx, job)
+	if err != nil {
+		return Verdict{}, err
+	}
+	events = withoutOthersInbox(events, own)
 	messages, err := s.jobMessages(ctx, job)
 	if err != nil {
 		return Verdict{}, err

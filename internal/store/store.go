@@ -875,6 +875,12 @@ type Conversation struct {
 	//
 	// @decision(DL-089)
 	Info []byte
+	// ParentOpenCodeID is the OpenCode id of the conversation that
+	// started this one as a subagent, or empty for a root, including one
+	// whose parent was never learned. An upsert never clears it.
+	//
+	// @decision(DL-110)
+	ParentOpenCodeID string
 	// SeqBase and SeqAfter map a conversation imported by a transcript
 	// resume onto its stored sequence: a durable frame at seq is stored
 	// at SeqBase + seq - SeqAfter, and one at or before SeqAfter is the
@@ -885,6 +891,36 @@ type Conversation struct {
 	SeqAfter  int64
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// IsRoot reports whether c is a conversation no other one started.
+//
+// @decision(DL-110)
+func (c Conversation) IsRoot() bool { return c.ParentOpenCodeID == "" }
+
+// Primary is the person's conversation among a session's: the oldest
+// root, else the oldest, by CreatedAt with ListConversations' order
+// breaking a tie, so a list in another order still finds it. ok is false
+// only when there are none.
+//
+// @decision(DL-110) @decision(DL-109) @decision(DL-025)
+func Primary(convs []Conversation) (Conversation, bool) {
+	var best Conversation
+	found := false
+	for _, roots := range []bool{true, false} {
+		for _, c := range convs {
+			if roots && !c.IsRoot() {
+				continue
+			}
+			if !found || c.CreatedAt.Before(best.CreatedAt) {
+				best, found = c, true
+			}
+		}
+		if found {
+			return best, true
+		}
+	}
+	return Conversation{}, false
 }
 
 // Message is one thing said in a conversation: the reply, not the parts

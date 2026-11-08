@@ -121,7 +121,7 @@ func (s *Service) OpenJobGoal(ctx context.Context, job store.Job) error {
 // the sandbox idled out. The store is asked first because it answers on
 // every pass after the first.
 //
-// @decision(DL-045) @decision(DL-017)
+// @decision(DL-045) @decision(DL-017) @decision(DL-110)
 func (s *Service) jobConversation(ctx context.Context, conn Connection, sess store.Session) (string, error) {
 	convs, err := s.deps.Store.Conversations().ListConversations(ctx, sess.OrgID, sess.ID)
 	if err != nil {
@@ -154,17 +154,11 @@ func (s *Service) jobConversation(ctx context.Context, conn Connection, sess sto
 		}
 		return id, nil
 	}
-	// The oldest, which the job opened with; a later one is the agent's
-	// own (DL-045). The store already lists oldest first (DL-025); the
-	// scan stays so a store that regressed to id order cannot silently
-	// reroute the goal.
-	oldest := convs[0]
-	for _, c := range convs[1:] {
-		if c.CreatedAt.Before(oldest.CreatedAt) {
-			oldest = c
-		}
-	}
-	return oldest.OpenCodeID, nil
+	// The oldest root, which the job opened with; a later one is a
+	// subagent or the agent's own (DL-045). Primary goes by CreatedAt, so
+	// a store that regressed to id order cannot silently reroute the goal.
+	primary, _ := store.Primary(convs)
+	return primary.OpenCodeID, nil
 }
 
 // SetJobLoopPaused holds or releases the plugin's continuation loop with

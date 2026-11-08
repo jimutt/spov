@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/sandbox"
+	"github.com/jimutt/spov/internal/server"
 	"github.com/jimutt/spov/internal/server/client"
 	"github.com/jimutt/spov/internal/store"
 )
@@ -359,5 +360,19 @@ func TestAttachSurvivesAnUnreadableConversation(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "could not read") {
 		t.Errorf("the failure was silent:\n%s", errOut.String())
+	}
+}
+
+// firstConversation skips a subagent the server lists before its
+// parent, as store.Primary does, and falls back to the oldest when every
+// conversation has a parent.
+//
+// @decision(DL-110)
+func TestTheOpeningConversationIsTheOldestRoot(t *testing.T) {
+	if got := firstConversation([]server.ConversationView{{ID: "ses_child", Parent: "ses_root"}, {ID: "ses_root"}}); got != "ses_root" {
+		t.Errorf("got %q, want the root", got)
+	}
+	if got := firstConversation([]server.ConversationView{{ID: ""}, {ID: "ses_a", Parent: "ses_x"}, {ID: "ses_b", Parent: "ses_x"}}); got != "ses_a" {
+		t.Errorf("got %q, want the oldest with an id", got)
 	}
 }

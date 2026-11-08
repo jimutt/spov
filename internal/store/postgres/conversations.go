@@ -23,9 +23,15 @@ func (p pgConversations) UpsertConversation(ctx context.Context, c store.Convers
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = now
 	}
+	// A nil parent keeps the stored one. @decision(DL-110)
+	var parent *string
+	if c.ParentOpenCodeID != "" {
+		parent = &c.ParentOpenCodeID
+	}
 	row, err := p.s.q.UpsertConversation(ctx, sqlcgen.UpsertConversationParams{
 		ID: c.ID, OrgID: c.OrgID, SessionID: c.SessionID, OpencodeID: c.OpenCodeID,
 		Title: c.Title, CreatedAt: ts(c.CreatedAt), UpdatedAt: ts(now), Info: nonEmpty(c.Info),
+		ParentOpencodeID: parent,
 	})
 	if err != nil {
 		return store.Conversation{}, mapErr("upsert conversation", err)
