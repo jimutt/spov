@@ -671,13 +671,6 @@ export function composerStatus(
 }
 
 /**
- * SendShort is the line under Send; `deliveryNote` is what its (i) opens.
- *
- * @decision(DL-059)
- */
-export const SendShort = "Read once the current step finishes; nothing is stopped.";
-
-/**
  * controlsNote explains the status bar's buttons, for its (i): only the
  * ones drawn, each under the button's own name.
  *

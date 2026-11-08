@@ -17,7 +17,6 @@
     type EchoTrack,
     type JobState,
     Failed,
-    SendShort,
     canStop,
     composerStatus,
     controlsNote,
@@ -410,7 +409,7 @@
       onfocusout={onFocusOut}
       data-testid="composer"
       data-toolbar={toolbar ? 'open' : 'folded'}
-      class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 max-md:gap-y-0 max-md:rounded-2xl max-md:border max-md:border-rule-2 max-md:bg-paper max-md:p-1 max-md:focus-within:border-olive md:flex md:flex-wrap"
+      class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 max-md:gap-y-0 max-md:rounded-2xl max-md:border max-md:border-rule-2 max-md:bg-raised max-md:dark:bg-paper max-md:p-1 max-md:focus-within:border-olive md:flex md:flex-wrap"
     >
       <label class="sr-only" for="composer-text">Message</label>
       <textarea
@@ -464,6 +463,7 @@
         <!-- On a running job only: what follows this one message.
              @decision(DL-059) @decision(DL-052) -->
         {#if choosesAfter}
+          <span class="flex items-center gap-2">
           <label class="flex items-center gap-2 text-md text-soft">
             Then
             <select
@@ -476,6 +476,16 @@
               <option value="handover">hand over to me</option>
             </select>
           </label>
+          <!-- What follows the message, behind the choice it explains;
+               names Interrupt only while it is on the page. Send has no
+               line of its own. @decision(DL-059) @decision(DL-117) -->
+          <span data-testid="composer-note-info"
+            ><InfoToggle label="What happens after you send" controls="composer-note" bind:open={noteOpen} /></span
+          >
+          </span>
+          {#if noteOpen}
+            <p id="composer-note" class="m-0 max-w-[68ch] text-sm text-soft md:w-full" data-testid="composer-note">{note}</p>
+          {/if}
         {/if}
 
         <!-- Switching applies from the agent's next step.
@@ -491,18 +501,6 @@
           >
         {/if}
 
-        <!-- Says when the message is read and what follows it; names
-             Interrupt only while it is on the page.
-             @decision(DL-059) -->
-        <p class="m-0 flex max-w-[68ch] items-center gap-1.5 text-sm text-soft md:mt-0 md:w-full">
-          {SendShort}
-          <span data-testid="composer-note-info"
-            ><InfoToggle label="When the agent reads it" controls="composer-note" bind:open={noteOpen} /></span
-          >
-        </p>
-        {#if noteOpen}
-          <p id="composer-note" class="m-0 max-w-[68ch] text-sm text-soft md:w-full" data-testid="composer-note">{note}</p>
-        {/if}
       </div>
     </form>
   {:else}

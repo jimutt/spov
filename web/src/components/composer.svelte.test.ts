@@ -207,19 +207,22 @@ describe("which control the composer draws", () => {
     }
   });
 
-  // The rendered note must be the job's on a job, not the interactive
-  // session's.
+  // The note explains the after choice, beside it; Send has no line of
+  // its own on any screen.
   //
-  // @decision(DL-059)
-  it("draws the note, and the one that belongs to this session", () => {
+  // @decision(DL-059) @decision(DL-117)
+  it("draws the note beside the after choice only, and no line under Send", () => {
     const job = draw("running");
     expect(job.note()).toContain("carries on by itself");
+    expect(job.target.textContent).not.toContain("Read once the current step finishes");
     job.done();
 
-    const interactive = draw(undefined);
-    expect(interactive.note()).toContain("once its current step finishes");
-    expect(interactive.note()).not.toContain("job");
-    interactive.done();
+    for (const state of [undefined, "steered"] as const) {
+      const other = draw(state);
+      expect(other.target.querySelector('[data-testid="composer-note-info"]'), String(state)).toBeNull();
+      expect(other.target.textContent, String(state)).not.toContain("Read once the current step finishes");
+      other.done();
+    }
   });
 });
 
