@@ -696,7 +696,7 @@ export function buildTimelines(
     children.set(conv.id, entries);
     if (entries.length === 0) continue;
     const calls = condense(entries).filter((e) => e.kind === "event" && e.calls).length;
-    const first = events.length > 0 ? Math.min(...events.map((e) => e.pos)) : 0;
+    const first = events.reduce((n, e) => Math.min(n, e.pos), events[0]?.pos ?? 0);
     out.push({
       kind: "subagent",
       key: `sub:${conv.id}`,

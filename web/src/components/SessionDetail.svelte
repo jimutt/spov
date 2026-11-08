@@ -308,6 +308,9 @@
   // @decision(DL-020)
   const asks = $derived(askStates(activity, inboxEnded));
   const asking = $derived(pendingAsks(asks) > 0);
+  // The subagents' conversations, whose frames are not the root's.
+  // @decision(DL-111)
+  const children = $derived(childIds(conversations));
   // The model the session is on: the log's newest selection, else its
   // launch's. @decision(DL-014)
   const model = $derived(currentModel(activity, s?.model, children));
@@ -339,7 +342,6 @@
   //
   // Only the root's turns: a subagent ends turns of its own mid-way.
   // @decision(DL-111)
-  const children = $derived(childIds(conversations));
   const inFlight = $derived(turnInFlight(activity, children));
   const turnsSeenEnded = $derived(turnsEnded(activity, children));
   const openWarnings = $derived(shownWarnings(warnings, blocks.length));
