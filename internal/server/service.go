@@ -1122,7 +1122,7 @@ func StoredTokenNote(platform string) string {
 // credential proxy holds. all is git access all, where the proxy uses it
 // on any repository.
 //
-// @decision(DL-034) @decision(DL-043)
+// @decision(DL-034) @decision(DL-043) @decision(DL-107)
 func ProxiedTokenNote(platform, forge string, all bool) string {
 	if all {
 		return fmt.Sprintf("the stored %s token is held by spov's proxy and used on every repository it reaches "+
@@ -1131,7 +1131,7 @@ func ProxiedTokenNote(platform, forge string, all bool) string {
 	graphql := ""
 	switch forge {
 	case "github":
-		graphql = " (except GitHub's GraphQL API, which names no repository)"
+		graphql = " (except GitHub's GraphQL API and search, which name no repository)"
 	// @decision(DL-034)
 	case "gitlab":
 		graphql = " (except GitLab's GraphQL API, which names no project)"

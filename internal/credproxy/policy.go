@@ -127,11 +127,36 @@ func (p Platform) allowsGitHub(host string, segs []string, read bool, method str
 	}
 }
 
-// allowsGitHubAPI is allowsAPI plus GraphQL, which names no repository:
-// a PAT reaches there what its owner gave it.
+// githubActionsReads are the parts of a repository's Actions API a
+// GitHub PAT is used on, read only. Secrets, variables, runners,
+// permissions, OIDC and caches are refused by being absent.
+//
+// @decision(DL-107)
+var githubActionsReads = map[string]bool{
+	"runs":      true,
+	"jobs":      true,
+	"workflows": true,
+	"artifacts": true,
+}
+
+// allowsGitHubAPI is allowsAPI plus the GitHub-only paths: GraphQL and
+// search, which name no repository, and a repository's Actions reads and
+// releases.
+//
+// @decision(DL-034) @decision(DL-107)
 func (p Platform) allowsGitHubAPI(segs []string, read bool, method string) bool {
-	if len(segs) == 1 && segs[0] == "graphql" {
+	switch {
+	case len(segs) == 1 && segs[0] == "graphql":
 		return method == http.MethodPost
+	case len(segs) == 2 && segs[0] == "search":
+		return read
+	case len(segs) > 3 && segs[0] == "repos" && p.hasRepo(segs[1], segs[2]):
+		switch segs[3] {
+		case "releases":
+			return read
+		case "actions":
+			return read && len(segs) > 4 && githubActionsReads[segs[4]]
+		}
 	}
 	return p.allowsAPI(segs, read)
 }

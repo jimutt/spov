@@ -3,7 +3,15 @@
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
 | DL-110 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
+| DL-115 | A session's last-message preview comes from its root conversations, never from a subagent | proposed | server | subagents |
+| DL-114 | Only the job's own conversation can be a person's: the supervisor reads takeovers, withdrawals and the verdict's "a person wrote" from it alone | proposed | jobs | subagents |
+| DL-113 | A subagent opens in its own read-only view on the session page, with a way back, its siblings and a list in the sidebar | proposed | web | subagents |
+| DL-112 | A subagent is one card in its parent's transcript: its call, state and latest action, opened inline, with asks kept in view | proposed | web | subagents |
+| DL-111 | The main transcript draws the root conversation only, and a subagent never speaks as the reader | proposed | web | subagents |
+| DL-110 | A conversation records its parent, read from OpenCode when the recorder first sees it, and the wire says which conversations are subagents | proposed | server | subagents |
 | DL-109 | An unnamed send steers into the session's oldest conversation | accepted | server | steering, conversations, subagent |
+| DL-108 | The workspace guide says that a refused forge command is not an expired token | accepted | opencode | gh-pat-reads, workspace, credentials |
+| DL-107 | A GitHub PAT also gets its credential on read-only Actions, releases and search | accepted | sandbox | gh-pat-reads, credentials, proxy |
 | DL-106 | On a phone the header is one bar, a session is known by its repository, and the session page keeps its title and composer on screen | accepted | web | web, mobile, layout, composer, jobs |
 | DL-105 | Deployment guides orient around the prebuilt release image, with a shipped server user file and a single-operator path | accepted | server | deployment, hosted, docs |
 | DL-104 | spov resume syncs a synced session back on exit, and keeps it running outside its checkout | proposed | cli | sync, resume |

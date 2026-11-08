@@ -103,8 +103,23 @@ func AgentsMarkdown(repos []WorkspaceRepo, jobKind string) string {
 
 	b.WriteString("\nThe token each CLI holds may be scoped to a subset of repositories, so a\n")
 	b.WriteString("command can fail on permissions even though the clone worked.\n")
+	writeRefusalSection(&b)
 	writeScratchSection(&b, jobKind)
 	return b.String()
+}
+
+// writeRefusalSection says what a refused forge command means, so an
+// agent does not take it for a token to replace.
+//
+// @decision(DL-108)
+func writeRefusalSection(b *strings.Builder) {
+	b.WriteString("\n## When a forge command is refused\n\n")
+	b.WriteString("The credentials here are managed by spov, not by you. A forge command that\n")
+	b.WriteString("answers 401, 403 or 404 on something you would expect to reach is not a sign\n")
+	b.WriteString("that you must log in again. Do not run `gh auth login` or another CLI's login,\n")
+	b.WriteString("and do not ask for a token. Retry once in case the failure was transient, then\n")
+	b.WriteString("report the exact command and its exact error message, and carry on with\n")
+	b.WriteString("whatever does not need it.\n")
 }
 
 // writeScratchSection names the scratchpad. A report job is also told
