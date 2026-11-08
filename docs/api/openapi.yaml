@@ -888,6 +888,8 @@ components:
           type: string
         call:
           type: string
+        child:
+          type: string
         delivery:
           type: string
         message:

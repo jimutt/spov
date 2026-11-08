@@ -30,9 +30,17 @@
     askState: AskState;
     /** Whether the session can still be answered: it is live. */
     open: boolean;
+    /**
+     * Set when a subagent raised the ask: its label, which may be empty.
+     * The card is answered as ever; this only says whose it is
+     * (DL-112).
+     */
+    from?: string;
   }
 
-  const { ref, ask, askState, open }: Props = $props();
+  const { ref, ask, askState, open, from }: Props = $props();
+
+  const fromLine = $derived(from === undefined ? '' : from ? `From subagent “${from}”` : 'From a subagent');
 
   // Set from the press until the log settles the ask, or the answer
   // fails. The card stays disabled meanwhile.
@@ -94,12 +102,13 @@
   <!-- Answered, dismissed or never answered: one quiet line.
        @decision(DL-020) -->
   <p class="m-0 text-md text-soft" data-testid="ask-settled">
-    <span class="mr-2 text-faint">{ask.kind === 'permission' ? permissionSummary(ask) : ask.title || 'Question'}</span
+    {#if fromLine}<span class="mr-2 text-faint" data-testid="ask-from">{fromLine}.</span>{/if}<span class="mr-2 text-faint">{ask.kind === 'permission' ? permissionSummary(ask) : ask.title || 'Question'}</span
     >{askLine(ask, askState)}
   </p>
 {:else if ask.kind === 'permission'}
   <div class="rounded-ctl border border-gold bg-raised px-3.5 py-3" data-testid="ask-permission">
     <p class="m-0 text-sm font-medium text-gold-t">The agent asks permission</p>
+    {#if fromLine}<p class="m-0 mt-0.5 text-sm text-faint" data-testid="ask-from">{fromLine}</p>{/if}
     <p class="m-0 mt-1 font-mono text-md break-all text-ink">{permissionSummary(ask)}</p>
     {#if !open}
       <p class="m-0 mt-2 text-sm text-faint">{askLine(ask, askState)}</p>
@@ -137,6 +146,7 @@
 {:else}
   <form class="rounded-ctl border border-gold bg-raised px-3.5 py-3" data-testid="ask-form" onsubmit={submit} novalidate>
     <p class="m-0 text-sm font-medium text-gold-t">{ask.title || 'The agent asks'}</p>
+    {#if fromLine}<p class="m-0 mt-0.5 text-sm text-faint" data-testid="ask-from">{fromLine}</p>{/if}
     {#each fields as f, i (i)}
       {@const d = draft[f.key]}
       {@const name = `${ask.id}-${f.key}`}
