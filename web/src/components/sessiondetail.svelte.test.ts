@@ -159,6 +159,7 @@ const stub = vi.hoisted(() => {
     },
     withResume: (r: Record<string, unknown>) => (resume = r),
     logOpens: () => logOpens,
+    requests: () => fetched.mock.calls.length,
     withConversations: (c: unknown[]) => (conversations = c),
     setAnswer: (a: Record<string, unknown>) => (answer = a),
     refuse: (s: number, problem: Record<string, unknown>) => {
@@ -210,6 +211,7 @@ const stub = vi.hoisted(() => {
 
 import SessionDetail from "./SessionDetail.svelte";
 import { Child, subagentConversations, subagentLog } from "../lib/subagent.fixture";
+import { callFrames, childEnd, childStart } from "../lib/subagent.frames";
 
 beforeEach(() => {
   stub.reset();
@@ -223,8 +225,8 @@ async function settle() {
   flushSync();
 }
 
-async function open() {
-  history.replaceState({}, "", "/session/?id=ses_1");
+async function open(query = "") {
+  history.replaceState({}, "", `/session/?id=ses_1${query}`);
   const target = document.createElement("div");
   document.body.append(target);
   const app = mount(SessionDetail, { target });
@@ -654,6 +656,338 @@ describe("a subagent's card on the session page", () => {
     await settle();
     expect(card(page).querySelector('[data-testid="subagent-waiting"]')).toBeNull();
     Element.prototype.scrollIntoView = prior;
+    page.done();
+  });
+});
+
+describe("a subagent's own view", () => {
+  // `agent=` selects it on the same page, from the conversations and log
+  // the page holds. These assert markup state: jsdom has no layout. The
+  // tree and the addresses are in subagentview.test.ts.
+  //
+  // @decision(DL-113)
+  const find = (page: { target: HTMLElement }, id: string) => page.target.querySelector(`[data-testid="${id}"]`) as HTMLElement | null;
+  const all = (page: { target: HTMLElement }, id: string) => Array.from(page.target.querySelectorAll(`[data-testid="${id}"]`)) as HTMLElement[];
+  const viewOf = (agent: string) => `/session/?id=ses_1&agent=${agent}`;
+  const plain = () => new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+
+  async function wait() {
+    await new Promise((r) => setTimeout(r, 30));
+    await settle();
+  }
+
+  it("draws the child's own transcript with a breadcrumb, and no composer in its place", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open(`&agent=${Child}`);
+    for (const ev of subagentLog) stub.say(ev);
+    await settle();
+
+    // The way back and the heading.
+    const back = find(page, "subagent-back") as HTMLAnchorElement;
+    expect(back.getAttribute("href")).toBe("/session/?id=ses_1");
+    expect(find(page, "subagent-crumb")?.textContent).toBe("Review the retry change");
+    expect(find(page, "subagent-heading")?.textContent).toBe("Review the retry change");
+    expect(find(page, "subagent-bar")?.textContent).toContain("Done");
+    // Its prompt row and its words, not the main conversation's.
+    expect(find(page, "subagent-prompt")?.textContent).toContain("Review the diff of this branch");
+    expect(page.said()).toContain("The retry change is safe to merge.");
+    expect(page.said()).not.toContain("Can you check that the retry change");
+    expect(page.said()).not.toContain("You are a subagent spawned");
+    expect(all(page, "message").filter((m) => m.className.includes("items-end"))).toHaveLength(0);
+    // Read-only: no composer, no Stop, no Resume, and one line saying so.
+    expect(page.box()).toBeNull();
+    expect(page.stop()).toBeNull();
+    expect(page.resume()).toBeNull();
+    expect(find(page, "subagent-readonly")?.textContent).toContain("You are reading a subagent. Messages go to the main conversation");
+    expect((find(page, "subagent-readonly")?.querySelector("a") as HTMLAnchorElement).getAttribute("href")).toBe("/session/?id=ses_1");
+    // The sidebar is the session's, unchanged.
+    expect(page.control("end-session")).not.toBeNull();
+    // One child: nothing to step between.
+    expect(find(page, "subagent-siblings")).toBeNull();
+    page.done();
+  });
+
+  it("is reached from the card and the sidebar by links, without a reload or a request", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open();
+    for (const ev of subagentLog) stub.say(ev);
+    await settle();
+
+    // Main view: the composer, the card's Open link, the sidebar's list.
+    expect(page.box()).not.toBeNull();
+    expect(find(page, "subagent-bar")).toBeNull();
+    expect(find(page, "subagent-readonly")).toBeNull();
+    const opener = find(page, "subagent-open") as HTMLAnchorElement;
+    expect(opener.getAttribute("href")).toBe(viewOf(Child));
+    const listed = all(page, "subagent-link");
+    expect(listed).toHaveLength(1);
+    expect(listed[0].getAttribute("href")).toBe(viewOf(Child));
+    expect(listed[0].textContent).toContain("Review the retry change");
+    expect(listed[0].textContent).toContain("Done");
+    expect(listed[0].textContent).toContain("1 call");
+
+    const opens = stub.logOpens();
+    const requests = stub.requests();
+    const event = plain();
+    opener.dispatchEvent(event);
+    await settle();
+    expect(event.defaultPrevented, "the page left the navigation to the browser").toBe(true);
+    expect(location.search).toBe(`?id=ses_1&agent=${Child}`);
+    expect(page.box()).toBeNull();
+    expect(find(page, "subagent-readonly")).not.toBeNull();
+    expect(find(page, "subagent-crumb")?.textContent).toBe("Review the retry change");
+    expect(all(page, "subagent-link")[0].getAttribute("aria-current")).toBe("page");
+    expect(stub.logOpens(), "switching view reopened the log").toBe(opens);
+    expect(stub.requests(), "switching view asked for something").toBe(requests);
+
+    // Back to the main conversation by the breadcrumb: pushed too.
+    find(page, "subagent-back")!.dispatchEvent(plain());
+    await settle();
+    expect(location.search).toBe("?id=ses_1");
+    expect(page.box()).not.toBeNull();
+    expect(find(page, "subagent-bar")).toBeNull();
+    expect(stub.logOpens()).toBe(opens);
+    expect(stub.requests()).toBe(requests);
+    page.done();
+  });
+
+  it("leaves a modified click to the browser", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open();
+    for (const ev of subagentLog) stub.say(ev);
+    await settle();
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true });
+    // jsdom would try to navigate on an unprevented link click; stopped
+    // after the page's own handler has seen it.
+    const stop = (e: Event) => e.preventDefault();
+    document.addEventListener("click", stop);
+    find(page, "subagent-open")!.dispatchEvent(event);
+    document.removeEventListener("click", stop);
+    await settle();
+    expect(location.search).toBe("?id=ses_1");
+    expect(page.box()).not.toBeNull();
+    page.done();
+  });
+
+  it("follows Back and Forward through the views it pushed", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open();
+    for (const ev of subagentLog) stub.say(ev);
+    await settle();
+    find(page, "subagent-open")!.dispatchEvent(plain());
+    await settle();
+    expect(page.box()).toBeNull();
+    const opens = stub.logOpens();
+
+    history.back();
+    await wait();
+    expect(location.search).toBe("?id=ses_1");
+    expect(page.box()).not.toBeNull();
+    expect(find(page, "subagent-bar")).toBeNull();
+
+    history.forward();
+    await wait();
+    expect(location.search).toBe(`?id=ses_1&agent=${Child}`);
+    expect(page.box()).toBeNull();
+    expect(find(page, "subagent-crumb")?.textContent).toBe("Review the retry change");
+    expect(stub.logOpens()).toBe(opens);
+    page.done();
+  });
+
+  it("answers an id the session does not have with the main conversation and a note", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open("&agent=ses_nope");
+    for (const ev of subagentLog) stub.say(ev);
+    await settle();
+    expect(find(page, "subagent-unknown")?.textContent).toContain("no subagent with that id");
+    expect(find(page, "subagent-bar")).toBeNull();
+    expect(page.box(), "the composer is not on the main conversation").not.toBeNull();
+    expect(page.said()).toContain("Can you check that the retry change");
+    expect(find(page, "subagent")).not.toBeNull();
+    page.done();
+  });
+
+  it("does not flash the note while the conversations are still being read", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open(`&agent=${Child}`);
+    // The conversations answered but no frame has arrived: the child is
+    // known from its messages alone.
+    expect(find(page, "subagent-unknown")).toBeNull();
+    expect(find(page, "subagent-crumb")?.textContent).toBe("Review the retry change");
+    page.done();
+  });
+
+  describe("among siblings and a child's own", () => {
+    // Three subagents of the main conversation, the first with a helper
+    // of its own: the shape an agent that fans out produces.
+    const P = "ses_parent";
+    const family = [
+      { id: P, title: "main", messages: [{ id: "msg_p", role: "user", text: "fan out", at: "2026-11-08T19:00:00Z" }] },
+      { id: "ses_c1", parent: P, title: "Review client", messages: [{ id: "msg_1", role: "user", text: "check client", at: "2026-11-08T19:00:10Z" }] },
+      { id: "ses_g1", parent: "ses_c1", title: "Read the tests", messages: [{ id: "msg_g", role: "user", text: "read tests", at: "2026-11-08T19:00:20Z" }] },
+      { id: "ses_c2", parent: P, title: "Review server", messages: [{ id: "msg_2", role: "user", text: "check server", at: "2026-11-08T19:00:30Z" }] },
+      { id: "ses_c3", parent: P, title: "Review web", messages: [{ id: "msg_3", role: "user", text: "check web", at: "2026-11-08T19:00:40Z" }] },
+    ];
+    const frames = [
+      ...callFrames(P, "call_a", 10, { description: "Review client", end: "success", child: "ses_c1" }),
+      ...childStart("ses_c1", 20),
+      ...callFrames("ses_c1", "call_h", 30, { description: "Read the tests", end: "success", child: "ses_g1" }),
+      ...childStart("ses_g1", 40),
+      ...childEnd("ses_g1", 50, "tests read"),
+      ...childEnd("ses_c1", 60, "client reviewed"),
+      ...callFrames(P, "call_b", 70, { description: "Review server", end: "success", child: "ses_c2" }),
+      ...childStart("ses_c2", 80),
+      ...callFrames(P, "call_c", 90, { description: "Review web", end: "success", child: "ses_c3" }),
+      ...childStart("ses_c3", 100),
+    ];
+
+    it("lists them nested in the sidebar, and steps between the children of one parent", async () => {
+      stub.withConversations(family);
+      const page = await open("&agent=ses_c2");
+      for (const ev of frames) stub.say(ev);
+      await settle();
+
+      // The two still running are listed; the two finished ones, the
+      // helper newer than its parent, are behind the disclosure.
+      const label = (a: HTMLElement) => a.querySelector("span")?.textContent;
+      const live = Array.from(find(page, "subagents-live")!.querySelectorAll('[data-testid="subagent-link"]')) as HTMLElement[];
+      expect(live.map(label)).toEqual(["Review server", "Review web"]);
+      expect(live.map((a) => a.getAttribute("aria-current"))).toEqual(["page", null]);
+      const finished = Array.from(find(page, "subagents-finished")!.querySelectorAll('[data-testid="subagent-link"]')) as HTMLElement[];
+      expect(finished.map(label)).toEqual(["Read the tests", "Review client"]);
+
+      expect(find(page, "subagent-siblings")?.textContent).toContain("2 of 3");
+      expect(find(page, "subagent-previous")?.getAttribute("href")).toBe(viewOf("ses_c1"));
+      expect(find(page, "subagent-next")?.getAttribute("href")).toBe(viewOf("ses_c3"));
+      // The helper is not a sibling of these.
+      expect(find(page, "subagent-bar")?.innerHTML).not.toContain("ses_g1");
+
+      const opens = stub.logOpens();
+      find(page, "subagent-next")!.dispatchEvent(plain());
+      await settle();
+      expect(find(page, "subagent-crumb")?.textContent).toBe("Review web");
+      expect(find(page, "subagent-next")).toBeNull();
+      expect(find(page, "subagent-next-none")).not.toBeNull();
+      expect(find(page, "subagent-previous")?.getAttribute("href")).toBe(viewOf("ses_c2"));
+      expect(page.said()).toContain("check web");
+      expect(page.said()).not.toContain("check server");
+      expect(stub.logOpens()).toBe(opens);
+      page.done();
+    });
+
+    it("keeps finished subagents behind a closed disclosure, with the counts in the heading", async () => {
+      // @decision(DL-113)
+      stub.withConversations(family);
+      const page = await open();
+      for (const ev of frames) stub.say(ev);
+      await settle();
+      expect(find(page, "subagents-heading")?.textContent?.replace(/\s+/g, " ").trim()).toBe("Subagents · 2 running, 2 done");
+      const finished = find(page, "subagents-finished") as HTMLDetailsElement;
+      expect(finished.open, "the finished ones are open by default").toBe(false);
+      expect(finished.querySelector("summary")?.textContent?.trim()).toBe("2 finished");
+      // Each is listed once, above or inside.
+      expect(all(page, "subagent-link").map((a) => a.getAttribute("href"))).toHaveLength(4);
+      // A link inside it is a link like the rest.
+      finished.open = true;
+      finished.querySelector<HTMLElement>('[data-testid="subagent-link"]')!.dispatchEvent(plain());
+      await settle();
+      expect(find(page, "subagent-crumb")?.textContent).toBe("Read the tests");
+      page.done();
+    });
+
+    it("lists the open view among the live ones though it is finished, and nothing live leaves only the disclosure", async () => {
+      // @decision(DL-113)
+      stub.withConversations(subagentConversations);
+      const page = await open(`&agent=${Child}`);
+      for (const ev of subagentLog) stub.say(ev);
+      await settle();
+      expect(find(page, "subagents-live")!.querySelector('[data-testid="subagent-link"]')?.getAttribute("aria-current")).toBe("page");
+      expect(find(page, "subagents-finished")).toBeNull();
+
+      find(page, "subagent-back")!.dispatchEvent(plain());
+      await settle();
+      expect(find(page, "subagents-live")).toBeNull();
+      expect(find(page, "subagents-heading")?.textContent?.replace(/\s+/g, " ").trim()).toBe("Subagents · 1 done");
+      const finished = find(page, "subagents-finished") as HTMLDetailsElement;
+      expect(finished.open).toBe(false);
+      expect(finished.querySelector("summary")?.textContent?.trim()).toBe("1 finished");
+      page.done();
+    });
+
+    it("reaches a child's own subagents as cards in its view, under a breadcrumb that goes up", async () => {
+      stub.withConversations(family);
+      const page = await open("&agent=ses_c1");
+      for (const ev of frames) stub.say(ev);
+      await settle();
+      // Its helper is a card in its list, with an Open link of its own.
+      const card = find(page, "subagent")!;
+      expect(card.textContent).toContain("Read the tests");
+      const opener = card.querySelector('[data-testid="subagent-open"]') as HTMLAnchorElement;
+      expect(opener.getAttribute("href")).toBe(viewOf("ses_g1"));
+
+      opener.dispatchEvent(plain());
+      await settle();
+      const crumbs = find(page, "subagent-bar")!;
+      expect(crumbs.querySelector('[data-testid="subagent-ancestor"]')?.textContent).toBe("Review client");
+      expect(crumbs.querySelector('[data-testid="subagent-ancestor"]')?.getAttribute("href")).toBe(viewOf("ses_c1"));
+      expect(crumbs.querySelector('[data-testid="subagent-up"]')?.getAttribute("aria-label")).toBe("Up to Review client");
+      expect(find(page, "subagent-crumb")?.textContent).toBe("Read the tests");
+      expect(page.said()).toContain("read tests");
+      // Alone under its parent: nothing to step between.
+      expect(find(page, "subagent-siblings")).toBeNull();
+      page.done();
+    });
+  });
+
+  it("starts the window again on a change of view", async () => {
+    // @decision(DL-070)
+    stub.withConversations(subagentConversations);
+    const page = await open();
+    for (let i = 0; i < 250; i++) {
+      stub.say({
+        name: "session.text.ended",
+        source: "opencode",
+        text: `line ${i} said`,
+        at: new Date(Date.UTC(2026, 8, 16, 10, 0, i)).toISOString(),
+        pos: i + 1,
+      });
+    }
+    await settle();
+    const drawn = () => (page.said().match(/line \d+ said/g) ?? []).length;
+    // The conversation's two messages and the card are blocks too.
+    expect(drawn()).toBe(197);
+    page.control("transcript-earlier")!.click();
+    await settle();
+    expect(drawn()).toBe(250);
+
+    find(page, "subagent-open")!.dispatchEvent(plain());
+    await settle();
+    expect(drawn(), "the child's view drew the main conversation's lines").toBe(0);
+    find(page, "subagent-back")!.dispatchEvent(plain());
+    await settle();
+    // Not the 250 the reader had opened: the newest window again.
+    expect(drawn()).toBe(197);
+    expect(page.control("transcript-earlier")?.textContent).toContain("Show earlier (53 more)");
+    page.done();
+  });
+
+  it("says in the view that a question from the subagent is waiting in the main conversation", async () => {
+    // @decision(DL-020)
+    stub.withConversations(subagentConversations);
+    const page = await open(`&agent=${Child}`);
+    for (const ev of subagentLog.filter((e) => e.pos <= 18)) stub.say(ev);
+    stub.say({
+      name: "permission.asked",
+      source: "ephemeral",
+      session: Child,
+      ask: { id: "per_c", kind: "permission", action: "edit", resources: ["internal/client/retry.go"], call: "call_x" },
+      at: "2026-11-08T19:17:48Z",
+      pos: 19,
+    });
+    await settle();
+    const waiting = find(page, "subagent-waiting") as HTMLAnchorElement;
+    expect(waiting.textContent).toContain("1 waiting on you, in the main conversation");
+    expect(waiting.getAttribute("href")).toBe("/session/?id=ses_1");
     page.done();
   });
 });

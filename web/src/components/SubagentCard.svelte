@@ -7,16 +7,17 @@
   // Everything that is a function is in ../lib/timeline.ts and
   // ../lib/subagent.ts.
   //
-  // @decision(DL-112) @decision(DL-111)
+  // @decision(DL-112) @decision(DL-111) @decision(DL-113)
   import { SvelteSet } from 'svelte/reactivity';
   import type { Snippet } from 'svelte';
   import { stateMark, stateWord } from '../lib/subagent';
-  import { blocksOf, condense, subagentText, trimBlankLines, type Entry, type SubagentEntry } from '../lib/timeline';
+  import { blocksOf, condense, subagentText, type Entry, type SubagentEntry } from '../lib/timeline';
   import { earlier, earlierLabel, windowOf, type Start } from '../lib/transcriptwindow';
   import EventRun from './EventRun.svelte';
   import Icon from './Icon.svelte';
   import StateMark from './StateMark.svelte';
-  import { secondary } from './ui';
+  import SubagentPrompt from './SubagentPrompt.svelte';
+  import { secondary, textButton } from './ui';
   import Self from './SubagentCard.svelte';
 
   interface Props {
@@ -29,9 +30,13 @@
     onjump: (id: string) => void;
     /** Draws an agent's words; the page's one place for Markdown. */
     markdown: Snippet<[string, string]>;
+    /** The address of a view of this session: a subagent's, or the main one's for "". */
+    href: (agent: string) => string;
+    /** A click on a link to a view, which the page may take over. */
+    onview: (ev: MouseEvent, agent: string) => void;
   }
 
-  const { entry, kids, askingIn, onjump, markdown }: Props = $props();
+  const { entry, kids, askingIn, onjump, markdown, href, onview }: Props = $props();
 
   let open = $state(false);
   // Runs the reader opened inside the card, by the run's stable key.
@@ -39,7 +44,6 @@
   // The window over the child's blocks: sliding until the reader asks for
   // earlier ones, as the main transcript's is (DL-070).
   let start = $state<Start>(undefined);
-  let promptOpen = $state(false);
 
   const waiting = $derived(askingIn(entry.scope));
   const live = $derived(entry.state === 'running' || entry.state === 'starting');
@@ -69,6 +73,10 @@
     {/if}
     {#if entry.agent}<span class="font-mono text-sm text-faint" data-testid="subagent-agent">{entry.agent}</span>{/if}
     <StateMark class="text-sm" mark={stateMark(entry.state)} word={stateWord(entry.state)} />
+    {#if entry.id}
+      <!-- Its own view on this page, at full width. @decision(DL-113) -->
+      <a class={textButton} href={href(entry.id)} data-testid="subagent-open" onclick={(ev) => onview(ev, entry.id)}>Open</a>
+    {/if}
     {#if waiting.length}
       <button
         type="button"
@@ -102,24 +110,11 @@
       {/if}
       {#each windowed.shown as block (block.key)}
         {#if block.kind === 'message' && block.entry.role === 'prompt'}
-          <!-- What the parent agent asked it to do: a quiet row, never a
-               bubble. -->
-          <div class="min-w-0" data-testid="subagent-prompt">
-            <span class="block text-xs font-medium tracking-wide text-faint">Task</span>
-            <p class="m-0 whitespace-pre-wrap text-md text-soft {promptOpen ? '' : 'line-clamp-3'}">{trimBlankLines(block.entry.text)}</p>
-            {#if block.entry.text.length > 240}
-              <button
-                type="button"
-                class="mt-0.5 cursor-pointer border-0 bg-transparent p-0 text-sm text-soft underline"
-                aria-expanded={promptOpen}
-                onclick={() => (promptOpen = !promptOpen)}>{promptOpen ? 'Show less' : 'Show all'}</button
-              >
-            {/if}
-          </div>
+          <SubagentPrompt text={block.entry.text} />
         {:else if block.kind === 'message'}
           <div class="min-w-0" data-testid="subagent-message">{@render markdown(block.entry.text, 'text-read')}</div>
         {:else if block.kind === 'subagent'}
-          <Self entry={block.entry} {kids} {askingIn} {onjump} {markdown} />
+          <Self entry={block.entry} {kids} {askingIn} {onjump} {markdown} {href} {onview} />
         {:else if block.kind === 'events'}
           {@const showAll = runs.has(block.key)}
           <EventRun events={block.events} open={showAll} ontoggle={() => (showAll ? runs.delete(block.key) : runs.add(block.key))} />
