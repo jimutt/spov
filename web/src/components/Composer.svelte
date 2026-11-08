@@ -2,11 +2,13 @@
   // Talk to a running session. POSTs /api/v1/sessions/{ref}/messages.
   // Everything that is a function is in ../lib/steer.ts.
   //
-  // Below `md` it is a compact bar: a one-line field that grows with what
-  // is typed, a round Send, and one chip that opens the model and the
-  // choice of what follows. The same elements make up the desktop form.
+  // Below `md` the form is one rounded container: the text, and under it a
+  // toolbar of the model chip (which opens the model and the choice of what
+  // follows) and a small round Send. While the box is empty, unfocused and
+  // the options are shut, the toolbar is folded away and Send sits beside
+  // the field. The same elements make up the desktop form.
   //
-  // @decision(DL-059) @decision(DL-019) @decision(DL-052) @decision(DL-106)
+  // @decision(DL-059) @decision(DL-019) @decision(DL-052) @decision(DL-106) @decision(DL-117)
   import { tick } from 'svelte';
   import { api, unwrap } from '../lib/api/client';
   import {
@@ -171,16 +173,45 @@
   const chip = $derived(
     `${modelShort || 'Options'}${choosesAfter && following === 'handover' ? ' · hand over' : ''}`,
   );
-  // The field grows with its text on a phone, to five lines or so. On a
-  // wider screen it is the reader's to resize.
+  // The field grows with its text on a phone; the stylesheet's max-height
+  // (40dvh) is what stops it and makes it scroll. On a wider screen it is
+  // the reader's to resize.
   //
-  // @decision(DL-106)
+  // @decision(DL-106) @decision(DL-117)
   $effect(() => {
     void text;
     if (!box || window.matchMedia?.('(min-width: 48rem)').matches !== false) return;
     box.style.height = 'auto';
-    box.style.height = `${Math.min(box.scrollHeight, 128)}px`;
+    box.style.height = `${box.scrollHeight}px`;
   });
+  // Whether focus is somewhere in the form. It folds the phone toolbar
+  // and nothing else, so it needs no care on a wider screen.
+  //
+  // @decision(DL-117)
+  let focused = $state(false);
+  // The toolbar is folded only when nothing asks for it: no focus, no
+  // words, no options, no send in flight (a disabled box loses focus, and
+  // folding for that moment would make the dock jump).
+  //
+  // @decision(DL-117)
+  const toolbar = $derived(focused || text !== '' || optionsOpen || sending);
+  // Focus that left the form folds it; focus that moved inside does not.
+  // A send disables the box, which blurs it with no target, so that is
+  // not a departure either.
+  //
+  // @decision(DL-117)
+  function onFocusOut(event: FocusEvent) {
+    if (sending) return;
+    const next = event.relatedTarget;
+    if (next instanceof Node && event.currentTarget instanceof Node && event.currentTarget.contains(next)) return;
+    focused = false;
+  }
+  // The toolbar's buttons take no focus from the box on a press. On a
+  // touch screen the box would blur at the press, the toolbar fold, and
+  // the click land on whatever moved under the finger.
+  //
+  // @decision(DL-117)
+  const keepFocus = (event: Event) => event.preventDefault();
   let noteOpen = $state(false);
   let resuming = $state(false);
   let resumeFailure = $state<unknown>(undefined);
@@ -238,7 +269,13 @@
   // tab order agree.
   //
   // @decision(DL-056)
-  const pane = 'mb-3 max-lg:mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-md';
+  const pane = 'mb-3 max-lg:mb-2 max-md:mb-1.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-md';
+  // Below `md` Interrupt and Resume are text on the status line with a 44
+  // px tap area, which the negative margin keeps from making the line tall.
+  //
+  // @decision(DL-117)
+  const slim =
+    'max-md:-my-3 max-md:min-h-11 max-md:border-0 max-md:bg-transparent max-md:px-2 max-md:py-0 max-md:text-sm max-md:font-semibold max-md:text-ink max-md:hover:bg-transparent max-md:underline max-md:decoration-rule-2 max-md:underline-offset-[3px]';
   const kbd = 'rounded-[3px] border border-b-2 border-rule-2 bg-raised px-1 font-sans text-xs text-soft';
 
   async function submit(event: SubmitEvent) {
@@ -329,12 +366,12 @@
       </span>
       <span class="flex flex-wrap items-center gap-2">
         {#if stoppable}
-          <button type="button" data-testid="composer-stop" class={secondary} onclick={halt} disabled={stopping}
+          <button type="button" data-testid="composer-stop" class="{secondary} {slim}" onclick={halt} disabled={stopping}
             >{stopping ? 'Interrupting…' : 'Interrupt'}</button
           >
         {/if}
         {#if releasable}
-          <button type="button" data-testid="composer-resume" class={secondary} onclick={release} disabled={resuming}
+          <button type="button" data-testid="composer-resume" class="{secondary} {slim}" onclick={release} disabled={resuming}
             >{resuming ? 'Resuming…' : 'Resume job'}</button
           >
         {/if}
@@ -363,10 +400,17 @@
   {/if}
 
   {#if allowed.can}
+    <!-- Below `md` the form is the container: the field over a toolbar.
+         The chip and Send are grid cells beside each other when the
+         toolbar is open, and Send is beside the field when it is folded,
+         so each control is drawn once. @decision(DL-117) -->
     <form
       onsubmit={submit}
+      onfocusin={() => (focused = true)}
+      onfocusout={onFocusOut}
       data-testid="composer"
-      class="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2 md:flex md:flex-wrap md:items-center"
+      data-toolbar={toolbar ? 'open' : 'folded'}
+      class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 max-md:gap-y-0 max-md:rounded-2xl max-md:border max-md:border-rule-2 max-md:bg-paper max-md:p-1 max-md:focus-within:border-olive md:flex md:flex-wrap"
     >
       <label class="sr-only" for="composer-text">Message</label>
       <textarea
@@ -377,24 +421,21 @@
         rows="1"
         enterkeyhint={touch ? 'enter' : 'send'}
         disabled={sending}
-        class="{fieldBase} resize-none px-3 py-2.5 text-read max-md:max-h-32 max-md:min-h-11 md:min-h-[5.75rem] md:resize-y"
+        class="{fieldBase} resize-none px-3 py-2.5 text-read max-md:row-start-1 max-md:max-h-[40dvh] max-md:min-h-11 max-md:rounded-xl max-md:border-0 max-md:bg-transparent max-md:py-2.5 max-md:focus-visible:outline-0 {toolbar
+          ? 'max-md:col-span-2'
+          : 'max-md:col-start-1'} md:min-h-[5.75rem] md:resize-y"
         placeholder="Message this session"
       ></textarea>
 
       <button
-        type="submit"
-        data-testid="composer-send"
-        class="{primary} max-md:size-11 max-md:rounded-full max-md:p-0"
-        disabled={sending || problem !== ''}
-        ><Icon name="send" class="size-5 md:hidden" /><span class="max-md:sr-only">{sending ? 'Sending…' : 'Send'}</span></button
-      >
-
-      <button
         type="button"
-        class="col-span-2 inline-flex min-w-0 cursor-pointer items-center gap-1.5 justify-self-start border-0 bg-transparent p-0 text-sm text-soft focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 md:hidden"
+        class="{toolbar
+          ? 'inline-flex'
+          : 'hidden'} relative col-start-1 row-start-2 h-8 min-w-0 cursor-pointer items-center gap-1.5 justify-self-start rounded-full border border-rule-2 bg-transparent px-2.5 py-0 text-sm text-soft after:absolute after:-inset-y-1.5 after:inset-x-0 after:content-[''] focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 md:hidden"
         aria-expanded={optionsOpen}
         aria-controls="composer-options"
         data-testid="composer-options-toggle"
+        onmousedown={keepFocus}
         onclick={() => (optionsOpen = !optionsOpen)}
       >
         <Icon name="sliders" class="size-4 shrink-0" />
@@ -402,10 +443,24 @@
         <Icon name="chevron" class="size-3 shrink-0 transition-transform {optionsOpen ? '-rotate-90' : 'rotate-90'}" />
       </button>
 
+      <button
+        type="submit"
+        data-testid="composer-send"
+        class="{primary} max-md:relative max-md:col-start-2 max-md:size-9 max-md:rounded-full max-md:p-0 max-md:after:absolute max-md:after:-inset-1 max-md:after:content-[''] {toolbar
+          ? 'max-md:row-start-2'
+          : 'max-md:row-start-1'}"
+        disabled={sending || problem !== ''}
+        onmousedown={keepFocus}
+        ><Icon name="send" class="size-5 md:hidden" /><span class="max-md:sr-only">{sending ? 'Sending…' : 'Send'}</span></button
+      >
+
       <!-- What a phone folds away; on a wider screen the wrapper is not
            there and its contents lie in the form's own row.
            @decision(DL-106) -->
-      <div id="composer-options" class="{optionsOpen ? 'flex' : 'hidden'} col-span-2 flex-col gap-3 md:contents">
+      <div
+        id="composer-options"
+        class="{optionsOpen ? 'flex' : 'hidden'} col-span-2 flex-col gap-3 max-md:row-start-3 max-md:mt-1 max-md:border-t max-md:border-rule max-md:px-3 max-md:pt-2.5 max-md:pb-1.5 md:contents"
+      >
         <!-- On a running job only: what follows this one message.
              @decision(DL-059) @decision(DL-052) -->
         {#if choosesAfter}

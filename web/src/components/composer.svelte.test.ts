@@ -727,6 +727,115 @@ describe("the options a phone folds away", () => {
   });
 });
 
+// Below `md` the form is one container whose toolbar (the chip and Send)
+// is folded away while the box is empty, unfocused and the options shut.
+// jsdom has no layout, so this asserts the state the stylesheet reads,
+// `data-toolbar`, and which controls are where.
+//
+// @decision(DL-117) @decision(DL-106) @decision(DL-059)
+describe("the phone toolbar", () => {
+  function type(c: ReturnType<typeof draw>, words: string) {
+    c.box()!.value = words;
+    c.box()!.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+  }
+  const state = (c: ReturnType<typeof draw>) => c.form().getAttribute("data-toolbar");
+
+  it("is folded while the box is empty, unfocused and the options are shut", () => {
+    const c = draw("running");
+    expect(state(c)).toBe("folded");
+    expect(c.chip().classList.contains("hidden")).toBe(true);
+    expect(c.button()!.disabled).toBe(true);
+    c.done();
+  });
+
+  it("opens on focus and folds again when focus leaves the form", () => {
+    const c = draw("running");
+    c.box()!.focus();
+    flushSync();
+    expect(state(c)).toBe("open");
+    expect(c.chip().classList.contains("hidden")).toBe(false);
+
+    c.box()!.blur();
+    flushSync();
+    expect(state(c)).toBe("folded");
+    c.done();
+  });
+
+  it("stays open while focus moves between the form's own controls", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5" });
+    c.box()!.focus();
+    c.chip().focus();
+    flushSync();
+    expect(state(c)).toBe("open");
+    c.done();
+  });
+
+  it("stays open for as long as there are words, and folds when they go", () => {
+    const c = draw("running");
+    type(c, "half a thought");
+    expect(state(c)).toBe("open");
+    expect(c.button()!.disabled).toBe(false);
+    c.box()!.blur();
+    flushSync();
+    expect(state(c)).toBe("open");
+    type(c, "");
+    expect(state(c)).toBe("folded");
+    expect(c.button()!.disabled).toBe(true);
+    c.done();
+  });
+
+  it("never folds while the options are open", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5" });
+    c.box()!.focus();
+    c.chip().click();
+    flushSync();
+    expect(c.chip().getAttribute("aria-expanded")).toBe("true");
+    c.box()!.blur();
+    flushSync();
+    expect(state(c)).toBe("open");
+
+    c.chip().click();
+    flushSync();
+    expect(c.chip().getAttribute("aria-expanded")).toBe("false");
+    expect(state(c)).toBe("folded");
+    c.done();
+  });
+
+  it("keeps the box focused on a press of the chip or Send", () => {
+    const c = draw("running");
+    for (const el of [c.chip(), c.button()!]) {
+      const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      el.dispatchEvent(press);
+      expect(press.defaultPrevented).toBe(true);
+    }
+    c.done();
+  });
+
+  it("draws each control once, with Send and the chip inside the form", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5" });
+    expect(c.target.querySelectorAll('[data-testid="composer-send"]')).toHaveLength(1);
+    expect(c.target.querySelectorAll('[data-testid="composer-options-toggle"]')).toHaveLength(1);
+    expect(c.target.querySelectorAll("#composer-options")).toHaveLength(1);
+    expect(c.form().contains(c.chip())).toBe(true);
+    expect(c.form().contains(c.button())).toBe(true);
+    expect(c.form().contains(c.options())).toBe(true);
+    c.done();
+  });
+
+  it("keeps Interrupt and Resume outside the form", () => {
+    const running = draw("running", { inFlight: true });
+    expect(running.stop()).not.toBeNull();
+    expect(running.form().contains(running.stop())).toBe(false);
+    running.done();
+
+    const steered = draw("steered");
+    expect(steered.resume()).not.toBeNull();
+    expect(steered.form().contains(steered.resume())).toBe(false);
+    steered.done();
+  });
+});
+
 // Enter on a touch screen writes a new line and the button sends. The
 // pointer is what decides, so the stub answers only the coarse query.
 //
