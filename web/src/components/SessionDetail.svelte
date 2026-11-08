@@ -101,10 +101,13 @@
   import { stateMark, stateWord as subagentWord } from '../lib/subagent';
   import {
     agentOf,
+    askingSessions,
     isPlainClick,
     scopeOf,
     siblingsOf,
+    sidebarList,
     subagentTree,
+    type SubagentNode,
     trailTo,
     viewHref,
   } from '../lib/subagentview';
@@ -311,7 +314,10 @@
   // @decision(DL-113)
   const tree = $derived(subagentTree(timelines));
   const viewing = $derived(agent && tree.byId.has(agent) ? agent : '');
-  const unknownAgent = $derived(agent !== '' && readTranscript && viewing === '');
+  // The sidebar's list: the live ones, the open view and its ancestors,
+  // and the finished ones apart. @decision(DL-113)
+  const sidebarSubagents = $derived(sidebarList(tree, viewing, askingSessions(timelines.entries, asks)));
+  const unknownAgent =$derived(agent !== '' && readTranscript && viewing === '');
   const blocks = $derived(blocksOf(condense(viewing ? (timelines.children.get(viewing) ?? []) : timelines.entries)));
 
   // Only a window of the newest blocks is drawn. It slides while the
@@ -1333,11 +1339,11 @@
         <!-- The session's subagents, nested under their parents, each a
              link to its view. Facts only. In this one sidebar, which is
              the sheet below `lg`. @decision(DL-113) @decision(DL-106) -->
-        <section data-testid="subagents">
-          <h2 class="m-0 mb-2 text-base font-semibold">Subagents</h2>
-          <ul class="m-0 flex list-none flex-col gap-1.5 p-0">
-            {#each tree.order as node (node.id)}
-              <li style:padding-left="{node.depth * 0.875}rem">
+        <!-- Only the live ones, and the open view with its ancestors, are
+             listed; the finished ones are behind one disclosure, newest
+             first, so a long session's sidebar stays short. -->
+        {#snippet subagentRow(node: SubagentNode, indent: number)}
+              <li style:padding-left="{indent * 0.875}rem">
                 <a
                   class="flex min-w-0 flex-wrap items-baseline justify-between gap-x-2 text-ink no-underline hover:underline focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 {node.id === viewing ? 'font-semibold' : ''}"
                   href={viewHref(ref, node.id)}
@@ -1352,8 +1358,38 @@
                   </span>
                 </a>
               </li>
-            {/each}
-          </ul>
+        {/snippet}
+        <section data-testid="subagents">
+          <h2 class="m-0 mb-2 text-base font-semibold" data-testid="subagents-heading">
+            Subagents{#if sidebarSubagents.counts}{' '}<span class="font-normal text-soft"
+                >·
+                {#each sidebarSubagents.counts.split(', ') as part, i (part)}<span class="whitespace-nowrap">{part}{i < sidebarSubagents.counts.split(', ').length - 1 ? ',' : ''}</span>{' '}{/each}</span
+              >{/if}
+          </h2>
+          {#if sidebarSubagents.live.length}
+            <ul class="m-0 flex list-none flex-col gap-1.5 p-0" data-testid="subagents-live">
+              {#each sidebarSubagents.live as node (node.id)}
+                {@render subagentRow(node, node.depth)}
+              {/each}
+            </ul>
+          {/if}
+          {#if sidebarSubagents.finished.length}
+            <!-- Closed by default, as the Sandbox section is. A link in it
+                 closes the sheet like any other. @decision(DL-113) -->
+            <details class={sidebarSubagents.live.length ? 'mt-3' : ''} data-testid="subagents-finished">
+              <summary
+                class="flex cursor-pointer list-none items-center gap-1.5 text-md font-semibold select-none focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2"
+              >
+                <Icon name="chevron" class="chevron size-3 text-faint" />
+                {sidebarSubagents.finished.length} finished
+              </summary>
+              <ul class="m-0 mt-2 flex list-none flex-col gap-1.5 p-0">
+                {#each sidebarSubagents.finished as node (node.id)}
+                  {@render subagentRow(node, 0)}
+                {/each}
+              </ul>
+            </details>
+          {/if}
         </section>
       {/if}
 

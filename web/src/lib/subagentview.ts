@@ -27,6 +27,9 @@ export interface SubagentNode {
   state: SubagentState;
   /** How many tool calls it made, as its card counts them. */
   calls: number;
+  /** Where its card is drawn in its parent's list: later is newer. */
+  at: number;
+  seq: number;
 }
 
 export interface SubagentTree {
@@ -72,7 +75,7 @@ export function subagentTree(t: Pick<Timelines, "entries" | "children">): Subage
 }
 
 function nodeOf(e: SubagentEntry, parent: string, depth: number): SubagentNode {
-  return { id: e.id, parent, depth, label: e.title || "Subagent", agent: e.agent, state: e.state, calls: e.calls };
+  return { id: e.id, parent, depth, label: e.title || "Subagent", agent: e.agent, state: e.state, calls: e.calls, at: e.at, seq: e.seq };
 }
 
 /** Where a subagent is among its siblings. */
@@ -108,6 +111,71 @@ export function trailTo(tree: SubagentTree, id: string): SubagentNode[] {
 /** scopeOf is a subagent and every one under it, whose asks its view counts. */
 export function scopeOf(tree: SubagentTree, id: string): string[] {
   return tree.byId.has(id) ? [id, ...(tree.under.get(id) ?? []).flatMap((c) => scopeOf(tree, c))] : [];
+}
+
+/**
+ * askingSessions is the conversations with a question waiting on the
+ * reader. Asks stay in the main list whichever conversation raised them,
+ * so that list is the one to read.
+ */
+export function askingSessions(entries: readonly Entry[], states: ReadonlyMap<string, { status: string }>): Set<string> {
+  const out = new Set<string>();
+  for (const e of entries) {
+    if (e.kind === "event" && e.ask && e.session && states.get(e.ask.id)?.status === "pending") out.add(e.session);
+  }
+  return out;
+}
+
+/** The sidebar's list of subagents, split into what is live and what is over. */
+export interface SidebarList {
+  /** Live subagents, and the ones kept for context, nested in tree order. */
+  live: SubagentNode[];
+  /** The rest, which are over, most recently created first. */
+  finished: SubagentNode[];
+  /** The heading's counts: "2 running, 18 done"; empty with no subagents. */
+  counts: string;
+}
+
+const Live: ReadonlySet<SubagentState> = new Set(["starting", "running"]);
+
+/**
+ * sidebarList keeps a long session's finished subagents out of the way:
+ *
+ * - a subagent is live when it is starting or running, or when it or one
+ *   under it has a question waiting on the reader (`asking`);
+ * - the live ones are always listed, and so is the one whose view is open
+ *   (`viewing`) even when it is over, and each of their ancestors, so the
+ *   nesting reads; they stay in tree order;
+ * - every other subagent is finished, listed once, newest first, behind
+ *   one disclosure, never also among the live ones.
+ *
+ * The counts say how many are in each state, whichever part they sit in.
+ */
+export function sidebarList(tree: SubagentTree, viewing: string, asking: ReadonlySet<string> = new Set()): SidebarList {
+  const shown = new Set<string>();
+  const keep = (id: string) => {
+    for (let n = tree.byId.get(id); n && !shown.has(n.id); n = tree.byId.get(n.parent)) shown.add(n.id);
+  };
+  for (const n of tree.order) {
+    if (Live.has(n.state) || scopeOf(tree, n.id).some((id) => asking.has(id))) keep(n.id);
+  }
+  if (viewing) keep(viewing);
+  const live = tree.order.filter((n) => shown.has(n.id));
+  const finished = tree.order.filter((n) => !shown.has(n.id)).sort((a, b) => b.at - a.at || b.seq - a.seq);
+  return { live, finished, counts: countsLine(tree.order) };
+}
+
+/** countsLine says how many subagents are in each state, the empty ones left out. */
+export function countsLine(nodes: readonly SubagentNode[]): string {
+  const n = { running: 0, done: 0, failed: 0, stopped: 0 };
+  for (const node of nodes) {
+    if (Live.has(node.state)) n.running++;
+    else n[node.state as "done" | "failed" | "stopped"]++;
+  }
+  return (["running", "done", "failed", "stopped"] as const)
+    .filter((k) => n[k] > 0)
+    .map((k) => `${n[k]} ${k}`)
+    .join(", ");
 }
 
 /** agentOf is the subagent a query string names, "" for the main conversation. */

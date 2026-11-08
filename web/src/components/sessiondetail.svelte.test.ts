@@ -847,12 +847,14 @@ describe("a subagent's own view", () => {
       for (const ev of frames) stub.say(ev);
       await settle();
 
-      const list = all(page, "subagent-link");
-      expect(list.map((a) => a.querySelector("span")?.textContent)).toEqual(["Review client", "Read the tests", "Review server", "Review web"]);
-      // One level of indent per depth.
-      const indent = list.map((a) => (a.parentElement as HTMLElement).style.paddingLeft);
-      expect(indent).toEqual(["0rem", "0.875rem", "0rem", "0rem"]);
-      expect(list.map((a) => a.getAttribute("aria-current"))).toEqual([null, null, "page", null]);
+      // The two still running are listed; the two finished ones, the
+      // helper newer than its parent, are behind the disclosure.
+      const label = (a: HTMLElement) => a.querySelector("span")?.textContent;
+      const live = Array.from(find(page, "subagents-live")!.querySelectorAll('[data-testid="subagent-link"]')) as HTMLElement[];
+      expect(live.map(label)).toEqual(["Review server", "Review web"]);
+      expect(live.map((a) => a.getAttribute("aria-current"))).toEqual(["page", null]);
+      const finished = Array.from(find(page, "subagents-finished")!.querySelectorAll('[data-testid="subagent-link"]')) as HTMLElement[];
+      expect(finished.map(label)).toEqual(["Read the tests", "Review client"]);
 
       expect(find(page, "subagent-siblings")?.textContent).toContain("2 of 3");
       expect(find(page, "subagent-previous")?.getAttribute("href")).toBe(viewOf("ses_c1"));
@@ -870,6 +872,45 @@ describe("a subagent's own view", () => {
       expect(page.said()).toContain("check web");
       expect(page.said()).not.toContain("check server");
       expect(stub.logOpens()).toBe(opens);
+      page.done();
+    });
+
+    it("keeps finished subagents behind a closed disclosure, with the counts in the heading", async () => {
+      // @decision(DL-113)
+      stub.withConversations(family);
+      const page = await open();
+      for (const ev of frames) stub.say(ev);
+      await settle();
+      expect(find(page, "subagents-heading")?.textContent?.replace(/\s+/g, " ").trim()).toBe("Subagents · 2 running, 2 done");
+      const finished = find(page, "subagents-finished") as HTMLDetailsElement;
+      expect(finished.open, "the finished ones are open by default").toBe(false);
+      expect(finished.querySelector("summary")?.textContent?.trim()).toBe("2 finished");
+      // Each is listed once, above or inside.
+      expect(all(page, "subagent-link").map((a) => a.getAttribute("href"))).toHaveLength(4);
+      // A link inside it is a link like the rest.
+      finished.open = true;
+      finished.querySelector<HTMLElement>('[data-testid="subagent-link"]')!.dispatchEvent(plain());
+      await settle();
+      expect(find(page, "subagent-crumb")?.textContent).toBe("Read the tests");
+      page.done();
+    });
+
+    it("lists the open view among the live ones though it is finished, and nothing live leaves only the disclosure", async () => {
+      // @decision(DL-113)
+      stub.withConversations(subagentConversations);
+      const page = await open(`&agent=${Child}`);
+      for (const ev of subagentLog) stub.say(ev);
+      await settle();
+      expect(find(page, "subagents-live")!.querySelector('[data-testid="subagent-link"]')?.getAttribute("aria-current")).toBe("page");
+      expect(find(page, "subagents-finished")).toBeNull();
+
+      find(page, "subagent-back")!.dispatchEvent(plain());
+      await settle();
+      expect(find(page, "subagents-live")).toBeNull();
+      expect(find(page, "subagents-heading")?.textContent?.replace(/\s+/g, " ").trim()).toBe("Subagents · 1 done");
+      const finished = find(page, "subagents-finished") as HTMLDetailsElement;
+      expect(finished.open).toBe(false);
+      expect(finished.querySelector("summary")?.textContent?.trim()).toBe("1 finished");
       page.done();
     });
 

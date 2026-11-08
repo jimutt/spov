@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import { callFrames, childEnd, childStart, toolFrames } from './subagent.frames';
 import { backgroundConversations, backgroundLog, subagentConversations, subagentLog } from './subagent.fixture';
-import { buildTimelines, type Conversation } from './timeline';
-import { agentOf, isPlainClick, scopeOf, siblingsOf, subagentTree, trailTo, viewHref } from './subagentview';
+import { buildTimelines, type Conversation, type Entry, type SubagentEntry } from './timeline';
+import { agentOf, askingSessions, isPlainClick, scopeOf, siblingsOf, sidebarList, subagentTree, trailTo, viewHref } from './subagentview';
 
 /**
  * The tree of subagents the page holds and where its links lead, over
@@ -99,6 +99,97 @@ describe('the tree over the measured fixtures', () => {
     const tree = subagentTree(buildTimelines(backgroundConversations, backgroundLog, [], false));
     expect(tree.order).toHaveLength(1);
     expect(tree.order[0].parent).toBe('');
+  });
+});
+
+describe('the sidebar list', () => {
+  // Cards of a session's subagents, by hand: the partition reads only
+  // what a card says.
+  //
+  // @decision(DL-113)
+  const card = (id: string, state: SubagentEntry['state'], at: number, o: Partial<SubagentEntry> = {}): SubagentEntry => ({
+    kind: 'subagent',
+    key: `sub:${id}`,
+    at,
+    seq: at,
+    id,
+    call: '',
+    title: id,
+    agent: '',
+    state,
+    calls: 1,
+    summary: '',
+    latest: '',
+    final: '',
+    scope: [id],
+    ...o,
+  });
+  const treeOf = (main: SubagentEntry[], under: Record<string, SubagentEntry[]> = {}) =>
+    subagentTree({ entries: main, children: new Map(Object.entries(under)) });
+  const ids = (nodes: readonly { id: string }[]) => nodes.map((n) => n.id);
+
+  test('twenty finished behind the disclosure, newest first, and the two running ones listed', () => {
+    const main = [
+      ...Array.from({ length: 20 }, (_, i) => card(`done${i}`, i === 3 ? 'failed' : i === 4 ? 'stopped' : 'done', i + 1)),
+      card('run0', 'running', 30),
+      card('wait0', 'starting', 31),
+    ];
+    const got = sidebarList(treeOf(main), '');
+    expect(ids(got.live)).toEqual(['run0', 'wait0']);
+    expect(got.finished).toHaveLength(20);
+    expect(ids(got.finished).slice(0, 3)).toEqual(['done19', 'done18', 'done17']);
+    expect(ids(got.finished).at(-1)).toBe('done0');
+    expect(got.counts).toBe('2 running, 18 done, 1 failed, 1 stopped');
+    // Each once: nothing above is inside.
+    expect(new Set([...ids(got.live), ...ids(got.finished)]).size).toBe(22);
+  });
+
+  test('a finished ancestor of a live subagent stays in the live part, in its place', () => {
+    const tree = treeOf([card('old', 'done', 1), card('lead', 'done', 2)], {
+      lead: [card('helper', 'running', 3), card('helped', 'done', 4)],
+    });
+    const got = sidebarList(tree, '');
+    expect(got.live.map((n) => [n.id, n.depth])).toEqual([
+      ['lead', 0],
+      ['helper', 1],
+    ]);
+    // Its finished sibling is not among them, and is not lost.
+    expect(ids(got.finished).sort()).toEqual(['helped', 'old']);
+    expect(got.counts).toBe('1 running, 3 done');
+  });
+
+  test('the open view stays listed, with its ancestors, though it is finished', () => {
+    const tree = treeOf([card('a', 'done', 1), card('b', 'done', 2)], { b: [card('b1', 'done', 3)] });
+    expect(ids(sidebarList(tree, 'b1').live)).toEqual(['b', 'b1']);
+    expect(ids(sidebarList(tree, 'b1').finished)).toEqual(['a']);
+    expect(ids(sidebarList(tree, 'a').live)).toEqual(['a']);
+  });
+
+  test('a subagent with a question waiting is live, and so is its parent', () => {
+    const tree = treeOf([card('a', 'done', 1), card('b', 'done', 2)], { b: [card('b1', 'done', 3)] });
+    const got = sidebarList(tree, '', new Set(['b1']));
+    expect(ids(got.live)).toEqual(['b', 'b1']);
+    expect(ids(got.finished)).toEqual(['a']);
+  });
+
+  test('with nothing live the live part is empty and the finished ones are all behind the disclosure', () => {
+    const got = sidebarList(treeOf([card('a', 'done', 1), card('b', 'failed', 2)]), '');
+    expect(got.live).toEqual([]);
+    expect(ids(got.finished)).toEqual(['b', 'a']);
+    expect(got.counts).toBe('1 done, 1 failed');
+  });
+
+  test('no subagents is no list', () => {
+    expect(sidebarList(treeOf([]), '')).toEqual({ live: [], finished: [], counts: '' });
+  });
+
+  test('which conversations have a question waiting', () => {
+    const ask = (id: string, session: string) => ({ kind: 'event', ask: { id }, session }) as unknown as Entry;
+    const states = new Map([
+      ['p1', { status: 'pending' }],
+      ['p2', { status: 'answered' }],
+    ]);
+    expect([...askingSessions([ask('p1', 'ses_a'), ask('p2', 'ses_b'), ask('r1', 'ses_c')], states)]).toEqual(['ses_a']);
   });
 });
 
