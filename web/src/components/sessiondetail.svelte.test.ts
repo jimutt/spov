@@ -842,3 +842,22 @@ describe("the session page on a phone", () => {
     }
   });
 });
+
+// @decision(DL-116)
+describe("the session page's cost", () => {
+  it("shows the sandbox cost only inside the collapsed Sandbox disclosure", async () => {
+    stub.setSession({ estimated_cost: 4.82 });
+    const page = await open();
+
+    expect(page.said()).not.toContain("Cost so far");
+    const sandbox = page.target.querySelector('[data-testid="sandbox-details"]');
+    expect(sandbox, "the Sandbox disclosure is missing").not.toBeNull();
+    expect((sandbox as HTMLDetailsElement).open).toBe(false);
+    expect(sandbox!.textContent).toContain("Sandbox cost");
+    expect(sandbox!.textContent).toContain("at least $4.82");
+    expect(sandbox!.textContent).toContain("does not include model tokens");
+    // The figure is drawn once, and only inside the disclosure.
+    expect(page.said().split("at least $4.82")).toHaveLength(2);
+    page.done();
+  });
+});

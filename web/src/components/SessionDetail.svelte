@@ -496,7 +496,6 @@
   // @decision(DL-057)
   const goalClip = $derived(clip(job?.goal ?? '', GoalLimit));
   let goalOpen = $state(false);
-  let costOpen = $state(false);
   let envOpen = $state(false);
   const credentialNotes = new SvelteSet<string>();
 
@@ -820,8 +819,9 @@
       {/if}
     {/snippet}
     <!-- Ordered rather than laid out in source order: below `lg` the
-         grid is one column, and a page that opens at the end must not
-         open on "Cost so far". @decision(DL-057) -->
+         grid is one column and the sidebar is a sheet over the
+         transcript, so it is ordered first.
+         @decision(DL-057) @decision(DL-106) -->
     <div class="order-2 min-w-0 lg:order-1">
       <!-- Below `lg`: one slim bar that stays on screen, with the way back,
            the title, the state and the button for everything else. The
@@ -1439,7 +1439,7 @@
       <!-- Collapsed by default (DL-057). A native <details> rather than
            a $state flag: keyboard accessible and findable in-page with
            nothing to manage. @decision(DL-057) -->
-      <details>
+      <details data-testid="sandbox-details">
         <summary
           class="flex cursor-pointer list-none items-center gap-1.5 text-base font-semibold select-none focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2"
         >
@@ -1469,7 +1469,15 @@
             <dt class="text-soft">Egress</dt>
             <dd class="m-0 text-right">{sentence(s.egress)}</dd>
           {/if}
+          <!-- A floor, and sandbox compute only: model tokens are not
+               metered. @decision(DL-116) -->
+          <dt class="text-soft">Sandbox cost</dt>
+          <dd class="m-0 text-right text-rust tabular-nums">at least {money(s.estimated_cost)}</dd>
         </dl>
+        <p class="mt-2 mb-0 text-sm leading-snug text-soft">
+          From the sandbox's requested resources and elapsed time. Modal bills the higher of requested and
+          actual use, so it can only be more. It does not include model tokens, which spov never meters.
+        </p>
         <!-- The session's own variables, beside spov's; not secret, so
              shown as they are. @decision(DL-096) @decision(DL-057) -->
         {#if envRows(s.env).length}
@@ -1546,23 +1554,6 @@
         </section>
       {/if}
 
-      <section>
-        <!-- The figure by default, how it is worked out on demand.
-             @decision(DL-057) -->
-        <h2 class="m-0 flex flex-wrap items-center justify-between gap-x-2 text-base font-semibold">
-          <span class="flex items-center gap-1">
-            Cost so far
-            <InfoToggle label="How the cost is worked out" controls="cost-note" bind:open={costOpen} />
-          </span>
-          <span class="text-rust tabular-nums">at least {money(s.estimated_cost)}</span>
-        </h2>
-        {#if costOpen}
-          <p id="cost-note" class="mt-1.5 mb-0 text-sm leading-snug text-soft">
-            Worked out from requested resources and elapsed time. Modal bills the higher of requested and
-            actual use, so the real figure can only be more.
-          </p>
-        {/if}
-      </section>
     </aside>
   </div>
 

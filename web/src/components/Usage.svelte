@@ -2,9 +2,10 @@
   // Usage, polled once a minute. Every figure is a floor and says so in
   // words, not only as a symbol: the payload's `estimated` is always
   // true, and a page that rendered these as settled would be the way
-  // that guarantee gets lost.
+  // that guarantee gets lost. The figure is sandbox compute only; model
+  // token spend is shown as an explicit gap until token metering exists.
   //
-  // @decision(DL-055) @decision(DL-009) @decision(DL-056)
+  // @decision(DL-055) @decision(DL-009) @decision(DL-056) @decision(DL-116)
   import { api, unwrap } from '../lib/api/client';
   import { resource } from '../lib/resource.svelte';
   import { money } from '../lib/format';
@@ -34,27 +35,47 @@
 {/if}
 
 {#if usage.data}
-  <!-- Plain figures at body size, not a row of big numbers. Spend says
-       "at least" in words. @decision(DL-056) @decision(DL-009) -->
-  <dl class="m-0 mb-10 grid max-w-[46ch] grid-cols-[auto_1fr] gap-x-6 gap-y-2">
+  <!-- Plain figures at body size, not a row of big numbers. Sandbox cost
+       says "at least" in words. @decision(DL-056) @decision(DL-009) -->
+  <dl class="m-0 mb-5 grid max-w-[46ch] grid-cols-[auto_1fr] gap-x-6 gap-y-2">
     <dt class="text-soft">Sessions started</dt>
     <dd class="m-0 text-right font-semibold tabular-nums">{usage.data.sessions}</dd>
     <dt class="text-soft">Sandbox hours, wall clock</dt>
     <dd class="m-0 text-right font-semibold tabular-nums">{usage.data.running_hours}</dd>
-    <dt class="text-soft">Spend</dt>
+    <dt class="text-soft">Sandbox cost</dt>
     <dd class="m-0 text-right font-semibold text-rust tabular-nums">at least {money(usage.data.estimated_cost)}</dd>
   </dl>
 
-  <section id="how-spend-is-estimated" class="max-w-[70ch]">
-    <h2 class="{sectionTitle} mb-2">How spend is estimated</h2>
+  <!-- The gap, shown rather than hidden: model tokens are paid through
+       the provider keys and token spend is not metered (DL-049). The panel
+       is deliberately not a control and has no figure to report.
+       @decision(DL-116) -->
+  <section
+    class="mb-10 max-w-[46ch] border border-dashed border-rule bg-raised px-4 py-3 text-faint"
+    aria-labelledby="token-cost-heading"
+    data-testid="token-cost-soon"
+  >
+    <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+      <h2 id="token-cost-heading" class="m-0 text-base font-semibold">Model token cost</h2>
+      <span class="rounded-full border border-rule px-2 py-0.5 text-sm">Coming soon</span>
+    </div>
+    <p class="m-0 mt-1 text-sm leading-snug">
+      Not tracked yet. spov never meters the tokens sessions send to model providers, so the provider
+      invoice can be much higher than the sandbox figure above.
+    </p>
+  </section>
+
+  <section id="how-sandbox-cost-is-estimated" class="max-w-[70ch]">
+    <h2 class="{sectionTitle} mb-2">How sandbox cost is estimated</h2>
     <p class="mt-0 mb-3 text-soft">
-      Every figure is a floor. It is worked out from the resources each session asked for and how long
-      it ran. Modal charges the higher of requested and actual use, so the real amount can only be more.
-      spov never sees an invoice, and nothing here should be reconciled against one.
+      Every sandbox figure is a floor. It is worked out from the resources each session asked for and how
+      long it ran. Modal charges the higher of requested and actual use, so the real amount can only be
+      more. spov never sees an invoice, and nothing here should be reconciled against one.
     </p>
     <p class="m-0 text-soft">
-      On the session list, ages update live and each cost is a floor in the same way. A session close to
-      its time limit says so in gold, because a sandbox costs money while nobody is looking at it.
+      This is compute only and excludes model tokens. On the session list, ages update live and a session
+      close to its time limit says so in gold, because its sandbox costs money while nobody is looking at
+      it. A session's own sandbox cost is in its Sandbox details.
     </p>
   </section>
 {:else if !usage.error}
