@@ -48,6 +48,7 @@ const stub = vi.hoisted(() => {
   let resume: Record<string, unknown> | undefined;
   let session: Record<string, unknown> = {};
   let logOpens = 0;
+  let conversations: unknown[] = [];
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -105,7 +106,7 @@ const stub = vi.hoisted(() => {
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
     }
-    if (url.pathname.endsWith("/messages")) return json({ conversations: [] });
+    if (url.pathname.endsWith("/messages")) return json({ conversations });
     if (url.pathname === "/api/v1/jobs/j1/file") {
       const path = url.searchParams.get("path") ?? "";
       files.push(path);
@@ -154,9 +155,11 @@ const stub = vi.hoisted(() => {
       resume = undefined;
       session = {};
       logOpens = 0;
+      conversations = [];
     },
     withResume: (r: Record<string, unknown>) => (resume = r),
     logOpens: () => logOpens,
+    withConversations: (c: unknown[]) => (conversations = c),
     setAnswer: (a: Record<string, unknown>) => (answer = a),
     refuse: (s: number, problem: Record<string, unknown>) => {
       status = s;
@@ -206,6 +209,7 @@ const stub = vi.hoisted(() => {
 });
 
 import SessionDetail from "./SessionDetail.svelte";
+import { subagentConversations, subagentLog } from "../lib/subagent.fixture";
 
 beforeEach(() => {
   stub.reset();
@@ -499,6 +503,33 @@ describe("an ask on the session page", () => {
     expect(page.control("ask-permission")).toBeNull();
     expect(page.control("ask-settled")?.textContent).toContain("Allowed once");
     expect(page.said()).not.toContain("Waiting on your answer");
+    page.done();
+  });
+});
+
+describe("a subagent on the session page", () => {
+  // The measured log of a session whose agent ran a subagent, replayed
+  // through the page. The child's turn ends (pos 25) while the root's is
+  // still running.
+  //
+  // @decision(DL-111) @decision(DL-059)
+  it("keeps Stop drawn while a child's turn ends, and never draws its prompt as the reader's", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open();
+    for (const ev of subagentLog.filter((e) => e.pos <= 25)) stub.say(ev);
+    await settle();
+    expect(page.stop(), "a subagent's turn ending took Stop away from the root's").not.toBeNull();
+    expect(page.said()).not.toContain("You are a subagent spawned");
+    expect(page.said()).toContain("Subagent · Review the retry change · 1 tool call");
+    const bubbles = Array.from(page.target.querySelectorAll('[data-testid="message"]')).filter((m) =>
+      m.className.includes("items-end"),
+    );
+    expect(bubbles).toHaveLength(1);
+
+    // The root's own ending still takes it away.
+    for (const ev of subagentLog.filter((e) => e.pos > 25)) stub.say(ev);
+    await settle();
+    expect(page.stop()).toBeNull();
     page.done();
   });
 });
