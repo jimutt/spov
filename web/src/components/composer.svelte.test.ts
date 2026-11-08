@@ -207,19 +207,22 @@ describe("which control the composer draws", () => {
     }
   });
 
-  // The rendered note must be the job's on a job, not the interactive
-  // session's.
+  // The note explains the after choice, beside it; Send has no line of
+  // its own on any screen.
   //
-  // @decision(DL-059)
-  it("draws the note, and the one that belongs to this session", () => {
+  // @decision(DL-059) @decision(DL-117)
+  it("draws the note beside the after choice only, and no line under Send", () => {
     const job = draw("running");
     expect(job.note()).toContain("carries on by itself");
+    expect(job.target.textContent).not.toContain("Read once the current step finishes");
     job.done();
 
-    const interactive = draw(undefined);
-    expect(interactive.note()).toContain("once its current step finishes");
-    expect(interactive.note()).not.toContain("job");
-    interactive.done();
+    for (const state of [undefined, "steered"] as const) {
+      const other = draw(state);
+      expect(other.target.querySelector('[data-testid="composer-note-info"]'), String(state)).toBeNull();
+      expect(other.target.textContent, String(state)).not.toContain("Read once the current step finishes");
+      other.done();
+    }
   });
 });
 
@@ -724,6 +727,115 @@ describe("the options a phone folds away", () => {
     const c = draw("running");
     expect(c.chip().textContent).toContain("Options");
     c.done();
+  });
+});
+
+// Below `md` the form is one container whose toolbar (the chip and Send)
+// is folded away while the box is empty, unfocused and the options shut.
+// jsdom has no layout, so this asserts the state the stylesheet reads,
+// `data-toolbar`, and which controls are where.
+//
+// @decision(DL-117) @decision(DL-106) @decision(DL-059)
+describe("the phone toolbar", () => {
+  function type(c: ReturnType<typeof draw>, words: string) {
+    c.box()!.value = words;
+    c.box()!.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+  }
+  const state = (c: ReturnType<typeof draw>) => c.form().getAttribute("data-toolbar");
+
+  it("is folded while the box is empty, unfocused and the options are shut", () => {
+    const c = draw("running");
+    expect(state(c)).toBe("folded");
+    expect(c.chip().classList.contains("hidden")).toBe(true);
+    expect(c.button()!.disabled).toBe(true);
+    c.done();
+  });
+
+  it("opens on focus and folds again when focus leaves the form", () => {
+    const c = draw("running");
+    c.box()!.focus();
+    flushSync();
+    expect(state(c)).toBe("open");
+    expect(c.chip().classList.contains("hidden")).toBe(false);
+
+    c.box()!.blur();
+    flushSync();
+    expect(state(c)).toBe("folded");
+    c.done();
+  });
+
+  it("stays open while focus moves between the form's own controls", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5" });
+    c.box()!.focus();
+    c.chip().focus();
+    flushSync();
+    expect(state(c)).toBe("open");
+    c.done();
+  });
+
+  it("stays open for as long as there are words, and folds when they go", () => {
+    const c = draw("running");
+    type(c, "half a thought");
+    expect(state(c)).toBe("open");
+    expect(c.button()!.disabled).toBe(false);
+    c.box()!.blur();
+    flushSync();
+    expect(state(c)).toBe("open");
+    type(c, "");
+    expect(state(c)).toBe("folded");
+    expect(c.button()!.disabled).toBe(true);
+    c.done();
+  });
+
+  it("never folds while the options are open", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5" });
+    c.box()!.focus();
+    c.chip().click();
+    flushSync();
+    expect(c.chip().getAttribute("aria-expanded")).toBe("true");
+    c.box()!.blur();
+    flushSync();
+    expect(state(c)).toBe("open");
+
+    c.chip().click();
+    flushSync();
+    expect(c.chip().getAttribute("aria-expanded")).toBe("false");
+    expect(state(c)).toBe("folded");
+    c.done();
+  });
+
+  it("keeps the box focused on a press of the chip or Send", () => {
+    const c = draw("running");
+    for (const el of [c.chip(), c.button()!]) {
+      const press = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      el.dispatchEvent(press);
+      expect(press.defaultPrevented).toBe(true);
+    }
+    c.done();
+  });
+
+  it("draws each control once, with Send and the chip inside the form", () => {
+    const c = draw("running", { model: "anthropic/claude-sonnet-4-5" });
+    expect(c.target.querySelectorAll('[data-testid="composer-send"]')).toHaveLength(1);
+    expect(c.target.querySelectorAll('[data-testid="composer-options-toggle"]')).toHaveLength(1);
+    expect(c.target.querySelectorAll("#composer-options")).toHaveLength(1);
+    expect(c.form().contains(c.chip())).toBe(true);
+    expect(c.form().contains(c.button())).toBe(true);
+    expect(c.form().contains(c.options())).toBe(true);
+    c.done();
+  });
+
+  it("keeps Interrupt and Resume outside the form", () => {
+    const running = draw("running", { inFlight: true });
+    expect(running.stop()).not.toBeNull();
+    expect(running.form().contains(running.stop())).toBe(false);
+    running.done();
+
+    const steered = draw("steered");
+    expect(steered.resume()).not.toBeNull();
+    expect(steered.form().contains(steered.resume())).toBe(false);
+    steered.done();
   });
 });
 
