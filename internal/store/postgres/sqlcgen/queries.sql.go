@@ -1475,9 +1475,11 @@ func (q *Queries) LastEventExcept(ctx context.Context, arg LastEventExceptParams
 }
 
 const lastMessages = `-- name: LastMessages :many
-select distinct on (session_id) id, org_id, session_id, conversation_id, opencode_id, role, text, at, created_at, raw from messages
-where org_id = $1 and session_id = any($2::text[])
-order by session_id, at desc nulls last, id desc
+select distinct on (m.session_id) m.id, m.org_id, m.session_id, m.conversation_id, m.opencode_id, m.role, m.text, m.at, m.created_at, m.raw from messages m
+join conversations c on c.id = m.conversation_id
+where m.org_id = $1 and m.session_id = any($2::text[])
+  and c.parent_opencode_id is null
+order by m.session_id, m.at desc nulls last, m.id desc
 `
 
 type LastMessagesParams struct {
@@ -1485,6 +1487,8 @@ type LastMessagesParams struct {
 	SessionIds []string
 }
 
+// Root conversations only: a subagent's message is never a session's
+// preview.
 func (q *Queries) LastMessages(ctx context.Context, arg LastMessagesParams) ([]Message, error) {
 	rows, err := q.db.Query(ctx, lastMessages, arg.OrgID, arg.SessionIds)
 	if err != nil {
@@ -1666,7 +1670,7 @@ func (q *Queries) ListAllowlist(ctx context.Context, orgID string) ([]AllowlistE
 }
 
 const listConversations = `-- name: ListConversations :many
-select id, org_id, session_id, opencode_id, title, created_at, updated_at, info, seq_base, seq_after from conversations where org_id = $1 and session_id = $2 order by created_at, id
+select id, org_id, session_id, opencode_id, title, created_at, updated_at, info, seq_base, seq_after, parent_opencode_id from conversations where org_id = $1 and session_id = $2 order by created_at, id
 `
 
 type ListConversationsParams struct {
@@ -1698,6 +1702,7 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 			&i.Info,
 			&i.SeqBase,
 			&i.SeqAfter,
+			&i.ParentOpencodeID,
 		); err != nil {
 			return nil, err
 		}
@@ -3242,28 +3247,30 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (int64, 
 }
 
 const upsertConversation = `-- name: UpsertConversation :one
-insert into conversations (id, org_id, session_id, opencode_id, title, created_at, updated_at, info)
-values ($1, $2, $3, $4, $5, $6, $7, $8)
+insert into conversations (id, org_id, session_id, opencode_id, title, created_at, updated_at, info, parent_opencode_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 on conflict (session_id, opencode_id) do update
-set title      = case when excluded.title = '' then conversations.title else excluded.title end,
-    info       = coalesce(excluded.info, conversations.info),
-    updated_at = excluded.updated_at
-returning id, org_id, session_id, opencode_id, title, created_at, updated_at, info, seq_base, seq_after
+set title              = case when excluded.title = '' then conversations.title else excluded.title end,
+    info               = coalesce(excluded.info, conversations.info),
+    parent_opencode_id = coalesce(excluded.parent_opencode_id, conversations.parent_opencode_id),
+    updated_at         = excluded.updated_at
+returning id, org_id, session_id, opencode_id, title, created_at, updated_at, info, seq_base, seq_after, parent_opencode_id
 `
 
 type UpsertConversationParams struct {
-	ID         string
-	OrgID      string
-	SessionID  string
-	OpencodeID string
-	Title      string
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
-	Info       []byte
+	ID               string
+	OrgID            string
+	SessionID        string
+	OpencodeID       string
+	Title            string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	Info             []byte
+	ParentOpencodeID *string
 }
 
-// An existing row keeps its id and created_at; the title and the info
-// change only when the new one says something.
+// An existing row keeps its id and created_at; the title, the info and
+// the parent change only when the new one says something.
 func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversationParams) (Conversation, error) {
 	row := q.db.QueryRow(ctx, upsertConversation,
 		arg.ID,
@@ -3274,6 +3281,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.Info,
+		arg.ParentOpencodeID,
 	)
 	var i Conversation
 	err := row.Scan(
@@ -3287,6 +3295,7 @@ func (q *Queries) UpsertConversation(ctx context.Context, arg UpsertConversation
 		&i.Info,
 		&i.SeqBase,
 		&i.SeqAfter,
+		&i.ParentOpencodeID,
 	)
 	return i, err
 }

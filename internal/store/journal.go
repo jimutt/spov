@@ -713,19 +713,24 @@ type conversationFields struct {
 	SeqAfter   int64     `json:"seq_after,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	// Parent is optional, so a format 1 journal written before it reads
+	// as roots, which the next catch-up corrects.
+	//
+	// @decision(DL-110)
+	Parent string `json:"parent_opencode_id,omitempty"`
 }
 
 func conversationRecord(c Conversation) rawRecord {
 	return rawRecord{Type: "conversation", Conversation: &conversationFields{
 		ID: c.ID, OrgID: c.OrgID, SessionID: c.SessionID, OpenCodeID: c.OpenCodeID, Title: c.Title,
-		Info: blobOf(c.Info), SeqBase: c.SeqBase, SeqAfter: c.SeqAfter, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		Info: blobOf(c.Info), Parent: c.ParentOpenCodeID, SeqBase: c.SeqBase, SeqAfter: c.SeqAfter, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}}
 }
 
 func (c conversationFields) conversation() Conversation {
 	return Conversation{
 		ID: c.ID, OrgID: c.OrgID, SessionID: c.SessionID, OpenCodeID: c.OpenCodeID, Title: c.Title,
-		Info: c.Info.bytes(), SeqBase: c.SeqBase, SeqAfter: c.SeqAfter, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+		Info: c.Info.bytes(), ParentOpenCodeID: c.Parent, SeqBase: c.SeqBase, SeqAfter: c.SeqAfter, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 	}
 }
 

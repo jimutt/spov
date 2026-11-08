@@ -135,6 +135,26 @@ The settings are as launched; `--timeout` sets a new lifetime. Leaving the TUI
 stops the session again unless `--keep`. `spov attach` on a stopped session
 offers to resume it. A job is not resumed.
 
+A session that was synced from a checkout syncs back when you leave the TUI, as
+`spov fly` does, if you resumed it inside that checkout: the sandbox's commits
+and uncommitted changes are applied to the checkout (on `spov/<session>` when
+the checkout has moved on), and then the session stops. A resume has no
+clean-checkout rule, because the fallback branch makes a dirty or moved checkout
+safe. Resumed from anywhere else, a synced session is left running when you
+leave the TUI, since there is nowhere to put its work, and spov prints
+`spov stop <name> --sync` (run it in the checkout), `spov attach <name> --sync`
+and `spov stop <name>` to discard it. It bills until you do one of those, or
+until it idles out. If a sync fails the session is left running too, with the
+same commands.
+
+- `--no-sync` stops the session on exit without syncing; the work stays in the
+  next exit snapshot.
+- `--sync` asks for the default explicitly and is refused, before anything
+  starts, for a session that was not synced or outside its checkout. Use it in a
+  script that must get the work back.
+- `--keep`, `--no-attach` and `--json` never sync; the commands they print name
+  `--sync`.
+
 A local server keeps its session history under `~/.local/share/spov/sessions`
 for 30 days after a session stops (`history.retention`);
 [local-history.md](local-history.md) describes the files.

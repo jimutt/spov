@@ -90,6 +90,14 @@ func (s *Supervisor) follow(ctx context.Context, job store.Job, cursor int64) (f
 	//
 	// @decision(DL-052)
 	takeovers := map[string]bool{}
+	// Only the job's own conversation is a person's, or the run's turn;
+	// read once per pass, a store read.
+	//
+	// @decision(DL-114)
+	own, err := s.ownConversation(ctx, job)
+	if err != nil {
+		return out, err
+	}
 
 	for {
 		before := out.Cursor
@@ -108,18 +116,26 @@ func (s *Supervisor) follow(ctx context.Context, job store.Job, cursor int64) (f
 				out.Cursor = e.Pos
 			}
 			sig := signalFor(e)
-			// A person's message takes the job over when it is delivered,
-			// and only the enqueue says whether it is one that does.
+			// A subagent's turn ending is not the run's.
 			//
-			// @decision(DL-052)
-			if e.Source == store.SourceOpenCode {
+			// @decision(DL-114)
+			if sig == signalTurnEnded && othersFrame(e, own) {
+				continue
+			}
+			// A person's message takes the job over when it is delivered,
+			// and only the enqueue says whether it is one that does. A
+			// subagent's prompt is a user item in its own inbox, written
+			// by the agent, so only the job's own conversation counts.
+			//
+			// @decision(DL-052) @decision(DL-114)
+			if e.Source == store.SourceOpenCode && !othersFrame(e, own) {
 				switch e.Name {
 				case EventInboxEnqueued:
 					if id := InboxID(e.Raw); id != "" {
 						takeovers[id] = takesOver(e)
 					}
 				case EventInboxDelivered:
-					over, err := s.takeoverDelivered(ctx, job, e, takeovers)
+					over, err := s.takeoverDelivered(ctx, job, e, takeovers, own)
 					if err != nil {
 						return out, err
 					}
@@ -331,8 +347,8 @@ func (s *Supervisor) applyFollow(ctx context.Context, job store.Job, res followR
 // recorder gap) takes nothing over; the plugin, which saw it live, holds
 // the loop, and the wall clock ends the job (DL-052).
 //
-// @decision(DL-052)
-func (s *Supervisor) takeoverDelivered(ctx context.Context, job store.Job, e store.Event, seen map[string]bool) (bool, error) {
+// @decision(DL-052) @decision(DL-114)
+func (s *Supervisor) takeoverDelivered(ctx context.Context, job store.Job, e store.Event, seen map[string]bool, own string) (bool, error) {
 	id := InboxID(e.Raw)
 	if id == "" {
 		return false, nil
@@ -350,8 +366,9 @@ func (s *Supervisor) takeoverDelivered(ctx context.Context, job store.Job, e sto
 	if err != nil {
 		return false, fmt.Errorf("supervisor: finding the enqueue of %s for job %s: %w", id, job.ID, err)
 	}
-	// The bytes matched; the frame must also be about this item.
-	if InboxID(enqueued.Raw) != id || enqueued.Source != store.SourceOpenCode {
+	// The bytes matched; the frame must also be about this item, in the
+	// job's own conversation.
+	if InboxID(enqueued.Raw) != id || enqueued.Source != store.SourceOpenCode || othersFrame(enqueued, own) {
 		return false, nil
 	}
 	return takesOver(enqueued), nil

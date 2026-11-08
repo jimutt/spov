@@ -837,6 +837,33 @@ func TestSeveralConversationsSteerToTheOldestUnnamed(t *testing.T) {
 	}
 }
 
+// A subagent recorded before its parent (a catch-up that listed the
+// child first) is never the unnamed send's target: the oldest root is.
+//
+// @decision(DL-110) @decision(DL-109)
+func TestAnUnnamedSendSkipsASubagentThatIsOlder(t *testing.T) {
+	f := newSteerFixture(t)
+	ctx := context.Background()
+	at := f.svc.deps.Now()
+	for i, c := range []store.Conversation{
+		{OpenCodeID: "ses_child", ParentOpenCodeID: "ses_root"},
+		{OpenCodeID: "ses_root"},
+	} {
+		c.ID, c.OrgID, c.SessionID = store.NewID(at), f.sess.OrgID, f.sess.ID
+		c.CreatedAt = at.Add(time.Duration(i) * time.Minute)
+		if _, err := f.svc.deps.Store.Conversations().UpsertConversation(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sent, err := f.svc.Steer(ctx, f.p, f.sess.ID, SteerRequest{Text: "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent.Conversation != "ses_root" {
+		t.Errorf("conversation = %q, want ses_root, the person's", sent.Conversation)
+	}
+}
+
 // An answer this build cannot read must not lose an id the caller
 // already holds: that id is what a client reconciles its own echo on,
 // so dropping it renders the reader's message twice.

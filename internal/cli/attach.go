@@ -245,7 +245,7 @@ func printAttachedSummary(env *Env, sess *liveSession) {
 }
 
 // openingConversation is the conversation `attach` should open: the
-// session's oldest, which is the one its sandbox started with.
+// session's oldest root, which is the one its sandbox started with.
 //
 // It never fails an attach. A session whose conversations cannot be read
 // — or which has none yet, since the recorder attaches on the reconcile
@@ -262,16 +262,24 @@ func openingConversation(ctx context.Context, env *Env, c *client.Client, id str
 	return firstConversation(convs)
 }
 
-// firstConversation is the oldest conversation with an ID. The server
+// firstConversation is the oldest root conversation with an ID, else the
+// oldest with one, as store.Primary chooses on the server. The server
 // lists conversations in creation order; there is no timestamp on the
 // view to sort by.
 //
-// @decision(DL-025)
+// @decision(DL-025) @decision(DL-110)
 func firstConversation(convs []server.ConversationView) string {
+	fallback := ""
 	for _, conv := range convs {
-		if conv.ID != "" {
+		if conv.ID == "" {
+			continue
+		}
+		if conv.Parent == "" {
 			return conv.ID
 		}
+		if fallback == "" {
+			fallback = conv.ID
+		}
 	}
-	return ""
+	return fallback
 }

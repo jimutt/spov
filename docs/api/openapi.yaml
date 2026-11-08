@@ -239,6 +239,8 @@ components:
           type:
             - array
             - "null"
+        parent:
+          type: string
         title:
           type: string
       required:

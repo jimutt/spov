@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/jimutt/spov/internal/config"
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/server"
 	"github.com/jimutt/spov/internal/server/client"
@@ -21,7 +20,7 @@ import (
 // newResumeCmd is `spov resume`: reopen a stopped session in a new
 // sandbox and attach to it, as `spov fly` attaches to a new one.
 //
-// @decision(DL-090) @decision(DL-023)
+// @decision(DL-090) @decision(DL-023) @decision(DL-104)
 func newResumeCmd(env *Env) *cobra.Command {
 	var opts resumeOptions
 	cmd := &cobra.Command{
@@ -45,6 +44,11 @@ func newResumeCmd(env *Env) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.Yes, "yes", false, "resume from the transcript without asking, where uncommitted work is gone")
 	cmd.Flags().BoolVar(&opts.JSON, "json", false, "print the resumed session as JSON and do not attach")
 	cmd.MarkFlagsMutuallyExclusive("json", "keep")
+	cmd.Flags().BoolVar(&opts.Sync, "sync", false,
+		"sync the session's repository changes back to the current checkout when the TUI exits; refused for a session that was not synced or outside its checkout")
+	cmd.Flags().BoolVar(&opts.NoSync, "no-sync", false,
+		"stop the session when the TUI exits without syncing its repository changes back")
+	cmd.MarkFlagsMutuallyExclusive("sync", "no-sync")
 	return cmd
 }
 
@@ -55,6 +59,12 @@ type resumeOptions struct {
 	NoAttach bool
 	Yes      bool
 	JSON     bool
+	// Sync and NoSync are --sync and --no-sync: a synced session syncs back
+	// on exit by default, inside its checkout.
+	//
+	// @decision(DL-104)
+	Sync   bool
+	NoSync bool
 }
 
 // runResume says which way the session will come back, asks before a
@@ -62,7 +72,7 @@ type resumeOptions struct {
 // `spov fly` follows a launch: exiting the TUI stops the session again
 // unless --keep, and Ctrl-C while it boots stops the new run.
 //
-// @decision(DL-090)
+// @decision(DL-090) @decision(DL-104)
 func runResume(ctx context.Context, env *Env, opts resumeOptions) error {
 	res, err := env.config()
 	if err != nil {
@@ -76,12 +86,34 @@ func runResume(ctx context.Context, env *Env, opts resumeOptions) error {
 	if err != nil {
 		return sessionError(opts.Ref, err)
 	}
+	// The checkout is verified once, before anything starts: it decides
+	// the base commit sent, whether the exit syncs back, and --sync.
+	//
+	// @decision(DL-104)
+	synced := view.Sync != nil && !opts.NoSync
+	var checkout git.LocalCheckout
+	var cerr error
+	if view.Sync != nil {
+		checkout, cerr = env.verifySyncCheckout(ctx, res.Config, view)
+	}
+	if opts.Sync && view.Resume != nil {
+		switch {
+		case view.Sync == nil:
+			return fmt.Errorf("session %s was not started from a checkout, so --sync has nothing to bring back", viewName(view))
+		case cerr != nil:
+			return fmt.Errorf("--sync needs the session's checkout: %w", cerr)
+		}
+	}
 	if err := env.agreeToResume(view, opts.Yes); err != nil {
 		return err
 	}
+	if synced && cerr != nil && !opts.Keep && !opts.NoAttach && !opts.JSON {
+		_, _ = fmt.Fprintf(env.Err, "note: %v\n  leaving the TUI will keep the session running; `spov stop %s --sync` from the checkout brings its work back\n",
+			cerr, viewName(view))
+	}
 	req := server.ResumeRequest{TimeoutSecs: int(opts.Timeout / time.Second)}
 	// @decision(DL-098)
-	req.SyncBundle = env.resumeSeed(ctx, res.Config, view)
+	req.SyncBundle = env.resumeSeed(ctx, view, checkout, cerr)
 	name := viewName(view)
 	view, err = c.Resume(ctx, view.ID, req)
 	if err != nil {
@@ -102,12 +134,12 @@ func runResume(ctx context.Context, env *Env, opts resumeOptions) error {
 	}
 	sess, err := env.connectSession(ctx, c, view)
 	if err != nil {
-		printAttachHintMode(env, viewName(view), false)
+		printAttachHintMode(env, viewName(view), synced)
 		return err
 	}
 	if opts.NoAttach {
 		printSessionSummary(env, sess)
-		printAttachHintMode(env, sess.Name(), false)
+		printAttachHintMode(env, sess.Name(), synced)
 		detach(env, sess)
 		return nil
 	}
@@ -115,21 +147,36 @@ func runResume(ctx context.Context, env *Env, opts resumeOptions) error {
 	binary, err := prepareTUI(ctx, env, cfg, sess, flyOptions{})
 	if err != nil {
 		printSessionSummary(env, sess)
-		printAttachHintMode(env, sess.Name(), false)
+		printAttachHintMode(env, sess.Name(), synced)
 		detach(env, sess)
 		return err
 	}
 	if err := handOver(ctx, env, sess, binary, ""); err != nil {
 		printSessionSummary(env, sess)
-		printAttachHintMode(env, sess.Name(), false)
+		printAttachHintMode(env, sess.Name(), synced)
 		detach(env, sess)
 		return err
 	}
 	printSessionSummary(env, sess)
 	if opts.Keep {
-		printAttachHintMode(env, sess.Name(), false)
+		printAttachHintMode(env, sess.Name(), synced)
 		detach(env, sess)
 		return nil
+	}
+	// @decision(DL-104)
+	if synced {
+		if cerr != nil {
+			// No checkout to apply the work to: it stays in the sandbox.
+			printAttachHintMode(env, sess.Name(), true)
+			_, _ = fmt.Fprintf(env.Err, "  discard: spov stop %s\n", sess.Name())
+			detach(env, sess)
+			return nil
+		}
+		if err := env.syncSessionBack(ctx, c, cfg, sess.View); err != nil {
+			printSyncFailureHint(env, sess.Name())
+			detach(env, sess)
+			return err
+		}
 	}
 	return terminateSession(ctx, env, c, sess)
 }
@@ -188,9 +235,10 @@ func (e *Env) offerResume(ctx context.Context, c *client.Client, view server.Ses
 		return view, fmt.Errorf("not resumed; `spov resume %s` reopens it later", name)
 	}
 	req := server.ResumeRequest{}
-	// @decision(DL-098)
-	if res, err := e.config(); err == nil {
-		req.SyncBundle = e.resumeSeed(ctx, res.Config, view)
+	// @decision(DL-098) @decision(DL-104)
+	if res, err := e.config(); err == nil && view.Sync != nil {
+		checkout, cerr := e.verifySyncCheckout(ctx, res.Config, view)
+		req.SyncBundle = e.resumeSeed(ctx, view, checkout, cerr)
 	}
 	resumed, err := c.Resume(ctx, view.ID, req)
 	if err != nil {
@@ -202,14 +250,15 @@ func (e *Env) offerResume(ctx context.Context, c *client.Client, view server.Ses
 // resumeSeed is a synced session's base commit, bundled from the checkout
 // here, for a resume from its transcript; empty otherwise. When it cannot
 // be sent it says why, since the resumed workspace may then lack the
-// session's unpushed commits.
+// session's unpushed commits. The checkout and its verification error are
+// the caller's one `verifySyncCheckout`, so the seed and the exit's sync
+// cannot disagree.
 //
-// @decision(DL-098)
-func (e *Env) resumeSeed(ctx context.Context, cfg config.Config, view server.SessionView) string {
+// @decision(DL-098) @decision(DL-104)
+func (e *Env) resumeSeed(ctx context.Context, view server.SessionView, checkout git.LocalCheckout, err error) string {
 	if view.Sync == nil || view.Resume == nil || view.Resume.Mode != server.ResumeTranscript {
 		return ""
 	}
-	checkout, err := e.verifySyncCheckout(ctx, cfg, view)
 	if err == nil {
 		// A session with no platform has no clone to build on, so its
 		// bundle holds the whole history, as its launch's did.

@@ -246,14 +246,15 @@ select count(*) from allowlist_entries where org_id = $1 and admin;
 select pg_advisory_xact_lock(hashtext($1), hashtext('spov:allowlist'));
 
 -- name: UpsertConversation :one
--- An existing row keeps its id and created_at; the title and the info
--- change only when the new one says something.
-insert into conversations (id, org_id, session_id, opencode_id, title, created_at, updated_at, info)
-values ($1, $2, $3, $4, $5, $6, $7, $8)
+-- An existing row keeps its id and created_at; the title, the info and
+-- the parent change only when the new one says something.
+insert into conversations (id, org_id, session_id, opencode_id, title, created_at, updated_at, info, parent_opencode_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 on conflict (session_id, opencode_id) do update
-set title      = case when excluded.title = '' then conversations.title else excluded.title end,
-    info       = coalesce(excluded.info, conversations.info),
-    updated_at = excluded.updated_at
+set title              = case when excluded.title = '' then conversations.title else excluded.title end,
+    info               = coalesce(excluded.info, conversations.info),
+    parent_opencode_id = coalesce(excluded.parent_opencode_id, conversations.parent_opencode_id),
+    updated_at         = excluded.updated_at
 returning *;
 
 -- name: ListConversations :many
@@ -280,9 +281,13 @@ select * from messages where org_id = $1 and session_id = $2
 order by at nulls first, id;
 
 -- name: LastMessages :many
-select distinct on (session_id) * from messages
-where org_id = $1 and session_id = any(sqlc.arg(session_ids)::text[])
-order by session_id, at desc nulls last, id desc;
+-- Root conversations only: a subagent's message is never a session's
+-- preview.
+select distinct on (m.session_id) m.* from messages m
+join conversations c on c.id = m.conversation_id
+where m.org_id = $1 and m.session_id = any(sqlc.arg(session_ids)::text[])
+  and c.parent_opencode_id is null
+order by m.session_id, m.at desc nulls last, m.id desc;
 
 -- name: InsertEvent :one
 -- A frame already stored is not an error and not a row: the caller

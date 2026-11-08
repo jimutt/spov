@@ -387,12 +387,13 @@ func jobRefusesAMessage(state store.JobState) (string, bool) {
 
 // steerInto resolves which conversation the message goes to, against
 // the store's own rows and never on the caller's word, since OpenCode
-// ids are unique per session only. Unnamed, it is the oldest: the
+// ids are unique per session only. Unnamed, it is store.Primary: the
 // person's own, which firstConversation or jobConversation opened for
-// them, since anything later is the agent's own (DL-045) or the stray
-// second half of a first-message race. Naming one still names it.
+// them, since anything later is a subagent, the agent's own (DL-045) or
+// the stray second half of a first-message race. Naming one still names
+// it.
 //
-// @decision(DL-019) @decision(DL-109)
+// @decision(DL-019) @decision(DL-109) @decision(DL-110)
 func (s *Service) steerInto(ctx context.Context, sess store.Session, named string) (string, error) {
 	convs, err := s.deps.Store.Conversations().ListConversations(ctx, sess.OrgID, sess.ID)
 	if err != nil {
@@ -408,16 +409,13 @@ func (s *Service) steerInto(ctx context.Context, sess store.Session, named strin
 		// Says nothing about whether the id exists in another session.
 		return "", fmt.Errorf("%w: this session has no conversation %q", ErrInvalidRequest, named)
 	}
-	switch len(convs) {
-	case 0:
+	primary, ok := store.Primary(convs)
+	if !ok {
 		// A send creates one (firstConversation); a cancel has nothing
 		// to cancel in.
 		return "", ErrNoConversation
-	default:
-		// Oldest first (DL-025): one conversation is convs[0] as
-		// before, and several no longer refuse.
-		return convs[0].OpenCodeID, nil
 	}
+	return primary.OpenCodeID, nil
 }
 
 // firstConversation creates a session's first conversation in its
@@ -426,10 +424,10 @@ func (s *Service) steerInto(ctx context.Context, sess store.Session, named strin
 // replica create one. Steer keeps the id it returns, so withConnection
 // running its closure twice does not create a second. A second row that
 // landed between the caller's own list and this one (a cross-replica
-// first-message race) resolves the same way an unnamed send does: the
-// oldest.
+// first-message race) resolves the same way an unnamed send does:
+// store.Primary.
 //
-// @decision(DL-019) @decision(DL-109)
+// @decision(DL-019) @decision(DL-109) @decision(DL-110)
 func (s *Service) firstConversation(ctx context.Context, conn Connection, sess store.Session) (string, error) {
 	unlock := s.firstSends.lock(sess.ID)
 	defer unlock()
@@ -437,10 +435,8 @@ func (s *Service) firstConversation(ctx context.Context, conn Connection, sess s
 	if err != nil {
 		return "", err
 	}
-	switch len(convs) {
-	case 0:
-	default:
-		return convs[0].OpenCodeID, nil
+	if primary, ok := store.Primary(convs); ok {
+		return primary.OpenCodeID, nil
 	}
 	id, err := createConversation(ctx, conn, sessionDir(sess))
 	if err != nil {

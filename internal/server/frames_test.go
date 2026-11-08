@@ -47,7 +47,7 @@ func TestConversationsReadsEitherEnvelope(t *testing.T) {
 		{"empty", `{"data":[]}`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ids, titles, _ := conversations([]byte(tc.body))
+			ids, titles, _, _ := conversations([]byte(tc.body))
 			if len(ids) != len(tc.want) {
 				t.Fatalf("ids = %v, want %v", ids, tc.want)
 			}
