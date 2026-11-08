@@ -30,7 +30,8 @@ func TestAResumeSendsTheBaseFromTheCheckout(t *testing.T) {
 	seed := func(workdir string, v server.SessionView) (string, string) {
 		var errs bytes.Buffer
 		env := &Env{Workdir: workdir, Err: &errs}
-		return env.resumeSeed(context.Background(), cfg, v), errs.String()
+		checkout, err := env.verifySyncCheckout(context.Background(), cfg, v)
+		return env.resumeSeed(context.Background(), v, checkout, err), errs.String()
 	}
 
 	got, note := seed(wd, view)
