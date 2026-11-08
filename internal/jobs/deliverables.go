@@ -700,6 +700,14 @@ func (s *Supervisor) recordDeclarations(ctx context.Context, job store.Job) {
 		s.warn("supervisor: job %s: reading the declarations: %s", job.ID, redact.Error(err))
 		return
 	}
+	// A withdrawal is honoured by a person's message in the job's own
+	// conversation only. @decision(DL-114)
+	own, err := s.ownConversation(ctx, job)
+	if err != nil {
+		s.warn("supervisor: job %s: %s", job.ID, redact.Error(err))
+		return
+	}
+	events = withoutOthersInbox(events, own)
 	if job.Kind == store.JobKindPR {
 		sess, err := s.Store.Sessions().Get(ctx, job.OrgID, job.SessionID)
 		if err != nil {

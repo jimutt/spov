@@ -38,16 +38,17 @@ type ApiToken struct {
 }
 
 type Conversation struct {
-	ID         string
-	OrgID      string
-	SessionID  string
-	OpencodeID string
-	Title      string
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
-	Info       []byte
-	SeqBase    int64
-	SeqAfter   int64
+	ID               string
+	OrgID            string
+	SessionID        string
+	OpencodeID       string
+	Title            string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	Info             []byte
+	SeqBase          int64
+	SeqAfter         int64
+	ParentOpencodeID *string
 }
 
 type DeviceCode struct {

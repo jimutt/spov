@@ -1141,6 +1141,10 @@ func (s memConversations) UpsertConversation(_ context.Context, c Conversation) 
 		if len(c.Info) > 0 {
 			cur.Info = c.Info
 		}
+		// @decision(DL-110)
+		if c.ParentOpenCodeID != "" {
+			cur.ParentOpenCodeID = c.ParentOpenCodeID
+		}
 		cur.UpdatedAt = now
 		old := s.m.conversations[cur.ID]
 		s.m.conversations[cur.ID] = *cur
@@ -1280,9 +1284,10 @@ func (s memConversations) ListMessages(_ context.Context, orgID, sessionID strin
 	return out, nil
 }
 
-// LastMessages implements ConversationStore.
+// LastMessages implements ConversationStore, over root conversations
+// only.
 //
-// @decision(DL-017)
+// @decision(DL-017) @decision(DL-115)
 func (s memConversations) LastMessages(_ context.Context, orgID string, sessionIDs []string) (map[string]Message, error) {
 	defer s.m.lock()()
 	want := map[string]bool{}
@@ -1291,7 +1296,7 @@ func (s memConversations) LastMessages(_ context.Context, orgID string, sessionI
 	}
 	out := map[string]Message{}
 	for _, m := range s.m.messages {
-		if m.OrgID != orgID || !want[m.SessionID] {
+		if m.OrgID != orgID || !want[m.SessionID] || !s.m.conversations[m.ConversationID].IsRoot() {
 			continue
 		}
 		if cur, ok := out[m.SessionID]; !ok || compareMessages(m, cur) > 0 {

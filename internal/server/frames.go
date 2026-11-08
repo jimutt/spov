@@ -88,6 +88,12 @@ var ephemeralNames = map[string]bool{
 // @decision(DL-017)
 func isEphemeralKept(name string) bool { return ephemeralNames[name] }
 
+// eventSessionCreated opens a conversation's durable log, and carries
+// its parent when a subagent's (spike S-SA1).
+//
+// @decision(DL-110)
+const eventSessionCreated = "session.created"
+
 var (
 	nameKeys    = []string{"event", "type"}
 	sessionKeys = []string{"sessionID", "sessionId", "session_id", "session"}
@@ -157,9 +163,10 @@ func find(v any, keys []string) string {
 // sandbox, so ids are gathered by name rather than by position.
 //
 // @decision(DL-018)
-func conversations(body []byte) (ids []string, titles map[string]string, infos map[string][]byte) {
+func conversations(body []byte) (ids []string, titles map[string]string, infos map[string][]byte, parents map[string]string) {
 	titles = map[string]string{}
 	infos = map[string][]byte{}
+	parents = map[string]string{}
 	var envelope struct {
 		Data []json.RawMessage `json:"data"`
 	}
@@ -167,14 +174,15 @@ func conversations(body []byte) (ids []string, titles map[string]string, infos m
 		// Some builds answer with a bare array.
 		var bare []json.RawMessage
 		if err := json.Unmarshal(body, &bare); err != nil {
-			return nil, titles, infos
+			return nil, titles, infos, parents
 		}
 		envelope.Data = bare
 	}
 	for _, raw := range envelope.Data {
 		var item struct {
-			ID    any `json:"id"`
-			Title any `json:"title"`
+			ID       any `json:"id"`
+			Title    any `json:"title"`
+			ParentID any `json:"parentID"`
 		}
 		if json.Unmarshal(raw, &item) != nil {
 			continue
@@ -190,8 +198,48 @@ func conversations(body []byte) (ids []string, titles map[string]string, infos m
 		// Each item is a whole Session.Info, kept for an import.
 		// @decision(DL-089)
 		infos[id] = raw
+		// @decision(DL-110)
+		if p, ok := item.ParentID.(string); ok {
+			parents[id] = p
+		}
 	}
-	return ids, titles, infos
+	return ids, titles, infos, parents
+}
+
+// sessionInfo reads one Session.Info as GET /api/session/{id} answers
+// it: its title, its parent's id, and the info whole.
+//
+// @decision(DL-110)
+func sessionInfo(body []byte) (title, parent string, info []byte, ok bool) {
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &envelope) != nil || len(envelope.Data) == 0 {
+		return "", "", nil, false
+	}
+	var item struct {
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		ParentID string `json:"parentID"`
+	}
+	if json.Unmarshal(envelope.Data, &item) != nil || item.ID == "" {
+		return "", "", nil, false
+	}
+	return item.Title, item.ParentID, envelope.Data, true
+}
+
+// createdParent is the parent a session.created frame names, and
+// whether the frame is one: the frame is authoritative, so a created
+// frame naming none is a root.
+//
+// @decision(DL-110)
+func createdParent(frame map[string]any) (string, bool) {
+	if find(frame, nameKeys) != eventSessionCreated {
+		return "", false
+	}
+	data, _ := frame["data"].(map[string]any)
+	parent, _ := data["parentID"].(string)
+	return parent, true
 }
 
 // parsedMessage is one message with the raw body it was projected

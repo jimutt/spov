@@ -15,8 +15,13 @@ import (
 //
 // @decision(DL-018)
 type ConversationView struct {
-	ID       string        `json:"id"`
-	Title    string        `json:"title,omitempty"`
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
+	// Parent is the OpenCode id of the conversation that started this
+	// one as a subagent, absent for a root.
+	//
+	// @decision(DL-110)
+	Parent   string        `json:"parent,omitempty"`
 	Messages []MessageView `json:"messages"`
 }
 
@@ -84,7 +89,7 @@ func (s *Server) transcript(ctx context.Context, sess store.Session) ([]Conversa
 		}
 		// The id a client sees is OpenCode's, not the row's: it is what
 		// the event stream names, and what a client keys on.
-		out = append(out, ConversationView{ID: c.OpenCodeID, Title: c.Title, Messages: messages})
+		out = append(out, ConversationView{ID: c.OpenCodeID, Title: c.Title, Parent: c.ParentOpenCodeID, Messages: messages})
 	}
 
 	// The newest event, not the newest marker: a recorder that gave up

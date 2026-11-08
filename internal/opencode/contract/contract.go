@@ -47,6 +47,8 @@ var Used = []Operation{
 	{"GET", "/api/event"},
 	{"GET", "/api/session"},
 	{"POST", "/api/session"},
+	// @decision(DL-110)
+	{"GET", "/api/session/{sessionID}"},
 	{"GET", "/api/session/{sessionID}/message"},
 	{"POST", "/api/session/{sessionID}/synthetic"},
 	{"POST", "/api/session/{sessionID}/prompt"},

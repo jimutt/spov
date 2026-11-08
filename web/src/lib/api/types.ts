@@ -806,6 +806,7 @@ export interface components {
         ConversationView: {
             id: string;
             messages: components["schemas"]["MessageView"][] | null;
+            parent?: string;
             title?: string;
         };
         CreateOutputBody: {

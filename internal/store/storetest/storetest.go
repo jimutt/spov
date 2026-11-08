@@ -1753,9 +1753,24 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}); err != nil || string(kept.Info) != string(info) {
 			t.Errorf("an upsert with no info dropped the stored one: %q, %v", kept.Info, err)
 		}
+		// The parent, like the info, is kept once known and never
+		// cleared by an upsert that does not name one. @decision(DL-110)
+		if child, err := cs.UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, OpenCodeID: "ses_1", ParentOpenCodeID: "ses_0",
+		}); err != nil || child.ParentOpenCodeID != "ses_0" || child.IsRoot() {
+			t.Errorf("the parent was not kept: %+v, %v", child, err)
+		}
+		if kept, err := cs.UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, OpenCodeID: "ses_1", Title: "again",
+		}); err != nil || kept.ParentOpenCodeID != "ses_0" {
+			t.Errorf("an upsert with no parent dropped the stored one: %+v, %v", kept, err)
+		}
 		list, err := cs.ListConversations(ctx, "org", sess.ID)
 		if err != nil || len(list) != 1 {
 			t.Fatalf("list: %+v, %v", list, err)
+		}
+		if list[0].ParentOpenCodeID != "ses_0" {
+			t.Errorf("the listing lost the parent: %+v", list[0])
 		}
 		if other, _ := cs.ListConversations(ctx, "org-2", sess.ID); len(other) != 0 {
 			t.Error("another org saw the conversation")
@@ -1888,6 +1903,43 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if other, _ := s.Conversations().LastMessages(ctx, "org-2", []string{talky.ID}); len(other) != 0 {
 			t.Error("another org saw the last message")
+		}
+	},
+	// A session's preview is its root conversations' newest message,
+	// never a subagent's, however much newer. @decision(DL-115)
+	"conversations: last messages come from root conversations only": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sess := runningSession(t, s, "org", "u1", "alpha")
+		root := conversation(t, s, sess, "ses_root")
+		child, err := s.Conversations().UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: sess.ID, OpenCodeID: "ses_child", ParentOpenCodeID: "ses_root",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		lonely := runningSession(t, s, "org", "u1", "beta")
+		orphan, err := s.Conversations().UpsertConversation(ctx, store.Conversation{
+			ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: lonely.ID, OpenCodeID: "ses_kid", ParentOpenCodeID: "ses_gone",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Conversations().PutMessages(ctx, []store.Message{
+			{ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, ConversationID: root.ID, OpenCodeID: "m1", Text: "the person's", At: t0},
+			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: child.ID, OpenCodeID: "m2", Text: "the subagent's", At: t0.Add(time.Hour)},
+			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: lonely.ID, ConversationID: orphan.ID, OpenCodeID: "m3", Text: "only a subagent", At: t0},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Conversations().LastMessages(ctx, "org", []string{sess.ID, lonely.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[sess.ID].Text != "the person's" {
+			t.Errorf("the preview is %q, want the root's", got[sess.ID].Text)
+		}
+		if m, ok := got[lonely.ID]; ok {
+			t.Errorf("a session with only a subagent's messages has the preview %q", m.Text)
 		}
 	},
 	"conversations: a duplicate frame is one row and pos only grows": func(t *testing.T, s store.Store) {

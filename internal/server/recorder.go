@@ -617,14 +617,14 @@ func (r *Recorder) catchUp(ctx context.Context, c *capture) error {
 	if err != nil {
 		return fmt.Errorf("list conversations: %w", err)
 	}
-	ids, titles, infos := conversations(listed)
+	ids, titles, infos, parents := conversations(listed)
 	// The count comes from the sandbox; see MaxConversations.
 	if len(ids) > MaxConversations {
 		r.warn(fmt.Sprintf("recorder %s: the sandbox lists %d conversations; reading the first %d", c.sess.ID, len(ids), MaxConversations))
 		ids = ids[:MaxConversations]
 	}
 	for _, id := range ids {
-		conv, err := r.conversationWith(ctx, c, id, titles[id], infos[id])
+		conv, err := r.conversationWith(ctx, c, id, titles[id], infos[id], parents[id])
 		if err != nil {
 			return err
 		}
@@ -636,21 +636,45 @@ func (r *Recorder) catchUp(ctx context.Context, c *capture) error {
 }
 
 // conversation resolves an OpenCode session to its stored row, creating
-// it on first sight.
-func (r *Recorder) conversation(ctx context.Context, c *capture, opencodeID, title string) (store.Conversation, error) {
-	return r.conversationWith(ctx, c, opencodeID, title, nil)
+// it on first sight. A session first seen by a frame other than its
+// session.created is read once, before its row is written, so no frame
+// of a subagent is stored before its parent is known. A read that fails
+// stores the row as a root, which the next catch-up corrects.
+//
+// @decision(DL-110)
+func (r *Recorder) conversation(ctx context.Context, c *capture, opencodeID string) (store.Conversation, error) {
+	if conv, ok := c.convs[opencodeID]; ok {
+		return conv, nil
+	}
+	var (
+		title, parent string
+		info          []byte
+	)
+	body, err := r.fetch(ctx, c.conn, "/api/session/"+url.PathEscape(opencodeID))
+	if err == nil {
+		var ok bool
+		if title, parent, info, ok = sessionInfo(body); !ok {
+			title, parent, info = "", "", nil
+		}
+	} else if ctx.Err() == nil {
+		r.warn(fmt.Sprintf("recorder %s: read conversation %s: %s", c.sess.ID, opencodeID, redact.Error(err)))
+	}
+	return r.conversationWith(ctx, c, opencodeID, title, info, parent)
 }
 
-// conversationWith is conversation that also keeps the listing's
-// Session.Info, when there is one and it changed.
+// conversationWith is conversation with what is already known: the
+// listing's title and Session.Info, and the parent, each written when
+// there is one and it changed.
 //
-// @decision(DL-089)
-func (r *Recorder) conversationWith(ctx context.Context, c *capture, opencodeID, title string, info []byte) (store.Conversation, error) {
-	if conv, ok := c.convs[opencodeID]; ok && (title == "" || conv.Title == title) && (len(info) == 0 || bytes.Equal(conv.Info, info)) {
+// @decision(DL-089) @decision(DL-110)
+func (r *Recorder) conversationWith(ctx context.Context, c *capture, opencodeID, title string, info []byte, parent string) (store.Conversation, error) {
+	if conv, ok := c.convs[opencodeID]; ok && (title == "" || conv.Title == title) && (len(info) == 0 || bytes.Equal(conv.Info, info)) &&
+		(parent == "" || conv.ParentOpenCodeID == parent) {
 		return conv, nil
 	}
 	conv, err := r.store.Conversations().UpsertConversation(ctx, store.Conversation{
 		ID: store.NewID(r.now()), OrgID: c.sess.OrgID, SessionID: c.sess.ID, OpenCodeID: opencodeID, Title: title, Info: info,
+		ParentOpenCodeID: parent,
 	})
 	if err != nil {
 		return store.Conversation{}, fmt.Errorf("write the store: %w", err)
@@ -767,6 +791,17 @@ func (r *Recorder) frame(ctx context.Context, c *capture, raw string) error {
 		}
 		return nil
 	}
+	// A conversation's created frame says whether it is a subagent's, so
+	// its row is written from the frame and needs no read.
+	//
+	// @decision(DL-110)
+	if parent, ok := createdParent(decoded); ok && ev.Session != "" {
+		if _, known := c.convs[ev.Session]; !known || parent != "" {
+			if _, err := r.conversationWith(ctx, c, ev.Session, "", nil, parent); err != nil {
+				return err
+			}
+		}
+	}
 	// An ephemeral frame spov keeps anyway (DL-017): it has no durable
 	// marker and therefore no sequence, and it is stored under its own
 	// source so it is neither deduplicated against the durable log nor
@@ -785,7 +820,7 @@ func (r *Recorder) frame(ctx context.Context, c *capture, raw string) error {
 		}
 		return nil
 	}
-	conv, err := r.conversation(ctx, c, ev.Session, "")
+	conv, err := r.conversation(ctx, c, ev.Session)
 	if err != nil {
 		return err
 	}
