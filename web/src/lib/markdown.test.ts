@@ -375,3 +375,19 @@ describe("a report's images, with the job's image source", () => {
     expect(next).not.toContain('<img');
   });
 });
+
+describe("where the page bypasses Svelte's escaping", () => {
+  // The two sites are the transcript's words (one snippet, drawn in a
+  // message and in a subagent's card) and the report preview. A third is
+  // a security change, not a refactor.
+  //
+  // @decision(DL-063) @decision(DL-112)
+  test("there are exactly two {@html} sites in the page's components", () => {
+    const files = import.meta.glob<string>('../components/*.svelte', { query: '?raw', import: 'default', eager: true });
+    const sites = Object.entries(files).flatMap(([f, source]) => {
+      const n = (source.match(/\{@html /g) ?? []).length;
+      return n ? [`${f.split('/').pop()}:${n}`] : [];
+    });
+    expect(sites).toEqual(['SessionDetail.svelte:2']);
+  });
+});

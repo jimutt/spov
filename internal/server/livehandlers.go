@@ -77,6 +77,13 @@ type LogEvent struct {
 	//
 	// @decision(DL-058)
 	Tool string `json:"tool,omitempty"`
+	// Child is the OpenCode session a tool call started, on the call's
+	// result: a subagent's id, from `metadata.sessionID`. A client takes
+	// it as a hint and trusts it only for a session it knows to be a
+	// child of this one. Empty on every other event.
+	//
+	// @decision(DL-112)
+	Child string `json:"child,omitempty"`
 	// Ask is a permission request or question form, or its answer, on
 	// the five ask frames only.
 	//
@@ -294,6 +301,7 @@ func (s *Server) logEvent(ctx context.Context, names *conversationNames, ev stor
 		Text:     ev.Text,
 		Call:     call,
 		Tool:     tool,
+		Child:    storedChild(ev),
 		Ask:      storedAsk(ev),
 		Model:    storedModel(ev),
 		At:       ev.At,
@@ -429,6 +437,56 @@ func storedToolCall(ev store.Event) (call, tool string) {
 		return call, tool
 	}
 	return "", ""
+}
+
+// metadataKey is the key a tool event's result carries its metadata
+// under.
+var metadataKey = []byte(`"metadata"`)
+
+// storedChild re-derives the session a tool call started from the
+// result's `metadata.sessionID` (spike S-SA1: a `subagent` call's
+// success names its child there, whether the call is done or a
+// background one is still running). The metadata follows the output in
+// the frame, so it is found from the end of the raw bytes and only it is
+// decoded; a large output is never walked. An OpenCode tool event only.
+// A frame that does not read this way names no child, and the page then
+// places the call by its span.
+//
+// @decision(DL-112) @decision(DL-110)
+func storedChild(ev store.Event) string {
+	if ev.Source != store.SourceOpenCode || !strings.HasPrefix(ev.Name, toolEventPrefix) {
+		return ""
+	}
+	i := bytes.LastIndex(ev.Raw, metadataKey)
+	if i < 0 {
+		return ""
+	}
+	rest := bytes.TrimLeft(ev.Raw[i+len(metadataKey):], " \t\r\n")
+	if len(rest) == 0 || rest[0] != ':' {
+		return ""
+	}
+	dec := json.NewDecoder(bytes.NewReader(rest[1:]))
+	if !openObject(dec) {
+		return ""
+	}
+	for dec.More() {
+		key, ok := objectKey(dec)
+		if !ok {
+			return ""
+		}
+		if key != "sessionID" {
+			if skipValue(dec) != nil {
+				return ""
+			}
+			continue
+		}
+		var id string
+		if dec.Decode(&id) != nil {
+			return ""
+		}
+		return id
+	}
+	return ""
 }
 
 // openObject consumes a `{` and reports whether that is what came next.

@@ -24,7 +24,19 @@ import {
   type Entry,
   type EventEntry,
 } from './timeline';
-import { Child, ChildPrompt, subagentConversations, subagentLog } from './subagent.fixture';
+import {
+  BackgroundChild,
+  BackgroundRoot,
+  Child,
+  ChildPrompt,
+  Root,
+  backgroundConversations,
+  backgroundLog,
+  subagentConversations,
+  subagentLog,
+} from './subagent.fixture';
+import { callFrames, childEnd, childStart, frame, toolFrames } from './subagent.frames';
+import { pendingAskIds, latestAction } from './timeline';
 import { windowOf } from './transcriptwindow';
 
 /** ev builds one frame of the log, at the position the store gave it. */
@@ -1082,17 +1094,19 @@ describe('a subagent', () => {
     }
   });
 
-  test('is drawn in the main list as one quiet row at its first entry', () => {
+  test('is drawn in the main list as one card, in place of the call that started it', () => {
     const main = buildTimeline(subagentConversations, subagentLog);
     const rows = main.filter((e) => e.kind === 'subagent');
     expect(rows).toHaveLength(1);
     const row = rows[0];
     expect(row.kind === 'subagent' && [row.id, row.title, row.calls]).toEqual([Child, 'Review the retry change', 1]);
     expect(row.kind === 'subagent' && subagentText(row)).toBe('Subagent · Review the retry change · 1 tool call');
-    // After the parent's own call to it and before the parent's answer.
+    // Before the parent's answer, and the call it made is the card, not
+    // a tool line beside it.
     const at = main.indexOf(row);
-    expect(main.slice(0, at).some((e) => e.kind === 'event' && e.call)).toBe(true);
     expect(main.slice(at + 1).some((e) => e.kind === 'message' && e.role === 'assistant')).toBe(true);
+    expect(main.filter((e) => e.kind === 'event' && e.call && e.key.startsWith('e')).map((e) => e.key)).toEqual([]);
+    expect(row.kind === 'subagent' && row.call).toBe('call_1794165467525768415');
     // And none of its work is anywhere else in the main list.
     expect(main.filter((e) => e.kind === 'event' && e.key === 'e17')).toHaveLength(0);
   });
@@ -1134,8 +1148,11 @@ describe('a subagent', () => {
       },
     ];
     expect(wordsOf(buildTimeline(subagentConversations, [...subagentLog, ...stray]))).toContain('hello from nowhere');
-    // Nor does a log with no parentage at all change: every frame is a root's.
-    expect(buildTimeline(asRoots, subagentLog).some((e) => e.kind === 'subagent')).toBe(false);
+    // Nor does a log with no parentage at all change: every frame is a
+    // root's, and the call that started a subagent is a card with no
+    // child behind it.
+    const lone = buildTimeline(asRoots, subagentLog).filter((e) => e.kind === 'subagent');
+    expect(lone.map((e) => e.kind === 'subagent' && [e.id, e.state, e.title])).toEqual([['', 'done', 'Review the retry change']]);
   });
 
   test("a child's ask stays where the reader can answer it", () => {
@@ -1169,5 +1186,243 @@ describe('a subagent', () => {
     expect(summaries.join(' | ')).not.toMatch(/\b\d{2,} tool calls/);
     const row = after.find((b) => b.kind === 'subagent');
     expect(row && row.kind === 'subagent' && row.entry.calls).toBe(301);
+  });
+});
+
+describe('a subagent card', () => {
+  // The card stands where the call that started it stood. These run over
+  // the measured frames of the foreground pair and the background pair,
+  // and over small logs for the cases the measurements do not hold.
+  //
+  // @decision(DL-112) @decision(DL-111)
+  const cardsOf = (t: Entry[]) => t.flatMap((e) => (e.kind === 'subagent' ? [e] : []));
+  const only = (t: Entry[]) => {
+    const cards = cardsOf(t);
+    expect(cards).toHaveLength(1);
+    return cards[0];
+  };
+  const upTo = (log: Activity[], pos: number) => log.filter((e) => e.pos <= pos);
+
+  test('says what the child is, how it went and what it concluded', () => {
+    const card = only(buildTimeline(subagentConversations, subagentLog));
+    expect(card).toMatchObject({
+      key: 'sub:call_1794165467525768415',
+      id: Child,
+      title: 'Review the retry change',
+      agent: 'general',
+      state: 'done',
+      calls: 1,
+      summary: '1 tool call',
+      latest: 'glob internal/client/*.go',
+      scope: [Child],
+    });
+    expect(card.final).toMatch(/^The retry change is safe to merge\./);
+  });
+
+  test('stands where the call stood, between what came before and after it', () => {
+    const main = buildTimeline(subagentConversations, subagentLog);
+    const at = main.indexOf(only(main));
+    expect(main.slice(0, at).some((e) => e.kind === 'message' && e.role === 'user')).toBe(true);
+    expect(main.slice(at + 1).some((e) => e.kind === 'message' && e.role === 'assistant')).toBe(true);
+    // The call's own lines left the list.
+    expect(condense(main).some((e) => e.kind === 'event' && e.calls)).toBe(false);
+  });
+
+  test('while the call runs it is paired with the child begun inside its span, and shows its latest action', () => {
+    // The result that names the child has not arrived: the child began
+    // at position 11, inside the call's span from 7.
+    const live = upTo(subagentLog, 18);
+    expect(live.some((e) => e.child)).toBe(false);
+    const card = only(buildTimeline(subagentConversations, live));
+    expect(card).toMatchObject({ id: Child, state: 'running', calls: 1 });
+    expect(card.latest).toBe('glob internal/client/*.go');
+  });
+
+  test('is a card in a delegating state before there is a child', () => {
+    const roots = subagentConversations.filter((c) => !c.parent);
+    const card = only(buildTimeline(roots, upTo(subagentLog, 9)));
+    expect(card).toMatchObject({ id: '', state: 'starting', title: 'Review the retry change', agent: 'general', calls: 0, summary: '' });
+  });
+
+  test('is the same card from the first frame of its call to the last, so it keeps its place and its open state', () => {
+    const keys = new Set<string>();
+    for (const pos of [7, 8, 9, 11, 18, 26, 32]) {
+      const convs = pos < 11 ? subagentConversations.filter((c) => !c.parent) : subagentConversations;
+      keys.add(only(buildTimeline(convs, upTo(subagentLog, pos))).key);
+    }
+    expect([...keys]).toEqual(['sub:call_1794165467525768415']);
+  });
+
+  test('a background child is named by the call that returned at once, and runs on after it', () => {
+    const live = upTo(backgroundLog, 21);
+    const card = only(buildTimeline(backgroundConversations, live));
+    expect(card).toMatchObject({ id: BackgroundChild, state: 'running', title: 'Audit the docs for stale commands' });
+    // The call is done, the child is not: the call's end must not finish it.
+    expect(live.find((e) => e.name === 'session.tool.success' && e.session === BackgroundRoot)?.child).toBe(BackgroundChild);
+    const done = only(buildTimeline(backgroundConversations, backgroundLog));
+    expect(done).toMatchObject({ id: BackgroundChild, state: 'done', calls: 1 });
+    expect(done.final).toMatch(/^No stale commands found/);
+  });
+
+  test('a session that has ended stops a child still running', () => {
+    const live = upTo(backgroundLog, 21);
+    expect(only(buildTimeline(backgroundConversations, live, [], true)).state).toBe('stopped');
+    expect(only(buildTimeline(backgroundConversations, backgroundLog, [], true)).state).toBe('done');
+  });
+
+  describe('with parallel calls', () => {
+    const P = 'ses_parent';
+    const kids: Conversation[] = [
+      { id: P, messages: [] },
+      { id: 'ses_c1', parent: P, title: 'First', messages: [] },
+      { id: 'ses_c2', parent: P, title: 'Second', messages: [] },
+    ];
+    const both = [
+      ...callFrames(P, 'call_a', 10, { description: 'one' }),
+      ...callFrames(P, 'call_b', 20, { description: 'two' }),
+      ...childStart('ses_c1', 30),
+      ...childStart('ses_c2', 40),
+      ...toolFrames('ses_c2', 'call_t2', 50, 'read', { path: 'b.go' }),
+      ...toolFrames('ses_c1', 'call_t1', 60, 'read', { path: 'a.go' }),
+    ];
+
+    test('each card takes the child begun in its turn, with no id to say so', () => {
+      const cards = cardsOf(buildTimeline(kids, both));
+      expect(cards.map((c) => [c.call, c.id, c.title])).toEqual([
+        ['call_a', 'ses_c1', 'First'],
+        ['call_b', 'ses_c2', 'Second'],
+      ]);
+      expect(cards.map((c) => c.latest)).toEqual(['read a.go', 'read b.go']);
+    });
+
+    test('a result that names the later child first sets the pairing right', () => {
+      // call_a returns naming c2; call_b has no id and takes c1.
+      const log = [...both, frame(P, 70, 'session.tool.success', { call: 'call_a', child: 'ses_c2' })];
+      const cards = cardsOf(buildTimeline(kids, log));
+      expect(cards.map((c) => [c.call, c.id])).toEqual([
+        ['call_a', 'ses_c2'],
+        ['call_b', 'ses_c1'],
+      ]);
+    });
+
+    test('a call that returns with no child draws a card with none, and the child stands alone', () => {
+      const log = [
+        ...callFrames(P, 'call_a', 10, { description: 'one', end: 'success' }),
+        ...childStart('ses_c1', 30),
+        ...childEnd('ses_c1', 40, 'finished'),
+      ];
+      const cards = cardsOf(buildTimeline(kids.slice(0, 2), log));
+      expect(cards.map((c) => [c.key, c.call, c.id, c.state])).toEqual([
+        ['sub:call_a', 'call_a', '', 'done'],
+        ['sub:ses_c1', '', 'ses_c1', 'done'],
+      ]);
+    });
+  });
+
+  test('a follow-up call to a child stays a tool line, beside the one card', () => {
+    const P = 'ses_parent';
+    const convs: Conversation[] = [
+      { id: P, messages: [] },
+      { id: 'ses_c1', parent: P, title: 'Reviewer', messages: [] },
+    ];
+    const log = [
+      ...callFrames(P, 'call_a', 10, { description: 'review', end: 'success', child: 'ses_c1' }),
+      ...childStart('ses_c1', 20),
+      ...childEnd('ses_c1', 30, 'first answer'),
+      ...callFrames(P, 'call_b', 40, { description: 'and also', sessionID: 'ses_c1', end: 'success', child: 'ses_c1' }),
+    ];
+    const t = buildTimeline(convs, log);
+    expect(cardsOf(t).map((c) => c.call)).toEqual(['call_a']);
+    const lines = condense(t).filter((e) => e.kind === 'event' && e.calls);
+    expect(lines.map((e) => e.kind === 'event' && e.calls?.name)).toEqual(['subagent']);
+  });
+
+  test('a child under a child is a card in its parent, and its work counts for the first', () => {
+    const P = 'ses_parent';
+    const convs: Conversation[] = [
+      { id: P, messages: [] },
+      { id: 'ses_c1', parent: P, title: 'Lead', messages: [] },
+      { id: 'ses_g1', parent: 'ses_c1', title: 'Helper', messages: [] },
+    ];
+    const log = [
+      ...callFrames(P, 'call_a', 10, { description: 'lead', end: 'success', child: 'ses_c1' }),
+      ...childStart('ses_c1', 20),
+      ...callFrames('ses_c1', 'call_b', 30, { description: 'help', end: 'success', child: 'ses_g1' }),
+      ...childStart('ses_g1', 40),
+      ...toolFrames('ses_g1', 'call_t', 50, 'grep', { pattern: 'x' }),
+      ...childEnd('ses_g1', 60, 'helped'),
+      ...childEnd('ses_c1', 70, 'led'),
+    ];
+    const { entries, children } = buildTimelines(convs, log);
+    expect(cardsOf(entries).map((c) => [c.id, c.scope])).toEqual([['ses_c1', ['ses_c1', 'ses_g1']]]);
+    const inner = cardsOf(children.get('ses_c1')!);
+    expect(inner.map((c) => [c.id, c.title, c.state, c.calls, c.final])).toEqual([['ses_g1', 'Helper', 'done', 1, 'helped']]);
+    // The lead's own count is its tool calls: the delegation is a card.
+    expect(cardsOf(entries)[0].calls).toBe(0);
+    expect(children.get('ses_g1')).toBeDefined();
+  });
+
+  test('a parent loop cannot lose a child', () => {
+    const convs: Conversation[] = [
+      { id: 'ses_a', parent: 'ses_b', title: 'A', messages: [] },
+      { id: 'ses_b', parent: 'ses_a', title: 'B', messages: [] },
+    ];
+    const log = [...childStart('ses_a', 1), ...childStart('ses_b', 5)];
+    const { entries, children } = buildTimelines(convs, log);
+    expect(children.has('ses_a') && children.has('ses_b')).toBe(true);
+    // The loop is broken at one conversation, and the other hangs from it.
+    expect(cardsOf(entries).map((c) => c.id)).toEqual(['ses_a']);
+    expect(cardsOf(children.get('ses_a')!).map((c) => c.id)).toEqual(['ses_b']);
+  });
+
+  describe('and its asks', () => {
+    const ask = (pos: number, id: string, session: string, name = 'permission.asked'): Activity =>
+      ({
+        pos,
+        at: '2026-11-08T19:20:00Z',
+        source: 'ephemeral',
+        name,
+        session,
+        ask: { id, kind: 'permission', title: '', resources: ['/etc/hosts'] },
+      }) as unknown as Activity;
+
+    test('an ask a child raised stays in the main list and says whose it is', () => {
+      const main = buildTimeline(subagentConversations, [...subagentLog, ask(91, 'per_1', Child)]);
+      const raised = main.find((e) => e.kind === 'event' && e.ask);
+      expect(raised && raised.kind === 'event' && [raised.session, raised.from]).toEqual([Child, 'Review the retry change']);
+      // The root's own is not from anyone.
+      const own = buildTimeline(subagentConversations, [...subagentLog, ask(92, 'per_2', Root)]).find((e) => e.kind === 'event' && e.ask);
+      expect(own && own.kind === 'event' && own.from).toBeUndefined();
+    });
+
+    test('is counted for the card whose scope it was raised in, while it is pending', () => {
+      const main = buildTimeline(subagentConversations, [...subagentLog, ask(91, 'per_1', Child), ask(92, 'per_2', Root)]);
+      const states = new Map([
+        ['per_1', { status: 'pending' }],
+        ['per_2', { status: 'pending' }],
+      ]);
+      expect(pendingAskIds(main, states, [Child])).toEqual(['per_1']);
+      expect(pendingAskIds(main, states, [Root, Child])).toEqual(['per_1', 'per_2']);
+      expect(pendingAskIds(main, new Map([['per_1', { status: 'allowed' }]]), [Child])).toEqual([]);
+    });
+
+    test('is still its own block, in the order of the transcript, and not folded into the card', () => {
+      const blocks = blocksOf(condense(buildTimeline(subagentConversations, [...subagentLog, ask(91, 'per_1', Child)])));
+      expect(blocks.filter((b) => b.kind === 'ask')).toHaveLength(1);
+      expect(blocks.filter((b) => b.kind === 'subagent')).toHaveLength(1);
+    });
+  });
+
+  test("the latest action is the child's newest call, else its newest thought", () => {
+    const own = condense(
+      buildTimeline(
+        [{ id: 'c' }],
+        [...toolFrames('c', 'call_1', 1, 'read', { path: 'a.go' }), ...toolFrames('c', 'call_2', 10, 'shell', { command: 'go test ./...' })],
+      ),
+    ).filter((e): e is EventEntry => e.kind === 'event');
+    expect(latestAction(own)).toBe('shell go test ./...');
+    const thought = [{ ...own[0], key: 'e99', name: 'session.reasoning.ended', text: 'checking the test', calls: undefined }];
+    expect(latestAction([...own.slice(0, 1), ...thought])).toBe('thinking checking the test');
+    expect(latestAction([])).toBe('');
   });
 });
