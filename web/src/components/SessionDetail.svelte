@@ -48,6 +48,8 @@
     runSummary,
     noteText,
     seamText,
+    childIds,
+    subagentText,
     shown,
     shownWarnings,
     stopNote,
@@ -308,7 +310,7 @@
   const asking = $derived(pendingAsks(asks) > 0);
   // The model the session is on: the log's newest selection, else its
   // launch's. @decision(DL-014)
-  const model = $derived(currentModel(activity, s?.model));
+  const model = $derived(currentModel(activity, s?.model, children));
 
   // Cancelling a queued message. Whether it was still waiting is read from
   // the log, so the row says "Cancelling…" until the log says either way.
@@ -334,8 +336,12 @@
   // than asked of anything. Decides whether Interrupt is drawn.
   //
   // @decision(DL-059)
-  const inFlight = $derived(turnInFlight(activity));
-  const turnsSeenEnded = $derived(turnsEnded(activity));
+  //
+  // Only the root's turns: a subagent ends turns of its own mid-way.
+  // @decision(DL-111)
+  const children = $derived(childIds(conversations));
+  const inFlight = $derived(turnInFlight(activity, children));
+  const turnsSeenEnded = $derived(turnsEnded(activity, children));
   const openWarnings = $derived(shownWarnings(warnings, blocks.length));
 
   // Runs the reader opened, by the run's stable key. Expanding reads
@@ -1056,6 +1062,12 @@
             {#if block.entry.at}
               <div class={details(block.key)}>spov · {clock(new Date(block.entry.at).toISOString())}</div>
             {/if}
+          </div>
+        {:else if block.kind === 'subagent'}
+          <!-- A subagent's whole work as one quiet line, until its card.
+               @decision(DL-111) -->
+          <div class="{row} -mt-1.5 mb-5" data-testid="subagent">
+            <p class="m-0 min-w-0 truncate text-md text-faint" title={subagentText(block.entry)}>{subagentText(block.entry)}</p>
           </div>
         {:else}
           {@const showAll = expanded.has(block.key)}

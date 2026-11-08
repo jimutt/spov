@@ -35,7 +35,9 @@ import {
   turnsEnded,
   unseen,
 } from "./steer";
-import type { Activity, Conversation } from "./timeline";
+import { childIds, type Activity, type Conversation } from "./timeline";
+import { currentModel } from "./modelpick";
+import { Child, subagentConversations, subagentLog } from "./subagent.fixture";
 
 /**
  * The composer's rules. Everything a reader is told about what a
@@ -430,6 +432,43 @@ describe("pressing send again", () => {
     const { post, seen } = answers({ id: "msg_first" });
     await send("hi", "steer", post, t.track, boom.replay, () => "msg_third");
     expect(seen[0].id).toBe("msg_first");
+  });
+});
+
+describe("a subagent's turns", () => {
+  // A subagent runs turns of its own on the root's log, and its end
+  // arrives before the root's. The log is the measured one.
+  //
+  // @decision(DL-111) @decision(DL-059)
+  const children = childIds(subagentConversations);
+  const midTurn = subagentLog.filter((e) => e.pos < 26);
+
+  it("does not end the root's turn", () => {
+    // The child's execution.succeeded (pos 25) is the last execution frame.
+    expect(turnInFlight(midTurn)).toBe(false);
+    expect(turnInFlight(midTurn, children)).toBe(true);
+    expect(turnInFlight(subagentLog, children)).toBe(false);
+  });
+
+  it("is not counted as a turn that ended", () => {
+    expect(turnsEnded(midTurn)).toBe(1);
+    expect(turnsEnded(midTurn, children)).toBe(0);
+    expect(turnsEnded(subagentLog, children)).toBe(1);
+  });
+
+  it("counts a session no conversation names as a root's", () => {
+    expect(turnInFlight(midTurn, childIds([]))).toBe(false);
+    expect(turnsEnded(midTurn, childIds([]))).toBe(1);
+  });
+
+  it("does not clear the reader's echo, nor does a model it selected become the session's", () => {
+    const echo: Echo = { key: "msg_k", id: "msg_k", text: "hi", at: 1000, sending: false };
+    const theirs = frame({ message: "msg_k", session: Child });
+    expect(unseen([echo], [], [theirs])).toEqual([]);
+    expect(unseen([echo], subagentConversations, [theirs])).toHaveLength(1);
+    const selected = frame({ name: "session.model.selected", model: "other/child-model", session: Child, pos: 99 });
+    expect(currentModel([...subagentLog, selected], "x")).toBe("other/child-model");
+    expect(currentModel([...subagentLog, selected], "x", children)).toBe("probe/m");
   });
 });
 

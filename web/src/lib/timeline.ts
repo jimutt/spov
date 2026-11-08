@@ -23,7 +23,23 @@ export type Message = {
   text?: string;
   at?: string;
 };
-export type Conversation = { id: string; title?: string; messages?: Message[] };
+/**
+ * `parent` is the OpenCode id of the conversation that started this one as
+ * a subagent, absent for a root.
+ *
+ * @decision(DL-111) @decision(DL-110)
+ */
+export type Conversation = { id: string; title?: string; parent?: string; messages?: Message[] };
+
+/**
+ * childIds is the set of conversations that are a subagent's. A session
+ * named by no conversation here is not in it, so it counts as a root.
+ *
+ * @decision(DL-111)
+ */
+export function childIds(conversations: readonly Conversation[]): ReadonlySet<string> {
+  return new Set(conversations.filter((c) => c.parent).map((c) => c.id));
+}
 
 /**
  * One frame of the log. It is the stream's event unchanged: the store
@@ -382,7 +398,27 @@ export interface ToolCall {
   error: string;
 }
 
-export type Entry = MessageEntry | EventEntry;
+/**
+ * One subagent's whole activity, drawn in the main transcript as a single
+ * quiet row at the child's first entry. The child's own entries live in
+ * `Timelines.children`.
+ *
+ * @decision(DL-111)
+ */
+export interface SubagentEntry {
+  kind: "subagent";
+  key: string;
+  at: number;
+  seq: number;
+  /** The child conversation's OpenCode id. */
+  id: string;
+  /** The child's title, or "" when its conversation carries none. */
+  title: string;
+  /** How many tool calls the child made. */
+  calls: number;
+}
+
+export type Entry = MessageEntry | EventEntry | SubagentEntry;
 
 /** millis parses a timestamp to 0 rather than NaN, which would make the
  *  comparator return NaN and leave the sort order undefined. */
@@ -462,12 +498,25 @@ export function messageKey(id: string): string {
   return `msg:${id}`;
 }
 
-export function buildTimeline(
-  conversations: Conversation[],
-  activity: Activity[],
-  pending: Pending[] = [],
-  ended = false,
-): Entry[] {
+/**
+ * The main list and each subagent's own, by the child's conversation id.
+ *
+ * @decision(DL-111)
+ */
+export interface Timelines {
+  entries: Entry[];
+  children: Map<string, Entry[]>;
+}
+
+/**
+ * lay puts one conversation set's messages and events on a list, unsorted.
+ * Roots and a child go through it alike; `child` changes who is speaking:
+ * a `user` message is the parent agent's task prompt, a quiet row and
+ * never a person's bubble, and an inbox frame is never promoted at all.
+ *
+ * @decision(DL-111) @decision(DL-058)
+ */
+function lay(conversations: Conversation[], activity: Activity[], child: boolean): { out: Entry[]; seq: number } {
   const out: Entry[] = [];
   // What has already been said, so a promoted event does not repeat
   // words the conversation already carries, or that another promoted
@@ -507,16 +556,21 @@ export function buildTimeline(
       //
       // @decision(DL-058)
       if (!text.trim()) return;
-      remember(m.role ?? "", m.id ?? "", text.trim());
+      // A child's `user` message is its task prompt, written by the
+      // parent agent.
+      //
+      // @decision(DL-111)
+      const role = child && m.role === "user" ? "prompt" : (m.role ?? "");
+      remember(role, m.id ?? "", text.trim());
       const entry: MessageEntry = {
         kind: "message",
         key: `m${c}.${i}`,
         at: millis(m.at),
         seq: seq++,
-        role: m.role ?? "",
+        role,
         text,
       };
-      if (m.id && m.role === "user") {
+      if (m.id && role === "user") {
         entry.id = m.id;
         entry.key = messageKey(m.id);
       }
@@ -561,11 +615,17 @@ export function buildTimeline(
     // recording, not anyone talking in the session.
     const seam = isSeam(ev);
     const spoke = seam ? "" : spokenBy(name, ev.role);
-    // `.trim()`, not raw truthiness: "\n" is truthy and would promote a
-    // bare newline to a speaker block with nothing readable in it.
+    // A child's inbox frame is the parent agent's prompt, never a
+    // person's message: it repeats the prompt row or stays an event.
     //
-    // @decision(DL-058)
-    if (spoke && text.trim()) {
+    // @decision(DL-111)
+    if (child && spoke === "user") {
+      if (said.has(text.trim())) continue;
+    } else if (spoke && text.trim()) {
+      // `.trim()`, not raw truthiness: "\n" is truthy and would promote a
+      // bare newline to a speaker block with nothing readable in it.
+      //
+      // @decision(DL-058)
       const body = text.trim();
       // The id decides for a person's own words, and only where there
       // are ids to decide with. Everything else keeps the text rule.
@@ -583,12 +643,76 @@ export function buildTimeline(
     if (!seam && ev.tool) entry.tool = ev.tool;
     out.push(entry);
   }
+  return { out, seq };
+}
+
+function byTime(a: Entry, b: Entry): number {
+  return a.at - b.at || a.seq - b.seq;
+}
+
+/**
+ * buildTimelines partitions its input by conversation before any speaker
+ * rule: the roots are drawn as one list, each child as a list of its own
+ * built by the same code. Only the roots' frames feed the reader's rules
+ * (a person's message, its status, the echoes), so a subagent never
+ * speaks as the reader. A frame naming no listed child is a root's.
+ *
+ * A child is one row in the main list, at its first entry, until the
+ * card replaces it.
+ *
+ * @decision(DL-111) @decision(DL-059) @decision(DL-019)
+ */
+export function buildTimelines(
+  conversations: Conversation[],
+  activity: Activity[],
+  pending: Pending[] = [],
+  ended = false,
+): Timelines {
+  const kids = childIds(conversations);
+  const rootActivity: Activity[] = [];
+  const byChild = new Map<string, Activity[]>();
+  for (const ev of activity) {
+    // An ask stays where the reader can answer it, whoever asked.
+    if (ev.session && kids.has(ev.session) && !isAskFrame(ev)) {
+      const list = byChild.get(ev.session);
+      if (list) list.push(ev);
+      else byChild.set(ev.session, [ev]);
+    } else {
+      rootActivity.push(ev);
+    }
+  }
+
+  const { out, seq } = lay(
+    conversations.filter((c) => !c.parent),
+    rootActivity,
+    false,
+  );
+
+  const children = new Map<string, Entry[]>();
+  for (const conv of conversations) {
+    if (!conv.parent) continue;
+    const events = byChild.get(conv.id) ?? [];
+    const entries = lay([conv], events, true).out.sort(byTime);
+    children.set(conv.id, entries);
+    if (entries.length === 0) continue;
+    const calls = condense(entries).filter((e) => e.kind === "event" && e.calls).length;
+    const first = events.length > 0 ? Math.min(...events.map((e) => e.pos)) : 0;
+    out.push({
+      kind: "subagent",
+      key: `sub:${conv.id}`,
+      at: entries.reduce((n, e) => (n === 0 || (e.at !== 0 && e.at < n) ? e.at : n), 0),
+      seq: seq + first,
+      id: conv.id,
+      title: (conv.title ?? "").trim(),
+      calls,
+    });
+  }
 
   // A person's message is drawn where it was read: at its delivery once
   // processed, and below everything else while it still waits.
   //
   // @decision(DL-019)
-  const statuses = messageStatuses(activity, ended);
+  const statuses = messageStatuses(rootActivity, ended);
   const last = out.reduce((n, e) => (e.at > n ? e.at : n), 0);
   let waiting = 0;
   for (const e of out) {
@@ -623,7 +747,17 @@ export function buildTimeline(
     });
   }
 
-  return out.sort((a, b) => a.at - b.at || a.seq - b.seq);
+  return { entries: out.sort(byTime), children };
+}
+
+/** buildTimeline is the main list of `buildTimelines`. */
+export function buildTimeline(
+  conversations: Conversation[],
+  activity: Activity[],
+  pending: Pending[] = [],
+  ended = false,
+): Entry[] {
+  return buildTimelines(conversations, activity, pending, ended).entries;
 }
 
 /**
@@ -635,6 +769,7 @@ export type Block =
   | { kind: "seam"; key: string; entry: EventEntry }
   | { kind: "note"; key: string; entry: EventEntry }
   | { kind: "ask"; key: string; entry: EventEntry & { ask: Ask } }
+  | { kind: "subagent"; key: string; entry: SubagentEntry }
   | { kind: "events"; key: string; events: EventEntry[] };
 
 /**
@@ -659,6 +794,13 @@ export function blocksOf(entries: Entry[]): Block[] {
   for (const entry of entries) {
     if (entry.kind === "message") {
       out.push({ kind: "message", key: entry.key, entry });
+      continue;
+    }
+    // A subagent's row breaks a run as a message does.
+    //
+    // @decision(DL-111)
+    if (entry.kind === "subagent") {
+      out.push({ kind: "subagent", key: entry.key, entry });
       continue;
     }
     // An ask breaks a run as a message does: it must never be folded away.
@@ -747,7 +889,7 @@ export function condense(entries: Entry[]): Entry[] {
   const out: Entry[] = [];
   const calls = new Map<string, ToolCall>();
   for (const e of entries) {
-    if (e.kind === "message" || e.seam) {
+    if (e.kind !== "event" || e.seam) {
       out.push(e);
       continue;
     }
@@ -911,6 +1053,17 @@ export function runSummary(events: EventEntry[]): string {
   if (retries) parts.push(count(retries, "model retry", "model retries"));
   if (others) parts.push(count(others, tools || thoughts || retries ? "other event" : "event"));
   return parts.join(", ");
+}
+
+/**
+ * subagentText is the one line a subagent's row says: its label, when
+ * its conversation carries a title, and how many tool calls it made.
+ *
+ * @decision(DL-111)
+ */
+export function subagentText(entry: { title: string; calls: number }): string {
+  const calls = entry.calls ? count(entry.calls, "tool call") : "no tool calls";
+  return entry.title ? `Subagent · ${entry.title} · ${calls}` : `Subagent · ${calls}`;
 }
 
 function count(n: number, word: string, plural = `${word}s`): string {

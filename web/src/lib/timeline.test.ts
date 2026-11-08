@@ -5,8 +5,10 @@ import {
   SeamTextLimit,
   blocksOf,
   buildTimeline,
+  buildTimelines,
   condense,
   messageKey,
+  subagentText,
   messageStatuses,
   timeDividers,
   runSummary,
@@ -19,8 +21,11 @@ import {
   type Activity,
   type Block,
   type Conversation,
+  type Entry,
   type EventEntry,
 } from './timeline';
+import { Child, ChildPrompt, subagentConversations, subagentLog } from './subagent.fixture';
+import { windowOf } from './transcriptwindow';
 
 /** ev builds one frame of the log, at the position the store gave it. */
 function ev(pos: number, name: string, at = '', text?: string): Activity {
@@ -51,7 +56,7 @@ describe('buildTimeline', () => {
       ),
       [ev(0, 'session.execution.started', '2026-09-01T12:01:00Z')],
     );
-    expect(t.map((e) => (e.kind === 'message' ? e.text : e.name))).toEqual([
+    expect(t.map((e) => (e.kind === 'event' ? e.name : e.kind === 'message' ? e.text : e.id))).toEqual([
       'go',
       'session.execution.started',
       'done',
@@ -514,7 +519,7 @@ describe('an echo in the timeline', () => {
       [],
       [{ key: 'msg_k', at: Date.parse('2026-09-01T11:00:00Z'), text: 'wait', note: 'sending…' }],
     );
-    expect(t.map((e) => (e.kind === 'message' ? e.text : e.name))).toEqual([
+    expect(t.map((e) => (e.kind === 'event' ? e.name : e.kind === 'message' ? e.text : e.id))).toEqual([
       'go',
       'working',
       'wait',
@@ -1032,5 +1037,137 @@ describe('time dividers', () => {
   test('draws none next to an undated block', () => {
     const got = timeDividers([msg('a', ''), msg('b', '2026-09-01T12:00:00'), msg('c', '2026-09-01T13:00:00')], now);
     expect([...got.keys()]).toEqual(['c']);
+  });
+});
+
+describe('a subagent', () => {
+  // The session that failed in production: the agent asked a subagent to
+  // review a diff, and the page drew the agent's task prompt as the
+  // reader's own message. These are the conversations and log the API
+  // served for it.
+  //
+  // @decision(DL-111) @decision(DL-110)
+  const asRoots = subagentConversations.map(({ parent: _parent, ...c }) => c);
+  const bubbles = (t: Entry[]) => t.filter((e) => e.kind === 'message' && e.role === 'user');
+  const wordsOf = (t: Entry[]) => t.flatMap((e) => (e.kind === 'message' ? [e.text] : []));
+
+  test("before the parent is known its prompt is the reader's bubble, the failure", () => {
+    // Pins what the fixture reproduces, so the next test cannot pass
+    // vacuously on data that never had the problem.
+    expect(wordsOf(bubbles(buildTimeline(asRoots, subagentLog)))).toContain(ChildPrompt);
+  });
+
+  test('its task prompt is never a bubble in the main list', () => {
+    const main = buildTimeline(subagentConversations, subagentLog);
+    expect(bubbles(main)).toHaveLength(1);
+    expect(wordsOf(main).join('\n')).not.toContain('You are a subagent spawned');
+    expect(wordsOf(bubbles(main))).toEqual([
+      'Can you check that the retry change on this branch is safe to merge? Have a subagent review the diff.',
+    ]);
+  });
+
+  test("neither its messages nor its inbox frames change a root message's status", () => {
+    const rootOnly = subagentLog.filter((e) => e.session !== Child);
+    const status = (log: Activity[]) =>
+      buildTimeline(subagentConversations, log, [], false).flatMap((e) =>
+        e.kind === 'message' && e.id ? [[e.id, e.status, e.at, e.seq]] : [],
+      );
+    expect(status(subagentLog)).toEqual(status(rootOnly));
+    // A child's enqueue with no delivery would read as a queued message
+    // if it reached messageStatuses, and as not processed at the end.
+    const waiting = subagentLog.filter((e) => !(e.session === Child && e.name === 'session.inbox.delivered'));
+    for (const ended of [false, true]) {
+      const got = buildTimeline(subagentConversations, waiting, [], ended).filter((e) => e.kind === 'message' && e.id);
+      expect(got.map((e) => e.kind === 'message' && e.status)).toEqual(['processed']);
+    }
+  });
+
+  test('is drawn in the main list as one quiet row at its first entry', () => {
+    const main = buildTimeline(subagentConversations, subagentLog);
+    const rows = main.filter((e) => e.kind === 'subagent');
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.kind === 'subagent' && [row.id, row.title, row.calls]).toEqual([Child, 'Review the retry change', 1]);
+    expect(row.kind === 'subagent' && subagentText(row)).toBe('Subagent · Review the retry change · 1 tool call');
+    // After the parent's own call to it and before the parent's answer.
+    const at = main.indexOf(row);
+    expect(main.slice(0, at).some((e) => e.kind === 'event' && e.call)).toBe(true);
+    expect(main.slice(at + 1).some((e) => e.kind === 'message' && e.role === 'assistant')).toBe(true);
+    // And none of its work is anywhere else in the main list.
+    expect(main.filter((e) => e.kind === 'event' && e.key === 'e17')).toHaveLength(0);
+  });
+
+  test('keeps its work in a list of its own, built by the same code', () => {
+    const { children } = buildTimelines(subagentConversations, subagentLog);
+    const own = children.get(Child)!;
+    const prompt = own.find((e) => e.kind === 'message' && e.role === 'prompt');
+    expect(prompt && prompt.kind === 'message' && prompt.text).toBe(ChildPrompt);
+    expect(own.filter((e) => e.kind === 'message' && e.role === 'user')).toHaveLength(0);
+    // The enqueue frame repeats the prompt row and is not promoted.
+    expect(own.filter((e) => e.kind === 'event' && e.name === 'session.inbox.enqueued')).toHaveLength(0);
+    expect(
+      own.some((e) => e.kind === 'message' && e.role === 'assistant' && e.text.startsWith('The retry change is safe')),
+    ).toBe(true);
+    expect(condense(own).filter((e) => e.kind === 'event' && e.calls)).toHaveLength(1);
+  });
+
+  test("an enqueue frame whose prompt was never read stays an event, not a person's message", () => {
+    const noMessages = subagentConversations.map((c) => ({ ...c, messages: [] }));
+    const { entries, children } = buildTimelines(noMessages, subagentLog);
+    expect(entries.filter((e) => e.kind === 'message' && e.text.startsWith('You are'))).toHaveLength(0);
+    const own = children.get(Child)!;
+    expect(own.filter((e) => e.kind === 'message' && (e.role === 'user' || e.role === 'prompt'))).toHaveLength(0);
+    expect(own.some((e) => e.kind === 'event' && e.name === 'session.inbox.enqueued')).toBe(true);
+  });
+
+  test("a session no conversation names is a root's", () => {
+    const stray: Activity[] = [
+      {
+        pos: 90,
+        at: '2026-11-08T19:20:00Z',
+        source: 'opencode',
+        name: 'session.inbox.enqueued',
+        session: 'ses_unlisted',
+        role: 'user',
+        message: 'msg_stray',
+        text: 'hello from nowhere',
+      },
+    ];
+    expect(wordsOf(buildTimeline(subagentConversations, [...subagentLog, ...stray]))).toContain('hello from nowhere');
+    // Nor does a log with no parentage at all change: every frame is a root's.
+    expect(buildTimeline(asRoots, subagentLog).some((e) => e.kind === 'subagent')).toBe(false);
+  });
+
+  test("a child's ask stays where the reader can answer it", () => {
+    const ask = {
+      pos: 91,
+      at: '2026-11-08T19:20:00Z',
+      source: 'ephemeral',
+      name: 'permission.asked',
+      session: Child,
+      ask: { id: 'per_1', kind: 'permission', title: '', permission: 'edit', patterns: [], metadata: {} },
+    } as unknown as Activity;
+    const main = buildTimeline(subagentConversations, [...subagentLog, ask]);
+    expect(main.some((e) => e.kind === 'event' && e.ask)).toBe(true);
+  });
+
+  test('the window and the folds count the main list only', () => {
+    // A subagent that made three hundred tool calls.
+    const busy: Activity[] = Array.from({ length: 300 }, (_, i) => ({
+      pos: 100 + i,
+      at: '2026-11-08T19:17:48Z',
+      source: 'opencode',
+      name: 'session.tool.called',
+      session: Child,
+      call: `call_${i}`,
+    }));
+    const before = blocksOf(condense(buildTimeline(subagentConversations, subagentLog)));
+    const after = blocksOf(condense(buildTimeline(subagentConversations, [...subagentLog, ...busy])));
+    expect(after.map((b) => b.key)).toEqual(before.map((b) => b.key));
+    expect(windowOf(after, undefined, 200).hidden).toBe(0);
+    const summaries = after.flatMap((b) => (b.kind === 'events' ? [runSummary(b.events)] : []));
+    expect(summaries.join(' | ')).not.toMatch(/\b\d{2,} tool calls/);
+    const row = after.find((b) => b.kind === 'subagent');
+    expect(row && row.kind === 'subagent' && row.entry.calls).toBe(301);
   });
 });

@@ -7,7 +7,7 @@
 | DL-114 | Only the job's own conversation can be a person's: the supervisor reads takeovers, withdrawals and the verdict's "a person wrote" from it alone | accepted | jobs | subagents |
 | DL-113 | A subagent opens in its own read-only view on the session page, with a way back, its siblings and a list in the sidebar | proposed | web | subagents |
 | DL-112 | A subagent is one card in its parent's transcript: its call, state and latest action, opened inline, with asks kept in view | proposed | web | subagents |
-| DL-111 | The main transcript draws the root conversation only, and a subagent never speaks as the reader | proposed | web | subagents |
+| DL-111 | The main transcript draws the root conversation only, and a subagent never speaks as the reader | accepted | web | subagents |
 | DL-110 | A conversation records its parent, read from OpenCode when the recorder first sees it, and the wire says which conversations are subagents | accepted | server | subagents |
 | DL-109 | An unnamed send steers into the session's oldest conversation | accepted | server | steering, conversations, subagent |
 | DL-108 | The workspace guide says that a refused forge command is not an expired token | accepted | opencode | gh-pat-reads, workspace, credentials |
