@@ -1622,7 +1622,7 @@
     "name": "DeepSeek V4.1 Flash 1017",
     "released": "2026-10-17",
     "context": 1048576,
-    "output": 393216
+    "output": 943718
    },
    {
     "id": "elorian/glimpse",
@@ -1630,13 +1630,6 @@
     "released": "2026-10-17",
     "context": 262144,
     "output": 256000
-   },
-   {
-    "id": "inception/mercury-3",
-    "name": "Mercury 3",
-    "released": "2026-10-16",
-    "context": 1000000,
-    "output": 131072
    },
    {
     "id": "prism-ml/ternary-bonsai-2-9b",
@@ -1982,13 +1975,6 @@
     "output": 32768
    },
    {
-    "id": "inception/mercury-2.5",
-    "name": "Mercury 2.5",
-    "released": "2026-09-08",
-    "context": 260000,
-    "output": 65536
-   },
-   {
     "id": "nex-agi/nex-n2.5-pro",
     "name": "Nex-N2.5-Pro",
     "released": "2026-09-08",
@@ -2070,7 +2056,7 @@
     "name": "GLM-5.3-Flash",
     "released": "2026-08-26",
     "context": 1048576,
-    "output": 943717
+    "output": 131072
    },
    {
     "id": "ibm-granite/granite-4.2-8b",
@@ -2602,7 +2588,7 @@
     "name": "Qwen3.6 27B",
     "released": "2026-04-22",
     "context": 262144,
-    "output": 65536
+    "output": 81920
    },
    {
     "id": "~anthropic/claude-opus-latest",
@@ -2794,13 +2780,6 @@
     "output": 65536
    },
    {
-    "id": "inception/mercury-2",
-    "name": "Mercury 2",
-    "released": "2026-02-24",
-    "context": 128000,
-    "output": 50000
-   },
-   {
     "id": "qwen/qwen3.5-122b-a10b",
     "name": "Qwen3.5 122B-A10B",
     "released": "2026-02-23",
@@ -2924,7 +2903,7 @@
     "name": "Kimi K2.5",
     "released": "2026-01-27",
     "context": 262144,
-    "output": 235929
+    "output": 65536
    },
    {
     "id": "z-ai/glm-4.7-flash",
@@ -3568,7 +3547,7 @@
     "name": "Llama-3.1-8B-Instruct",
     "released": "2024-07-23",
     "context": 131072,
-    "output": 117964
+    "output": 16384
    },
    {
     "id": "mistralai/mistral-nemo",
@@ -3827,5 +3806,5 @@
    "z-ai/glm-4.5"
   ]
  },
- "as_of": "2026-11-07T00:00:00Z"
+ "as_of": "2026-11-08T00:00:00Z"
 }
