@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,11 +23,26 @@ func main() {
 
 // run wires the command tree to the real process and returns the exit code.
 func run(args []string, stdout, stderr io.Writer) int {
-	if err := execute(args, stdout, stderr); err != nil {
-		_, _ = fmt.Fprintln(stderr, "spov: "+err.Error())
-		return 1
+	return exitStatus(execute(args, stdout, stderr), stderr)
+}
+
+// exitStatus reports err on stderr and returns the exit code. A command
+// that exits by an outcome names its own code; every other error is 1.
+//
+// @decision(DL-103)
+func exitStatus(err error, stderr io.Writer) int {
+	if err == nil {
+		return 0
 	}
-	return 0
+	var exit *cli.ExitError
+	if errors.As(err, &exit) {
+		if exit.Err != nil {
+			_, _ = fmt.Fprintln(stderr, "spov: "+exit.Err.Error())
+		}
+		return exit.Code
+	}
+	_, _ = fmt.Fprintln(stderr, "spov: "+err.Error())
+	return 1
 }
 
 // interactiveSelector returns the repository picker only when there is a

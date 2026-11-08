@@ -164,7 +164,7 @@ client at all.
 `spov completion bash|zsh|fish|powershell` prints the script, and
 `spov completion <shell> --help` says where to put it. Beyond commands and
 flags, it completes session names for `attach` and `stop`, job IDs for
-`spov jobs show|report|cancel|resume|interrupt`, and credential names for
+`spov jobs show|report|cancel|resume|interrupt|wait`, and credential names for
 `spov credentials remove`. It asks a server only if one is already running,
 and offers nothing rather than starting one or waiting more than a second.
 

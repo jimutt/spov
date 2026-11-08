@@ -28,7 +28,8 @@ import (
 
 // newJobsCreateCmd starts a job and exits. A job outlives the terminal
 // that started it, so blocking a shell on something that may run for
-// hours is the wrong default; the command prints how to follow it.
+// hours is the wrong default; the command prints how to follow it, and
+// --wait is the opt-in to block.
 //
 // @decision(DL-045) @decision(DL-023)
 func newJobsCreateCmd(env *Env) *cobra.Command {
@@ -44,12 +45,15 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		asJSON   bool
 		routed   routedFlags
 		envVars  []string
+		wait     bool
+		timeout  time.Duration
 	)
 	cmd := &cobra.Command{
 		Use:   "create [goal]",
 		Short: "Start an autonomous job in a new sandbox",
 		Long: "Start an autonomous job: spov launches a sandbox, gives OpenCode the goal, and supervises it.\n\n" +
 			"The job outlives this terminal. `spov jobs` reports on it and `spov jobs cancel` ends it.\n\n" +
+			"--wait then blocks until it finishes, as `spov jobs wait` does, with the same exit status.\n\n" +
 			"Autonomous jobs need a hosted server; a local server refuses them.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,10 +61,17 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// @decision(DL-103)
+			if timeout != 0 && !wait {
+				return errors.New("--timeout bounds --wait; add --wait, or leave it out")
+			}
+			if err := checkTimeout(timeout); err != nil {
+				return err
+			}
 			return createJob(cmd.Context(), env, createOptions{
 				Goal: goal, Kind: kind, Repos: repos, Landing: landing, Check: check,
 				Model: model, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
-				Env: envVars,
+				Env: envVars, Wait: wait, Timeout: timeout,
 			})
 		},
 	}
@@ -90,6 +101,10 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 			" sandbox.job_git_access, then your account's job default, then repos, when unset")
 	addRoutedFlags(cmd, &routed, "sandbox.job_credentials")
 	addEnvFlag(cmd, &envVars)
+	// @decision(DL-103)
+	cmd.Flags().BoolVar(&wait, "wait", false,
+		"after creating the job, wait until it finishes and exit by how it ended, as `spov jobs wait` does")
+	timeoutFlag(cmd, &timeout)
 	jsonFlag(cmd, &asJSON)
 	return cmd
 }
@@ -122,6 +137,12 @@ type createOptions struct {
 	//
 	// @decision(DL-023)
 	JSON bool
+	// Wait and Timeout are --wait and --timeout: wait for the job after
+	// creating it.
+	//
+	// @decision(DL-103)
+	Wait    bool
+	Timeout time.Duration
 }
 
 // readGoal takes the goal from the argument or from a file. A goal is
@@ -222,8 +243,13 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 	if err != nil {
 		return jobError(err)
 	}
-	// @decision(DL-023)
-	if opts.JSON {
+	// With --wait and --json the output is one document per line, this
+	// view first so the IDs are known before the job runs.
+	//
+	// @decision(DL-023) @decision(DL-103)
+	if opts.JSON && opts.Wait {
+		err = writeJSONLine(env.Out, job)
+	} else if opts.JSON {
 		err = writeJSON(env.Out, job)
 	} else {
 		_, err = fmt.Fprintf(env.Out, "job %s queued\n", job.ID)
@@ -235,6 +261,9 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 	_, _ = fmt.Fprintf(env.Err, "\n  spov jobs               # where it has got to\n"+
 		"  spov attach %s   # joins it once it has started\n"+
 		"  spov jobs cancel %s\n\n", job.SessionID, job.ID)
+	if opts.Wait {
+		return waitAndReport(ctx, env, c, job.ID, opts.Timeout, opts.JSON, true)
+	}
 	return nil
 }
 
@@ -253,10 +282,10 @@ func jobError(err error) error {
 }
 
 // newJobsCmd is the job group. Called bare it lists, as `jobs list`
-// does. Following a job is this listing and the web page, not a flag on
-// create.
+// does. Following a job is this listing, the web page and `jobs wait`
+// (which `create --wait` also runs).
 //
-// @decision(DL-045) @decision(DL-023)
+// @decision(DL-045) @decision(DL-023) @decision(DL-103)
 func newJobsCmd(env *Env) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "jobs",
@@ -272,7 +301,7 @@ func newJobsCmd(env *Env) *cobra.Command {
 	}
 	listJobs(env, list)
 	cmd.AddCommand(newJobsCreateCmd(env), list, newJobsShowCmd(env), newJobsReportCmd(env),
-		newJobsCancelCmd(env), newJobsResumeCmd(env), newJobsInterruptCmd(env))
+		newJobsCancelCmd(env), newJobsResumeCmd(env), newJobsInterruptCmd(env), newJobsWaitCmd(env))
 	return cmd
 }
 
