@@ -61,7 +61,7 @@ each time the state changes.
 | 4 | failed |
 | 5 | cancelled |
 | 6 | `--timeout` ran out; the job goes on |
-| 1 | the command itself could not finish: a bad flag, sign-in, an unknown ID, the server unreachable |
+| 1 | the command itself could not finish: a bad flag, sign-in, an unknown ID, or the server still unreachable after five retries over about two minutes |
 | 130 | interrupted with Ctrl-C; the job goes on |
 
 The job is printed before a non-zero outcome status. A timeout or Ctrl-C ends

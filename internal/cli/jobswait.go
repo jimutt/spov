@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -206,14 +207,28 @@ func waitForJob(ctx context.Context, env *Env, c *client.Client, id string, time
 		}
 		return errWaitTimedOut
 	}
+	failures := 0
 	for {
 		next, err := c.GetJob(wctx, id)
 		if err != nil {
 			if wctx.Err() != nil {
 				return view, ended()
 			}
-			return view, err
+			if !transientRead(err) || failures == waitRetries {
+				return view, err
+			}
+			failures++
+			delay := min(poll<<(failures-1), maxRetryDelay)
+			_, _ = fmt.Fprintf(env.Err, "  job %s: could not read it (%v); retrying in %s (%d of %d)\n",
+				id, err, delay, failures, waitRetries)
+			select {
+			case <-wctx.Done():
+				return view, ended()
+			case <-time.After(delay):
+			}
+			continue
 		}
+		failures = 0
 		if !seen || next.State != view.State {
 			onChange(next)
 		}
@@ -227,6 +242,25 @@ func waitForJob(ctx context.Context, env *Env, c *client.Client, id string, time
 		case <-time.After(poll):
 		}
 	}
+}
+
+// A wait retries a read that failed in transit or on a server error
+// waitRetries times in a row, after the poll interval doubled each time
+// and capped at maxRetryDelay (5 s to 1 min by default), before it gives
+// up with exit 1. A successful read resets the count.
+//
+// @decision(DL-103)
+const (
+	waitRetries   = 5
+	maxRetryDelay = time.Minute
+)
+
+// transientRead is a read error worth retrying: no answer at all, or a
+// 5xx other than 501, which is a server that has no jobs. A 4xx (no such
+// job, signed out) is final.
+func transientRead(err error) bool {
+	status := client.StatusOf(err)
+	return status == 0 || (status >= 500 && status != http.StatusNotImplemented)
 }
 
 // stderrIsTerminal says whether progress lines are wanted: only when a

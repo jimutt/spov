@@ -312,3 +312,71 @@ func TestOutcomeCodes(t *testing.T) {
 		t.Error("an ExitError with no cause has no text")
 	}
 }
+
+// A read that fails in transit or with a server error is retried five
+// times in a row with a growing delay, and a successful read resets the
+// count; a sixth failure in a row ends the wait with exit 1.
+//
+// @decision(DL-103)
+func TestJobsWaitRetriesAFailedRead(t *testing.T) {
+	serve := func(t *testing.T, failFirst int) (Env, func() int) {
+		var mu sync.Mutex
+		reads := 0
+		api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			reads++
+			if reads <= failFirst {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, `{"status":503,"title":"Service Unavailable"}`)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"job_1","session_id":"sess_1","kind":"pr","state":"succeeded","goal":"fix it"}`)
+		}))
+		t.Cleanup(api.Close)
+		count := func() int { mu.Lock(); defer mu.Unlock(); return reads }
+		return Env{Client: client.New(api.URL, "tok"), JobPoll: time.Millisecond}, count
+	}
+
+	env, reads := serve(t, waitRetries)
+	_, stderr, err := runWith(t, env, "jobs", "wait", "job_1")
+	if err != nil {
+		t.Fatalf("five failed reads then a finished job: %v\n%s", err, stderr)
+	}
+	if got := strings.Count(stderr, "retrying in"); got != waitRetries || reads() != waitRetries+1 {
+		t.Errorf("%d retry lines and %d reads, want %d and %d:\n%s", got, reads(), waitRetries, waitRetries+1, stderr)
+	}
+	if !strings.Contains(stderr, "retrying in 1ms (1 of 5)") || !strings.Contains(stderr, "retrying in 16ms (5 of 5)") {
+		t.Errorf("the delay does not double from the poll interval:\n%s", stderr)
+	}
+
+	env, reads = serve(t, waitRetries+1)
+	_, _, err = runWith(t, env, "jobs", "wait", "job_1")
+	var exit *ExitError
+	if err == nil || errors.As(err, &exit) || client.StatusOf(err) != http.StatusServiceUnavailable {
+		t.Errorf("six failed reads in a row: %v, want the read's own error (exit 1)", err)
+	}
+	if reads() != waitRetries+1 {
+		t.Errorf("%d reads, want %d", reads(), waitRetries+1)
+	}
+}
+
+func TestTransientRead(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want bool
+	}{
+		{errors.New("connection refused"), true},
+		{&client.Error{Status: http.StatusBadGateway}, true},
+		{&client.Error{Status: http.StatusInternalServerError}, true},
+		{&client.Error{Status: http.StatusNotImplemented}, false},
+		{&client.Error{Status: http.StatusNotFound}, false},
+		{&client.Error{Status: http.StatusUnauthorized}, false},
+	} {
+		if got := transientRead(c.err); got != c.want {
+			t.Errorf("transientRead(%v) = %v, want %v", c.err, got, c.want)
+		}
+	}
+}
