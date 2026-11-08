@@ -591,7 +591,7 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
         at: millis(m.at),
         seq: seq++,
         role,
-        text,
+        text: role === "prompt" ? taskOf(text) : text,
       };
       if (m.id && role === "user") {
         entry.id = m.id;
@@ -668,6 +668,21 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
     out.push(entry);
   }
   return { out, seq };
+}
+
+/**
+ * SubagentPreamble is the line OpenCode puts before every task it hands a
+ * subagent (spike S-SA1). It says nothing the card does not, so the
+ * prompt row drops it.
+ *
+ * @decision(DL-112)
+ */
+export const SubagentPreamble = "You are a subagent spawned by another session.";
+
+/** taskOf is a child's prompt without OpenCode's preamble. */
+export function taskOf(text: string): string {
+  const t = text.trimStart();
+  return t.startsWith(SubagentPreamble) ? t.slice(SubagentPreamble.length).trimStart() || text : text;
 }
 
 function byTime(a: Entry, b: Entry): number {
@@ -1017,6 +1032,9 @@ export const Plumbing = new Set<string>([
   // A client's choice of agent, such as an attached web UI opening on
   // its default; it says nothing about the work.
   "session.agent.selected",
+  // OpenCode naming a conversation, which the page reads from the
+  // conversation itself.
+  "session.renamed",
 ]);
 
 /**

@@ -9,6 +9,7 @@ import {
   condense,
   messageKey,
   subagentText,
+  taskOf,
   messageStatuses,
   timeDividers,
   runSummary,
@@ -1111,11 +1112,27 @@ describe('a subagent', () => {
     expect(main.filter((e) => e.kind === 'event' && e.key === 'e17')).toHaveLength(0);
   });
 
+  test('does not draw OpenCode naming the conversation', () => {
+    expect(subagentLog.some((e) => e.name === 'session.renamed')).toBe(true);
+    const drawn = condense(buildTimeline(subagentConversations, subagentLog));
+    expect(drawn.filter((e) => e.kind === 'event' && e.name === 'session.renamed')).toHaveLength(0);
+  });
+
+  test('drops only the preamble from a task, never the whole of it', () => {
+    expect(taskOf('You are a subagent spawned by another session.\nList the files.')).toBe('List the files.');
+    expect(taskOf('You are a subagent spawned by another session.')).toBe('You are a subagent spawned by another session.');
+    expect(taskOf('Review it. You are a subagent spawned by another session.')).toBe(
+      'Review it. You are a subagent spawned by another session.',
+    );
+  });
+
   test('keeps its work in a list of its own, built by the same code', () => {
     const { children } = buildTimelines(subagentConversations, subagentLog);
     const own = children.get(Child)!;
     const prompt = own.find((e) => e.kind === 'message' && e.role === 'prompt');
-    expect(prompt && prompt.kind === 'message' && prompt.text).toBe(ChildPrompt);
+    // OpenCode's preamble is dropped; the task itself is kept.
+    expect(prompt && prompt.kind === 'message' && prompt.text).toBe(taskOf(ChildPrompt));
+    expect(taskOf(ChildPrompt)).toMatch(/^Review the diff of this branch/);
     expect(own.filter((e) => e.kind === 'message' && e.role === 'user')).toHaveLength(0);
     // The enqueue frame repeats the prompt row and is not promoted.
     expect(own.filter((e) => e.kind === 'event' && e.name === 'session.inbox.enqueued')).toHaveLength(0);
