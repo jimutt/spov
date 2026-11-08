@@ -5,7 +5,7 @@
   // that guarantee gets lost. The figure is sandbox compute only; model
   // token spend is shown as an explicit gap until token metering exists.
   //
-  // @decision(DL-055) @decision(DL-009) @decision(DL-056) @decision(DL-110)
+  // @decision(DL-055) @decision(DL-009) @decision(DL-056) @decision(DL-116)
   import { api, unwrap } from '../lib/api/client';
   import { resource } from '../lib/resource.svelte';
   import { money } from '../lib/format';
@@ -49,7 +49,7 @@
   <!-- The gap, shown rather than hidden: model tokens are paid through
        the provider keys and token spend is not metered (DL-049). The panel
        is deliberately not a control and has no figure to report.
-       @decision(DL-110) -->
+       @decision(DL-116) -->
   <section
     class="mb-10 max-w-[46ch] border border-dashed border-rule bg-raised px-4 py-3 text-faint"
     aria-labelledby="token-cost-heading"

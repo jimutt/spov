@@ -2,7 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-110 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
+| DL-116 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
 | DL-115 | A session's last-message preview comes from its root conversations, never from a subagent | proposed | server | subagents |
 | DL-114 | Only the job's own conversation can be a person's: the supervisor reads takeovers, withdrawals and the verdict's "a person wrote" from it alone | proposed | jobs | subagents |
 | DL-113 | A subagent opens in its own read-only view on the session page, with a way back, its siblings and a list in the sidebar | proposed | web | subagents |

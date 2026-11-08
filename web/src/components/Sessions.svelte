@@ -178,7 +178,7 @@
        limits, then the month's sessions and sandbox hours. A job's session
        counts as its job, not as a session. Cost lives on the usage page
        and beside the sandbox, never as a total here.
-       @decision(DL-060) @decision(DL-110) -->
+       @decision(DL-060) @decision(DL-116) -->
   <div class="mb-7 flex flex-wrap items-center gap-x-7 gap-y-1.5 text-md text-soft max-md:mb-4 max-md:gap-x-5 max-md:text-sm">
     <LimitMeter used={use.sessions} limit={sessionLimit} noun="sessions" testid="limit-sessions" />
     <LimitMeter used={use.jobs} limit={jobLimit} noun="jobs" testid="limit-jobs" />
@@ -207,7 +207,7 @@
     </p>
   {:else}
     <!-- A table: columns let the eye run down one fact.
-         @decision(DL-060) @decision(DL-110) -->
+         @decision(DL-060) @decision(DL-116) -->
     <div class="border-t border-rule" role="table" aria-label="Sessions">
       <div role="rowgroup">
         <div

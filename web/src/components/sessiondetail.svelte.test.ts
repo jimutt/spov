@@ -843,7 +843,7 @@ describe("the session page on a phone", () => {
   });
 });
 
-// @decision(DL-110)
+// @decision(DL-116)
 describe("the session page's cost", () => {
   it("shows the sandbox cost only inside the collapsed Sandbox disclosure", async () => {
     stub.setSession({ estimated_cost: 4.82 });
