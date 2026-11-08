@@ -785,6 +785,47 @@ func TestAToolEventNamesItsCall(t *testing.T) {
 	}
 }
 
+// A subagent call's result names the session it started, from its
+// metadata, wherever the output sits and however large it is.
+//
+// @decision(DL-112)
+func TestAToolResultNamesTheSessionItStarted(t *testing.T) {
+	big := strings.Repeat(`{"metadata":"not this one"} `, 4000)
+	for _, tc := range []struct {
+		name, event, raw string
+		source           store.EventSource
+		want             string
+	}{
+		{"a finished call", "session.tool.success",
+			`{"data":{"sessionID":"ses_p","id":"call_a","content":[{"type":"text","text":"<subagent sessionID=\"ses_c\">x</subagent>"}],` +
+				`"metadata":{"sessionID":"ses_c","status":"completed"},"executed":false}}`,
+			store.SourceOpenCode, "ses_c"},
+		{"a background call, still running", "session.tool.success",
+			`{"data":{"id":"call_a","content":[],"metadata":{"status":"running","sessionID":"ses_c"}}}`,
+			store.SourceOpenCode, "ses_c"},
+		{"whitespace around the key", "session.tool.success",
+			`{"data": {"id": "call_a", "metadata" : { "sessionID" : "ses_c" }}}`, store.SourceOpenCode, "ses_c"},
+		{"a large output ahead of it", "session.tool.success",
+			`{"data":{"id":"call_a","content":[{"type":"text","text":"` + strings.ReplaceAll(big, `"`, `\"`) + `"}],"metadata":{"sessionID":"ses_c"}}}`,
+			store.SourceOpenCode, "ses_c"},
+		{"a tool with other metadata", "session.tool.success",
+			`{"data":{"id":"call_a","metadata":{"count":1,"truncated":false}}}`, store.SourceOpenCode, ""},
+		{"no metadata", "session.tool.success", `{"data":{"id":"call_a"}}`, store.SourceOpenCode, ""},
+		{"metadata that is not an object", "session.tool.success", `{"data":{"metadata":"ses_c"}}`, store.SourceOpenCode, ""},
+		{"a session id that is not text", "session.tool.success", `{"data":{"metadata":{"sessionID":7}}}`, store.SourceOpenCode, ""},
+		{"unreadable", "session.tool.success", `{"data":{"metadata":{"sessionID":`, store.SourceOpenCode, ""},
+		{"not a tool event", "session.text.ended", `{"data":{"metadata":{"sessionID":"ses_c"}}}`, store.SourceOpenCode, ""},
+		{"spov's own row", "session.tool.success", `{"data":{"metadata":{"sessionID":"ses_c"}}}`, store.SourceSpov, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := storedChild(store.Event{Name: tc.event, Source: tc.source, Raw: []byte(tc.raw)})
+			if got != tc.want {
+				t.Errorf("storedChild = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // The stream carries the call and the tool, not just the helper.
 //
 // @decision(DL-058)
@@ -809,4 +850,31 @@ func TestTheLogCarriesTheToolCall(t *testing.T) {
 		}
 	}
 	t.Fatal("the tool event never reached the log")
+}
+
+// The stream carries the session a subagent call started.
+//
+// @decision(DL-112)
+func TestTheLogCarriesTheChildACallStarted(t *testing.T) {
+	f := newAPIFixture(t)
+	f.srv.streamLifetime = time.Hour
+	f.srv.heartbeat = time.Hour
+	sess := seedSession(t, f, "01ARZ3NDEKTSV4RRFFQ69G5FAV", "mine", store.StateRunning)
+	conv := seedConversation(t, f, sess, "ses_1", "one")
+	seedEvent(t, f, store.Event{
+		OrgID: sess.OrgID, SessionID: sess.ID, ConversationID: conv.ID,
+		Source: store.SourceOpenCode, Seq: 1, Name: "session.tool.success", At: recordedAt,
+		Raw: []byte(`{"type":"session.tool.success","data":{"sessionID":"ses_1","id":"call_a",` +
+			`"content":[{"type":"text","text":"done"}],"metadata":{"sessionID":"ses_2","status":"completed"}},` +
+			`"durable":{"aggregateID":"ses_1","seq":1,"version":1}}`),
+	})
+	for _, ev := range runLog(t, f, &logInput{Ref: "mine"}) {
+		if l, ok := ev.(LogEvent); ok && l.Name == "session.tool.success" {
+			if l.Call != "call_a" || l.Child != "ses_2" {
+				t.Errorf("the log carries call %q child %q, want call_a ses_2", l.Call, l.Child)
+			}
+			return
+		}
+	}
+	t.Fatal("the tool result never reached the log")
 }

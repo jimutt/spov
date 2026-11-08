@@ -1,5 +1,6 @@
 import type { LogEvent } from "./api/live";
 import { AskOpened, isAskFrame, type Ask } from "./asks";
+import { delegatedCalls, pairSubagents, subagentState, type DelegatedCall, type SubagentState } from "./subagent";
 
 /**
  * The session page's timeline: the recorded conversation and the event
@@ -23,7 +24,23 @@ export type Message = {
   text?: string;
   at?: string;
 };
-export type Conversation = { id: string; title?: string; messages?: Message[] };
+/**
+ * `parent` is the OpenCode id of the conversation that started this one as
+ * a subagent, absent for a root.
+ *
+ * @decision(DL-111) @decision(DL-110)
+ */
+export type Conversation = { id: string; title?: string; parent?: string; messages?: Message[] };
+
+/**
+ * childIds is the set of conversations that are a subagent's. A session
+ * named by no conversation here is not in it, so it counts as a root.
+ *
+ * @decision(DL-111)
+ */
+export function childIds(conversations: readonly Conversation[]): ReadonlySet<string> {
+  return new Set(conversations.filter((c) => c.parent).map((c) => c.id));
+}
 
 /**
  * One frame of the log. It is the stream's event unchanged: the store
@@ -366,6 +383,13 @@ export interface EventEntry {
    * permission.asked or form.created only.
    */
   ask?: Ask;
+  /** The conversation an ask was raised in, on an ask only (DL-112). */
+  session?: string;
+  /**
+   * Set on an ask a subagent raised: the subagent's label, which may be
+   * empty. Undefined on an ask the root raised (DL-112).
+   */
+  from?: string;
 }
 
 /**
@@ -382,7 +406,42 @@ export interface ToolCall {
   error: string;
 }
 
-export type Entry = MessageEntry | EventEntry;
+/**
+ * One subagent, drawn in its parent's transcript as a card at the call
+ * that started it (DL-112), else at the child's first entry (DL-111).
+ * The child's own entries live in `Timelines.children`. The key is the
+ * call's when there is one, so a card keeps its place in the list, and
+ * its open state, when the child it was waiting for appears.
+ *
+ * @decision(DL-111) @decision(DL-112)
+ */
+export interface SubagentEntry {
+  kind: "subagent";
+  key: string;
+  at: number;
+  seq: number;
+  /** The child conversation's OpenCode id; "" while the call has no child. */
+  id: string;
+  /** The parent's call that started it, "" for a child no call claimed. */
+  call: string;
+  /** The child's title, else the call's description; "" when neither says. */
+  title: string;
+  /** The agent type the call named, "" when it named none. */
+  agent: string;
+  state: SubagentState;
+  /** How many tool calls the child made. */
+  calls: number;
+  /** The child's work in counts, as a folded run says it. */
+  summary: string;
+  /** What the child did last: a tool call or a thought. */
+  latest: string;
+  /** The child's last words, bounded. */
+  final: string;
+  /** The child and every conversation under it, whose asks its badge counts. */
+  scope: string[];
+}
+
+export type Entry = MessageEntry | EventEntry | SubagentEntry;
 
 /** millis parses a timestamp to 0 rather than NaN, which would make the
  *  comparator return NaN and leave the sort order undefined. */
@@ -462,12 +521,25 @@ export function messageKey(id: string): string {
   return `msg:${id}`;
 }
 
-export function buildTimeline(
-  conversations: Conversation[],
-  activity: Activity[],
-  pending: Pending[] = [],
-  ended = false,
-): Entry[] {
+/**
+ * The main list and each subagent's own, by the child's conversation id.
+ *
+ * @decision(DL-111)
+ */
+export interface Timelines {
+  entries: Entry[];
+  children: Map<string, Entry[]>;
+}
+
+/**
+ * lay puts one conversation set's messages and events on a list, unsorted.
+ * Roots and a child go through it alike; `child` changes who is speaking:
+ * a `user` message is the parent agent's task prompt, a quiet row and
+ * never a person's bubble, and an inbox frame is never promoted at all.
+ *
+ * @decision(DL-111) @decision(DL-058)
+ */
+function lay(conversations: Conversation[], activity: Activity[], child: boolean): { out: Entry[]; seq: number } {
   const out: Entry[] = [];
   // What has already been said, so a promoted event does not repeat
   // words the conversation already carries, or that another promoted
@@ -507,16 +579,21 @@ export function buildTimeline(
       //
       // @decision(DL-058)
       if (!text.trim()) return;
-      remember(m.role ?? "", m.id ?? "", text.trim());
+      // A child's `user` message is its task prompt, written by the
+      // parent agent.
+      //
+      // @decision(DL-111)
+      const role = child && m.role === "user" ? "prompt" : (m.role ?? "");
+      remember(role, m.id ?? "", text.trim());
       const entry: MessageEntry = {
         kind: "message",
         key: `m${c}.${i}`,
         at: millis(m.at),
         seq: seq++,
-        role: m.role ?? "",
-        text,
+        role,
+        text: role === "prompt" ? taskOf(text) : text,
       };
-      if (m.id && m.role === "user") {
+      if (m.id && role === "user") {
         entry.id = m.id;
         entry.key = messageKey(m.id);
       }
@@ -546,6 +623,7 @@ export function buildTimeline(
           text: "",
           seam: false,
           ask: ev.ask!,
+          session: ev.session,
         });
       }
       continue;
@@ -561,11 +639,17 @@ export function buildTimeline(
     // recording, not anyone talking in the session.
     const seam = isSeam(ev);
     const spoke = seam ? "" : spokenBy(name, ev.role);
-    // `.trim()`, not raw truthiness: "\n" is truthy and would promote a
-    // bare newline to a speaker block with nothing readable in it.
+    // A child's inbox frame is the parent agent's prompt, never a
+    // person's message: it repeats the prompt row or stays an event.
     //
-    // @decision(DL-058)
-    if (spoke && text.trim()) {
+    // @decision(DL-111)
+    if (child && spoke === "user") {
+      if (said.has(text.trim())) continue;
+    } else if (spoke && text.trim()) {
+      // `.trim()`, not raw truthiness: "\n" is truthy and would promote a
+      // bare newline to a speaker block with nothing readable in it.
+      //
+      // @decision(DL-058)
       const body = text.trim();
       // The id decides for a person's own words, and only where there
       // are ids to decide with. Everything else keeps the text rule.
@@ -583,12 +667,218 @@ export function buildTimeline(
     if (!seam && ev.tool) entry.tool = ev.tool;
     out.push(entry);
   }
+  return { out, seq };
+}
+
+/**
+ * SubagentPreamble is the line OpenCode puts before every task it hands a
+ * subagent (spike S-SA1). It says nothing the card does not, so the
+ * prompt row drops it.
+ *
+ * @decision(DL-112)
+ */
+export const SubagentPreamble = "You are a subagent spawned by another session.";
+
+/** taskOf is a child's prompt without OpenCode's preamble. */
+export function taskOf(text: string): string {
+  const t = text.trimStart();
+  return t.startsWith(SubagentPreamble) ? t.slice(SubagentPreamble.length).trimStart() || text : text;
+}
+
+function byTime(a: Entry, b: Entry): number {
+  return a.at - b.at || a.seq - b.seq;
+}
+
+/**
+ * labelOf is what a subagent is called: its conversation's title, else
+ * the description its call carried.
+ */
+function labelOf(conv: Conversation | undefined, call: DelegatedCall | undefined): string {
+  return (conv?.title ?? "").trim() || call?.description || "";
+}
+
+/** FinalLimit bounds the child's closing words kept for its card. */
+const FinalLimit = 1500;
+
+/**
+ * latestAction is the one line that says what a subagent did last: its
+ * newest tool call, else its newest thought.
+ *
+ * @decision(DL-112)
+ */
+export function latestAction(events: EventEntry[]): string {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.calls) return oneLine(`${e.calls.name || "tool"} ${toolInput(e.calls.input)}`);
+    if (e.name === Thought && e.text.trim()) return oneLine(`thinking ${e.text}`);
+  }
+  return "";
+}
+
+/**
+ * pendingAskIds lists the asks still waiting on the reader that were
+ * raised in a conversation of `scope`, in the order they are drawn. A
+ * card's badge counts these and its press scrolls to the first.
+ *
+ * @decision(DL-112) @decision(DL-020)
+ */
+export function pendingAskIds(
+  entries: readonly Entry[],
+  states: ReadonlyMap<string, { status: string }>,
+  scope: readonly string[],
+): string[] {
+  const out: string[] = [];
+  for (const e of entries) {
+    if (e.kind !== "event" || !e.ask || !e.session || !scope.includes(e.session)) continue;
+    if (states.get(e.ask.id)?.status === "pending") out.push(e.ask.id);
+  }
+  return out;
+}
+
+/**
+ * buildTimelines partitions its input by conversation before any speaker
+ * rule: the roots are drawn as one list, each child as a list of its own
+ * built by the same code. Only the roots' frames feed the reader's rules
+ * (a person's message, its status, the echoes), so a subagent never
+ * speaks as the reader. A frame naming no listed child is a root's.
+ *
+ * A subagent is one card in its parent's list, at the call that started
+ * it (`pairSubagents`); a child's own children are cards in its list. An
+ * ask a child raised stays in the main list, naming where it came from.
+ *
+ * @decision(DL-111) @decision(DL-112) @decision(DL-059) @decision(DL-019)
+ */
+export function buildTimelines(
+  conversations: Conversation[],
+  activity: Activity[],
+  pending: Pending[] = [],
+  ended = false,
+): Timelines {
+  const kids = childIds(conversations);
+  const rootActivity: Activity[] = [];
+  const byChild = new Map<string, Activity[]>();
+  for (const ev of activity) {
+    // An ask stays where the reader can answer it, whoever asked.
+    if (ev.session && kids.has(ev.session) && !isAskFrame(ev)) {
+      const list = byChild.get(ev.session);
+      if (list) list.push(ev);
+      else byChild.set(ev.session, [ev]);
+    } else {
+      rootActivity.push(ev);
+    }
+  }
+
+  const { out, seq } = lay(
+    conversations.filter((c) => !c.parent),
+    rootActivity,
+    false,
+  );
+
+  // Whose list a child is drawn in: its parent's, when that is itself a
+  // child, else the main list. A parent loop is broken at the child
+  // that closes it, so none is lost.
+  const parents = new Map<string, string>();
+  for (const c of conversations) if (c.parent) parents.set(c.id, kids.has(c.parent) && c.parent !== c.id ? c.parent : "");
+  for (const id of parents.keys()) {
+    const seen = new Set([id]);
+    for (let p = parents.get(id); p; p = parents.get(p)) {
+      if (seen.has(p)) {
+        parents.set(id, "");
+        break;
+      }
+      seen.add(p);
+    }
+  }
+  const under = new Map<string, Conversation[]>();
+  for (const c of conversations) {
+    if (!c.parent) continue;
+    const owner = parents.get(c.id) ?? "";
+    const list = under.get(owner);
+    if (list) list.push(c);
+    else under.set(owner, [c]);
+  }
+  const scopeOf = (id: string): string[] => [id, ...(under.get(id) ?? []).flatMap((c) => scopeOf(c.id))];
+
+  const children = new Map<string, Entry[]>();
+  const labels = new Map<string, string>();
+
+  // place draws the subagents of one list: a card for each call to a
+  // subagent tool, at that call, and one for each child no call claims,
+  // at its first entry. The calls' own lines leave the list.
+  //
+  // @decision(DL-112)
+  const place = (owner: string, own: Activity[], entries: Entry[], base: number): Entry[] => {
+    const here = under.get(owner) ?? [];
+    const calls = delegatedCalls(own);
+    if (here.length === 0 && calls.length === 0) return entries;
+    for (const conv of here) {
+      const events = byChild.get(conv.id) ?? [];
+      const laid = lay([conv], events, true);
+      children.set(conv.id, place(conv.id, events, laid.out, laid.seq).sort(byTime));
+    }
+    const firstOf = (id: string) => (byChild.get(id) ?? []).reduce((n, e) => Math.min(n, e.pos), Infinity);
+    const { byCall, followUps, standalone } = pairSubagents(
+      calls,
+      here.map((c) => ({ id: c.id, first: firstOf(c.id) })),
+    );
+    const cardFor = (key: string, at: number, seq: number, call?: DelegatedCall, conv?: Conversation): SubagentEntry => {
+      const mine = conv ? (children.get(conv.id) ?? []) : [];
+      const plain = condense(mine).filter((e): e is EventEntry => e.kind === "event" && !e.seam);
+      const closing = mine.filter((e): e is MessageEntry => e.kind === "message" && e.role === "assistant").pop();
+      const label = labelOf(conv, call);
+      if (conv) labels.set(conv.id, label);
+      return {
+        kind: "subagent",
+        key,
+        at,
+        seq,
+        id: conv?.id ?? "",
+        call: call?.call ?? "",
+        title: label,
+        agent: call?.agent ?? "",
+        state: subagentState(conv ? byChild.get(conv.id) : undefined, call, ended),
+        calls: plain.filter((e) => e.calls).length,
+        summary: runSummary(plain),
+        latest: latestAction(plain),
+        final: (closing?.text ?? "").trim().slice(0, FinalLimit),
+        scope: conv ? scopeOf(conv.id) : [],
+      };
+    };
+    const delegated = new Set<string>();
+    const cards: Entry[] = [];
+    for (const call of calls) {
+      if (followUps.has(call.call)) continue;
+      delegated.add(call.call);
+      const opened = entries.find((e) => e.kind === "event" && e.key === `e${call.start}`);
+      const conv = here.find((c) => c.id === byCall.get(call.call));
+      cards.push(cardFor(`sub:${call.call}`, opened?.at ?? call.at, opened?.seq ?? base + call.start, call, conv));
+    }
+    for (const id of standalone) {
+      const conv = here.find((c) => c.id === id)!;
+      const mine = children.get(id) ?? [];
+      if (mine.length === 0) continue;
+      const at = mine.reduce((n, e) => (n === 0 || (e.at !== 0 && e.at < n) ? e.at : n), 0);
+      cards.push(cardFor(`sub:${id}`, at, base + firstOf(id), undefined, conv));
+    }
+    return [...entries.filter((e) => !(e.kind === "event" && !e.seam && e.call && delegated.has(e.call))), ...cards];
+  };
+  const placed = place("", rootActivity, out, seq);
+  if (placed !== out) {
+    out.length = 0;
+    // A loop, not a spread: a long log would overflow the call.
+    for (const e of placed) out.push(e);
+  }
+
+  // An ask a child raised says where it came from.
+  for (const e of out) {
+    if (e.kind === "event" && e.ask && e.session && labels.has(e.session)) e.from = labels.get(e.session);
+  }
 
   // A person's message is drawn where it was read: at its delivery once
   // processed, and below everything else while it still waits.
   //
   // @decision(DL-019)
-  const statuses = messageStatuses(activity, ended);
+  const statuses = messageStatuses(rootActivity, ended);
   const last = out.reduce((n, e) => (e.at > n ? e.at : n), 0);
   let waiting = 0;
   for (const e of out) {
@@ -623,7 +913,17 @@ export function buildTimeline(
     });
   }
 
-  return out.sort((a, b) => a.at - b.at || a.seq - b.seq);
+  return { entries: out.sort(byTime), children };
+}
+
+/** buildTimeline is the main list of `buildTimelines`. */
+export function buildTimeline(
+  conversations: Conversation[],
+  activity: Activity[],
+  pending: Pending[] = [],
+  ended = false,
+): Entry[] {
+  return buildTimelines(conversations, activity, pending, ended).entries;
 }
 
 /**
@@ -635,6 +935,7 @@ export type Block =
   | { kind: "seam"; key: string; entry: EventEntry }
   | { kind: "note"; key: string; entry: EventEntry }
   | { kind: "ask"; key: string; entry: EventEntry & { ask: Ask } }
+  | { kind: "subagent"; key: string; entry: SubagentEntry }
   | { kind: "events"; key: string; events: EventEntry[] };
 
 /**
@@ -659,6 +960,13 @@ export function blocksOf(entries: Entry[]): Block[] {
   for (const entry of entries) {
     if (entry.kind === "message") {
       out.push({ kind: "message", key: entry.key, entry });
+      continue;
+    }
+    // A subagent's row breaks a run as a message does.
+    //
+    // @decision(DL-111)
+    if (entry.kind === "subagent") {
+      out.push({ kind: "subagent", key: entry.key, entry });
       continue;
     }
     // An ask breaks a run as a message does: it must never be folded away.
@@ -724,6 +1032,9 @@ export const Plumbing = new Set<string>([
   // A client's choice of agent, such as an attached web UI opening on
   // its default; it says nothing about the work.
   "session.agent.selected",
+  // OpenCode naming a conversation, which the page reads from the
+  // conversation itself.
+  "session.renamed",
 ]);
 
 /**
@@ -747,7 +1058,7 @@ export function condense(entries: Entry[]): Entry[] {
   const out: Entry[] = [];
   const calls = new Map<string, ToolCall>();
   for (const e of entries) {
-    if (e.kind === "message" || e.seam) {
+    if (e.kind !== "event" || e.seam) {
       out.push(e);
       continue;
     }
@@ -911,6 +1222,17 @@ export function runSummary(events: EventEntry[]): string {
   if (retries) parts.push(count(retries, "model retry", "model retries"));
   if (others) parts.push(count(others, tools || thoughts || retries ? "other event" : "event"));
   return parts.join(", ");
+}
+
+/**
+ * subagentText is the one line a subagent's row says: its label, when
+ * its conversation carries a title, and how many tool calls it made.
+ *
+ * @decision(DL-111)
+ */
+export function subagentText(entry: { title: string; calls: number }): string {
+  const calls = entry.calls ? count(entry.calls, "tool call") : "no tool calls";
+  return entry.title ? `Subagent · ${entry.title} · ${calls}` : `Subagent · ${calls}`;
 }
 
 function count(n: number, word: string, plural = `${word}s`): string {

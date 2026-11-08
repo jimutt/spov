@@ -1152,6 +1152,7 @@ export interface components {
             /** Format: date-time */
             at: string;
             call?: string;
+            child?: string;
             delivery?: string;
             message?: string;
             model?: string;

@@ -40,19 +40,16 @@
     envRows,
   } from '../lib/format';
   import {
-    CollapseFrom,
-    Thought,
     blocksOf,
-    buildTimeline,
+    buildTimelines,
     condense,
-    runSummary,
     noteText,
+    pendingAskIds,
     seamText,
-    shown,
+    childIds,
     shownWarnings,
     stopNote,
     timeDividers,
-    toolInput,
     trimBlankLines,
   } from '../lib/timeline';
   import type { Conversation } from '../lib/timeline';
@@ -102,6 +99,8 @@
   } from '../lib/resume';
   import { currentModel } from '../lib/modelpick';
   import AskCard from './AskCard.svelte';
+  import EventRun from './EventRun.svelte';
+  import SubagentCard from './SubagentCard.svelte';
   import Composer from './Composer.svelte';
   import ConfirmAct from './ConfirmAct.svelte';
   import Icon from './Icon.svelte';
@@ -285,7 +284,8 @@
    *
    * @decision(DL-058)
    */
-  const blocks = $derived(blocksOf(condense(buildTimeline(conversations, activity, echoing, inboxEnded))));
+  const timelines = $derived(buildTimelines(conversations, activity, echoing, inboxEnded));
+  const blocks = $derived(blocksOf(condense(timelines.entries)));
 
   // Only a window of the newest blocks is drawn. It slides while the
   // page follows the tail and is held once the reader leaves the end.
@@ -306,9 +306,22 @@
   // @decision(DL-020)
   const asks = $derived(askStates(activity, inboxEnded));
   const asking = $derived(pendingAsks(asks) > 0);
+  // The asks a subagent's card counts: the ones raised in its own
+  // conversation or any under it, which stay in this list so they can be
+  // answered. A press on the badge scrolls to the first.
+  //
+  // @decision(DL-112) @decision(DL-020)
+  const askingIn = (scope: string[]) => pendingAskIds(timelines.entries, asks, scope);
+  function jumpToAsk(id: string) {
+    const el = Array.from(document.querySelectorAll<HTMLElement>('[data-ask-id]')).find((e) => e.dataset.askId === id);
+    el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+  }
+  // The subagents' conversations, whose frames are not the root's.
+  // @decision(DL-111)
+  const children = $derived(childIds(conversations));
   // The model the session is on: the log's newest selection, else its
   // launch's. @decision(DL-014)
-  const model = $derived(currentModel(activity, s?.model));
+  const model = $derived(currentModel(activity, s?.model, children));
 
   // Cancelling a queued message. Whether it was still waiting is read from
   // the log, so the row says "Cancelling…" until the log says either way.
@@ -334,8 +347,11 @@
   // than asked of anything. Decides whether Interrupt is drawn.
   //
   // @decision(DL-059)
-  const inFlight = $derived(turnInFlight(activity));
-  const turnsSeenEnded = $derived(turnsEnded(activity));
+  //
+  // Only the root's turns: a subagent ends turns of its own mid-way.
+  // @decision(DL-111)
+  const inFlight = $derived(turnInFlight(activity, children));
+  const turnsSeenEnded = $derived(turnsEnded(activity, children));
   const openWarnings = $derived(shownWarnings(warnings, blocks.length));
 
   // Runs the reader opened, by the run's stable key. Expanding reads
@@ -438,14 +454,6 @@
   // Over the drawn window, so its first block has its quiet time.
   // @decision(DL-058) @decision(DL-070)
   const dividers = $derived(timeDividers(windowed.shown, now));
-
-  // An event's name without the `session.` every one of them starts
-  // with. Display only: grouping and keys use the real name.
-  //
-  // @decision(DL-058)
-  function eventName(name: string): string {
-    return name.replace(/^session\./, '');
-  }
 
   const s = $derived(session.data);
   const life = $derived(s ? lifetime(s, now) : undefined);
@@ -784,6 +792,22 @@
     class="grid grid-cols-1 gap-[var(--col-gap)] max-lg:-mb-[var(--main-pad-y)] lg:grid-cols-[minmax(0,1fr)_var(--side-w)]"
     style:--dock-h="{dockH}px"
   >
+    <!-- Words an agent wrote, in the transcript and in a subagent's card:
+         the one place either is drawn. Blank lines at either end of plain
+         text are dropped, since pre-wrap would draw them as an empty band.
+         @decision(DL-058) @decision(DL-112) -->
+    {#snippet markdown(text: string, klass: string)}
+      {#if markdownFor(text)}
+        <!-- The HTML is sanitised (lib/markdown.ts) — one of two places
+             on the page where Svelte's escaping is deliberately bypassed.
+             @decision(DL-063) -->
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+        <div class="md-body md-message {klass}">{@html markdownFor(text)}</div>
+      {:else}
+        <p class="m-0 whitespace-pre-wrap {klass}">{trimBlankLines(text)}</p>
+      {/if}
+    {/snippet}
+
     <!-- The clock bar, in the page's head from `lg` and in the details
          sheet below it. @decision(DL-057) @decision(DL-106) -->
     {#snippet clockStrip(klass: string)}
@@ -969,21 +993,8 @@
                      falls through to the raw line rather than being
                      hidden. @decision(DL-058) @decision(DL-048) -->
                 <p class="m-0 text-md text-soft">{sentence(stopped)}</p>
-              {:else if markdownFor(block.entry.text)}
-                <!-- The HTML is sanitised (lib/markdown.ts) — one of two
-                     places on the page where Svelte's escaping is
-                     deliberately bypassed. @decision(DL-063) -->
-                <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-                <div class={`md-body md-message ${synthetic ? 'text-md text-soft' : 'text-read'}`}>
-                  {@html markdownFor(block.entry.text)}
-                </div>
               {:else}
-                <!-- Blank lines at either end are dropped: kept by
-                     pre-wrap, they draw as an empty band under the words.
-                     @decision(DL-058) -->
-                <p class={`m-0 whitespace-pre-wrap ${synthetic ? 'text-md text-soft' : 'text-read'}`}>
-                  {trimBlankLines(block.entry.text)}
-                </p>
+                {@render markdown(block.entry.text, synthetic ? 'text-md text-soft' : 'text-read')}
               {/if}
               {#if block.entry.pending}
                 <!-- An accepted message the recorder hasn't stored yet
@@ -1037,10 +1048,11 @@
         {:else if block.kind === 'ask'}
           <!-- Where the agent asked, beside the call it holds up.
                @decision(DL-020) -->
-          <div class="{row} mb-5" data-testid="ask">
+          <div class="{row} mb-5" data-testid="ask" data-ask-id={block.entry.ask.id}>
             <AskCard
               {ref}
               ask={block.entry.ask}
+              from={block.entry.from}
               askState={asks.get(block.entry.ask.id) ?? { status: 'pending' }}
               open={composerShown(s.state, tailEnded)}
             />
@@ -1057,56 +1069,25 @@
               <div class={details(block.key)}>spov · {clock(new Date(block.entry.at).toISOString())}</div>
             {/if}
           </div>
+        {:else if block.kind === 'subagent'}
+          <!-- A subagent: one card at the call that started it, its child
+               opened inline. @decision(DL-112) -->
+          <div class="{row} -mt-1.5 mb-5">
+            <SubagentCard
+              entry={block.entry}
+              kids={timelines.children}
+              {askingIn}
+              onjump={jumpToAsk}
+              {markdown}
+            />
+          </div>
         {:else}
           {@const showAll = expanded.has(block.key)}
-          {@const visible = shown(block.events, showAll)}
-          {@const foldable = block.events.length >= CollapseFrom}
           <!-- Machine output, so mono, one line each. A folded run is its
                summary alone; a tool call is one line however many events
-               OpenCode sent about it. @decision(DL-057) @decision(DL-058)
-               @decision(DL-058) -->
+               OpenCode sent about it. @decision(DL-057) @decision(DL-058) -->
           <div class="{row} -mt-1.5 mb-5">
-            <div class="min-w-0">
-              {#if foldable}
-                <button
-                  type="button"
-                  aria-expanded={showAll}
-                  class={textButton}
-                  onclick={() => (showAll ? expanded.delete(block.key) : expanded.add(block.key))}
-                >
-                  <Icon name="chevron" class="chevron size-3" />
-                  {runSummary(block.events)}
-                </button>
-              {/if}
-              {#if visible.length}
-                <ul class="m-0 list-none p-0 font-mono text-sm leading-[1.7] text-soft {foldable ? 'mt-1' : ''}">
-                  {#each visible as entry (entry.key)}
-                    {#if entry.calls}
-                      {@const input = toolInput(entry.calls.input)}
-                      {@const failed = entry.calls.state === 'failed'}
-                      <li class="truncate" title={input ? `${entry.calls.name}: ${input}` : entry.calls.name}>
-                        <span class="inline-block min-w-[9ch] pr-2 {failed ? 'text-rust' : 'text-faint'}"
-                          >{entry.calls.name || 'tool'}</span
-                        >{input}
-                      </li>
-                      {#if failed}
-                        <li class="truncate pl-[9ch] font-sans text-rust" title={entry.calls.error}>
-                          {entry.calls.error ? `Failed: ${entry.calls.error}` : 'Failed'}
-                        </li>
-                      {/if}
-                    {:else if entry.name === Thought && entry.text.trim()}
-                      <li class="line-clamp-2 font-sans whitespace-normal text-faint italic" title={entry.text}>
-                        {entry.text}
-                      </li>
-                    {:else}
-                      <li class="truncate" title={entry.text ? `${entry.name}: ${entry.text}` : entry.name}>
-                        <span class="inline-block min-w-[13ch] pr-2 text-faint">{eventName(entry.name)}</span>{entry.text}
-                      </li>
-                    {/if}
-                  {/each}
-                </ul>
-              {/if}
-            </div>
+            <EventRun events={block.events} open={showAll} ontoggle={() => (showAll ? expanded.delete(block.key) : expanded.add(block.key))} />
           </div>
         {/if}
       {/each}

@@ -48,6 +48,7 @@ const stub = vi.hoisted(() => {
   let resume: Record<string, unknown> | undefined;
   let session: Record<string, unknown> = {};
   let logOpens = 0;
+  let conversations: unknown[] = [];
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -105,7 +106,7 @@ const stub = vi.hoisted(() => {
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
     }
-    if (url.pathname.endsWith("/messages")) return json({ conversations: [] });
+    if (url.pathname.endsWith("/messages")) return json({ conversations });
     if (url.pathname === "/api/v1/jobs/j1/file") {
       const path = url.searchParams.get("path") ?? "";
       files.push(path);
@@ -154,9 +155,11 @@ const stub = vi.hoisted(() => {
       resume = undefined;
       session = {};
       logOpens = 0;
+      conversations = [];
     },
     withResume: (r: Record<string, unknown>) => (resume = r),
     logOpens: () => logOpens,
+    withConversations: (c: unknown[]) => (conversations = c),
     setAnswer: (a: Record<string, unknown>) => (answer = a),
     refuse: (s: number, problem: Record<string, unknown>) => {
       status = s;
@@ -206,6 +209,7 @@ const stub = vi.hoisted(() => {
 });
 
 import SessionDetail from "./SessionDetail.svelte";
+import { Child, subagentConversations, subagentLog } from "../lib/subagent.fixture";
 
 beforeEach(() => {
   stub.reset();
@@ -499,6 +503,157 @@ describe("an ask on the session page", () => {
     expect(page.control("ask-permission")).toBeNull();
     expect(page.control("ask-settled")?.textContent).toContain("Allowed once");
     expect(page.said()).not.toContain("Waiting on your answer");
+    page.done();
+  });
+});
+
+describe("a subagent on the session page", () => {
+  // The measured log of a session whose agent ran a subagent, replayed
+  // through the page. The child's turn ends (pos 25) while the root's is
+  // still running.
+  //
+  // @decision(DL-111) @decision(DL-059)
+  it("keeps Stop drawn while a child's turn ends, and never draws its prompt as the reader's", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open();
+    for (const ev of subagentLog.filter((e) => e.pos <= 25)) stub.say(ev);
+    await settle();
+    expect(page.stop(), "a subagent's turn ending took Stop away from the root's").not.toBeNull();
+    expect(page.said()).not.toContain("You are a subagent spawned");
+    // Its work is one card at the call, not lines among the agent's own.
+    const card = page.target.querySelector('[data-testid="subagent"]');
+    expect(card?.textContent).toContain("Review the retry change");
+    expect(page.target.querySelectorAll('[data-testid="subagent"]')).toHaveLength(1);
+    const bubbles = Array.from(page.target.querySelectorAll('[data-testid="message"]')).filter((m) =>
+      m.className.includes("items-end"),
+    );
+    expect(bubbles).toHaveLength(1);
+
+    // The root's own ending still takes it away.
+    for (const ev of subagentLog.filter((e) => e.pos > 25)) stub.say(ev);
+    await settle();
+    expect(page.stop()).toBeNull();
+    page.done();
+  });
+});
+
+describe("a subagent's card on the session page", () => {
+  // The card is drawn from the same measured log. The logic is in
+  // timeline.test.ts and subagent.test.ts; this is the wiring: the card
+  // is on the page in place of the call's lines, it opens onto the
+  // child's own timeline, and an ask it raised is counted and reachable.
+  //
+  // @decision(DL-112)
+  const card = (page: { target: HTMLElement }) => page.target.querySelector('[data-testid="subagent"]') as HTMLElement;
+  const toggle = (page: { target: HTMLElement }) => card(page).querySelector("button[aria-expanded]") as HTMLButtonElement;
+
+  it("is one quiet card with the child's state, closed over its conclusion, and opens onto its work", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open();
+    for (const ev of subagentLog) stub.say(ev);
+    await settle();
+
+    // Neither a bubble nor an agent's or spov's line.
+    expect(card(page).closest('[data-testid="message"]')).toBeNull();
+    expect(card(page).querySelector('[data-testid="spov-tag"]')).toBeNull();
+    expect(card(page).textContent).toContain("Review the retry change");
+    expect(card(page).textContent).toContain("general");
+    expect(card(page).textContent).toContain("Done");
+    expect(card(page).getAttribute("data-state")).toBe("done");
+    expect(card(page).querySelector('[data-testid="subagent-summary"]')?.textContent).toBe("1 tool call");
+    // Closed: what it concluded, and none of its work.
+    expect(card(page).querySelector('[data-testid="subagent-final"]')?.textContent).toContain("The retry change is safe to merge.");
+    expect(card(page).querySelector('[data-testid="subagent-work"]')).toBeNull();
+    expect(page.said()).not.toContain("You are a subagent spawned");
+    expect(toggle(page).getAttribute("aria-expanded")).toBe("false");
+
+    toggle(page).click();
+    await settle();
+    expect(toggle(page).getAttribute("aria-expanded")).toBe("true");
+    const work = card(page).querySelector('[data-testid="subagent-work"]')!;
+    // The task as a quiet row, never as the reader's words, and the
+    // child's own words once. (Still no bubble: the check is below.)
+    expect(work.querySelector('[data-testid="subagent-prompt"]')?.textContent).toContain("Review the diff of this branch");
+    expect(work.textContent).toContain("glob");
+    expect(work.textContent).toContain("internal/client/*.go");
+    expect(work.querySelectorAll('[data-testid="subagent-message"]')).toHaveLength(1);
+    expect(card(page).querySelector('[data-testid="subagent-final"]')).toBeNull();
+    // The bubbles on the page are still only the reader's one.
+    const bubbles = Array.from(page.target.querySelectorAll('[data-testid="message"]')).filter((m) => m.className.includes("items-end"));
+    expect(bubbles).toHaveLength(1);
+
+    toggle(page).click();
+    await settle();
+    expect(card(page).querySelector('[data-testid="subagent-work"]')).toBeNull();
+    page.done();
+  });
+
+  it("is delegating before the child exists, with nothing to open yet", async () => {
+    stub.withConversations(subagentConversations.filter((c) => !c.parent));
+    const page = await open();
+    for (const ev of subagentLog.filter((e) => e.pos <= 9)) stub.say(ev);
+    await settle();
+    expect(card(page).getAttribute("data-state")).toBe("starting");
+    expect(card(page).textContent).toContain("Delegating…");
+    expect(card(page).textContent).toContain("Review the retry change");
+    expect(card(page).querySelector("button[aria-expanded]")).toBeNull();
+    page.done();
+  });
+
+  it("is running while the child works, with what it did last", async () => {
+    stub.withConversations(subagentConversations);
+    const page = await open();
+    for (const ev of subagentLog.filter((e) => e.pos <= 18)) stub.say(ev);
+    await settle();
+    expect(card(page).getAttribute("data-state")).toBe("running");
+    expect(card(page).textContent).toContain("Running");
+    expect(card(page).querySelector('[data-testid="subagent-latest"]')?.textContent).toBe("glob internal/client/*.go");
+    // Not yet concluded.
+    expect(card(page).querySelector('[data-testid="subagent-final"]')).toBeNull();
+    page.done();
+  });
+
+  it("counts an ask its child raised, names it, and scrolls to it from the badge", async () => {
+    stub.withConversations(subagentConversations);
+    const scrolled: Element[] = [];
+    const prior = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    const page = await open();
+    for (const ev of subagentLog.filter((e) => e.pos <= 18)) stub.say(ev);
+    stub.say({
+      name: "permission.asked",
+      source: "ephemeral",
+      session: Child,
+      ask: { id: "per_c", kind: "permission", action: "edit", resources: ["internal/client/retry.go"], call: "call_x" },
+      at: "2026-11-08T19:17:48Z",
+      pos: 19,
+    });
+    await settle();
+
+    // Where it was raised, it can be answered, and it says whose it is.
+    const ask = page.target.querySelector('[data-testid="ask"]') as HTMLElement;
+    expect(ask.querySelector('[data-testid="ask-from"]')?.textContent).toBe("From subagent “Review the retry change”");
+    expect(page.control("composer-status")?.textContent).toContain("Waiting on your answer");
+    // The card counts it and goes to it.
+    const badge = card(page).querySelector('[data-testid="subagent-waiting"]') as HTMLButtonElement;
+    expect(badge.textContent).toContain("1 waiting on you");
+    badge.click();
+    expect(scrolled).toEqual([ask]);
+
+    // Answered: the badge goes.
+    stub.say({
+      name: "permission.replied",
+      source: "ephemeral",
+      session: Child,
+      ask: { id: "per_c", kind: "permission", reply: "once" },
+      at: "2026-11-08T19:17:49Z",
+      pos: 20,
+    });
+    await settle();
+    expect(card(page).querySelector('[data-testid="subagent-waiting"]')).toBeNull();
+    Element.prototype.scrollIntoView = prior;
     page.done();
   });
 });

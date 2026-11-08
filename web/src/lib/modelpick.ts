@@ -107,14 +107,19 @@ export function pickNote(groups: ModelGroup[], value: string): { refused: boolea
 
 /**
  * currentModel is the model a session is on: the newest model the log
- * says was selected, else the one it launched with.
+ * says was selected, else the one it launched with. A subagent's own
+ * selection is not the session's.
  *
- * @decision(DL-014)
+ * @decision(DL-014) @decision(DL-111)
  */
-export function currentModel(activity: Activity[], launched: string | undefined): string {
+export function currentModel(
+  activity: Activity[],
+  launched: string | undefined,
+  children: ReadonlySet<string> = new Set(),
+): string {
   for (let i = activity.length - 1; i >= 0; i--) {
-    const m = activity[i].model;
-    if (m) return m;
+    const { model: m, session } = activity[i];
+    if (m && !(session && children.has(session))) return m;
   }
   return launched ?? "";
 }

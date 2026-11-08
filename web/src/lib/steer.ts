@@ -1,6 +1,6 @@
 import { ApiError, type Problem } from "./api/client";
 import type { components } from "./api/types";
-import type { Activity, Conversation } from "./timeline";
+import { childIds, type Activity, type Conversation } from "./timeline";
 
 /**
  * The composer's logic, kept out of the component so it can be tested:
@@ -367,19 +367,22 @@ export async function send(
 /**
  * delivered is every message id the page has seen come back, from the
  * live stream's `session.inbox.enqueued` frames and from the stored
- * conversation. Either one clears an echo.
+ * conversation. Either one clears an echo. A subagent's are not the
+ * reader's.
  *
- * @decision(DL-059) @decision(DL-019)
+ * @decision(DL-059) @decision(DL-019) @decision(DL-111)
  */
 export function delivered(conversations: Conversation[], activity: Activity[]): Set<string> {
   const seen = new Set<string>();
+  const children = childIds(conversations);
   for (const conv of conversations) {
+    if (conv.parent) continue;
     for (const m of conv.messages ?? []) {
       if (m.id) seen.add(m.id);
     }
   }
   for (const ev of activity) {
-    if (ev.message) seen.add(ev.message);
+    if (ev.message && !isChildFrame(ev, children)) seen.add(ev.message);
   }
   return seen;
 }
@@ -434,24 +437,33 @@ export const TurnEnders: readonly string[] = [
 ];
 
 /**
+ * isChildFrame reports whether a frame belongs to a subagent's session,
+ * given the conversations known to be one's (`childIds`). A frame naming
+ * no session, or one not listed, is a root's.
+ *
+ * @decision(DL-111)
+ */
+export function isChildFrame(ev: Activity, children: ReadonlySet<string>): boolean {
+  return !!ev.session && children.has(ev.session);
+}
+
+/**
  * turnInFlight reports whether a turn is running, from the last execution
- * frame by store position rather than arrival order. It ignores which
- * conversation the frame belongs to. If the page never saw a turn's
+ * frame by store position rather than arrival order. Only a root's
+ * frames count: a subagent runs turns of its own on this log, and its
+ * end must not hide Stop mid-turn. If the page never saw a turn's
  * `started` frame, Stop stays hidden for that turn.
  *
- * Known gap: whether a subagent's session emits its own execution frames
- * onto this log is unmeasured; if it does, its end hides Stop mid-turn.
- * See DL-059 before reading `ev.session` here.
- *
- * @decision(DL-059) @decision(DL-019) @decision(DL-017)
+ * @decision(DL-059) @decision(DL-019) @decision(DL-017) @decision(DL-111)
  */
-export function turnInFlight(activity: Activity[]): boolean {
+export function turnInFlight(activity: Activity[], children: ReadonlySet<string> = new Set()): boolean {
   let at = -1;
   let running = false;
   for (const ev of activity) {
     // `name` and `pos` are required on the generated LogEvent, so neither
     // is defended against.
     if (ev.name !== TurnStarted && !TurnEnders.includes(ev.name)) continue;
+    if (isChildFrame(ev, children)) continue;
     if (ev.pos < at) continue;
     at = ev.pos;
     running = ev.name === TurnStarted;
@@ -463,14 +475,14 @@ export function turnInFlight(activity: Activity[]): boolean {
  * turnsEnded counts the turn-ending frames the page holds, one per store
  * position. It only grows as the log is read, so a rise says a turn
  * ended even when a later frame has already started another, which
- * `turnInFlight` alone cannot show.
+ * `turnInFlight` alone cannot show. A subagent's turns are not counted.
  *
- * @decision(DL-059)
+ * @decision(DL-059) @decision(DL-111)
  */
-export function turnsEnded(activity: Activity[]): number {
+export function turnsEnded(activity: Activity[], children: ReadonlySet<string> = new Set()): number {
   const seen = new Set<number>();
   for (const ev of activity) {
-    if (TurnEnders.includes(ev.name)) seen.add(ev.pos);
+    if (TurnEnders.includes(ev.name) && !isChildFrame(ev, children)) seen.add(ev.pos);
   }
   return seen.size;
 }
