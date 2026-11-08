@@ -93,7 +93,7 @@ func TestJobsCompleteUnfinishedFirst(t *testing.T) {
 	if got := strings.Join(completions(t, env, "jobs", "show", ""), " "); got != "job_new job_old job_done" {
 		t.Errorf("show offers %s", got)
 	}
-	for _, act := range []string{"cancel", "resume", "interrupt"} {
+	for _, act := range []string{"cancel", "resume", "interrupt", "wait"} {
 		if got := strings.Join(completions(t, env, "jobs", act, ""), " "); got != "job_new job_old" {
 			t.Errorf("%s offers %s", act, got)
 		}

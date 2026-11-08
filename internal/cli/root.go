@@ -87,6 +87,16 @@ type Env struct {
 	//
 	// @decision(DL-025)
 	AttachPoll time.Duration
+	// JobPoll is how often `spov jobs wait` re-reads a job; zero means
+	// jobPoll.
+	//
+	// @decision(DL-103)
+	JobPoll time.Duration
+	// StderrIsTerminal overrides the check that decides whether a wait
+	// draws progress lines; nil asks the terminal.
+	//
+	// @decision(DL-103)
+	StderrIsTerminal func() bool
 	// ProcessAlive reports whether a pid is running. Nil means signal 0.
 	ProcessAlive func(pid int) bool
 	// StopProcess stops a server of another build. Nil means SIGTERM and

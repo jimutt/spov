@@ -30,6 +30,7 @@ spov jobs create --kind report --repo acme/app --goal-file audit.md
 | `--repo`, `--git-access`, `--env`, `--credentials`, `--no-credentials` | As for sessions. A job takes its git access from `sandbox.job_git_access` and your Settings, and its credentials from `sandbox.job_credentials`, never from the interactive defaults. |
 | `--landing <dir>` | Start in one repository's directory rather than `/workspace` |
 | `--goal-file <file>` | Read the goal from a file |
+| `--wait`, `--timeout <d>` | Wait for the job after creating it, as `spov jobs wait` does |
 
 ## Following and steering it
 
@@ -39,9 +40,48 @@ spov jobs create --kind report --repo acme/app --goal-file audit.md
 | `spov jobs show <id>` | One job in full, with what it delivered |
 | `spov jobs report <id> [<path>]` | Print a report; `--save <dir>` writes it with its images |
 | `spov attach <session>` | Join the job's conversation, waiting while it is queued and starting |
+| `spov jobs wait <id>` | Block until the job finishes, then exit by how it ended ([From a script](#from-a-script)) |
 | `spov jobs interrupt <id>` | Stop its current turn and take it over |
 | `spov jobs resume <id>` | Hand a steered or blocked job back to its loop |
 | `spov jobs cancel <id>` | End it |
+
+## From a script
+
+`spov jobs wait <id>` blocks until the job is `succeeded`, `failed` or
+`cancelled` and prints it as `jobs show` does (`--json` prints the job view and
+nothing else on stdout). A job that is `blocked` or `steered` is not finished,
+so the wait goes on through it. It reads the job from the server every 5 s,
+which never touches the sandbox. When stderr is a terminal it writes a line
+each time the state changes.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | succeeded |
+| 3 | succeeded, partly |
+| 4 | failed |
+| 5 | cancelled |
+| 6 | `--timeout` ran out; the job goes on |
+| 1 | the command itself could not finish: a bad flag, sign-in, an unknown ID, or the server still unreachable after five retries over about two minutes |
+| 130 | interrupted with Ctrl-C; the job goes on |
+
+The job is printed before a non-zero outcome status. A timeout or Ctrl-C ends
+only the wait, never the job.
+
+```sh
+id=$(spov jobs create --json --repo acme/app "Fix the flaky test" | jq -r .id)
+spov jobs wait "$id" --json --timeout 2h > job.json
+case $? in
+  0) echo "done" ;;
+  3) echo "done, partly" ;;
+  6) echo "still running" ;;
+  *) echo "did not succeed" ;;
+esac
+```
+
+`spov jobs create --wait` does both in one command. It prints the created job
+first, so the IDs are known before the job runs, then waits with the same
+`--timeout` and exit status. With `--json` that is two JSON documents, one per
+line: the created job, then the final one.
 
 ## How a job runs
 
