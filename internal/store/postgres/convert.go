@@ -388,6 +388,8 @@ func jobFromRow(r sqlcgen.Job) store.Job {
 		ClockStartedAt: goTimePtr(r.ClockStartedAt),
 		// @decision(DL-049)
 		ClockUsed: time.Duration(r.ClockUsedSeconds) * time.Second,
+		// @decision(DL-102)
+		SyncAppliedAt: goTimePtr(r.SyncAppliedAt),
 	}
 }
 
@@ -412,6 +414,9 @@ func deliverableFromRow(r sqlcgen.JobDeliverable) store.Deliverable {
 		Title:      r.Title,
 		Path:       r.Path,
 		Size:       r.Size,
+		HeadCommit: r.HeadCommit,
+		Commits:    int(r.Commits),
+		Files:      int(r.Files),
 		CreatedAt:  goTime(r.CreatedAt),
 		UpdatedAt:  goTime(r.UpdatedAt),
 	}

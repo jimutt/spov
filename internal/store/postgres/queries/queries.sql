@@ -52,6 +52,10 @@ update sessions
 set opencode_grant = $3, updated_at = $4
 where id = $1 and org_id = $2;
 
+-- name: SessionsByIDs :many
+-- @decision(DL-101)
+select * from sessions where org_id = $1 and id = any(sqlc.arg(ids)::text[]);
+
 -- name: GetSessionBySandbox :one
 select * from sessions where sandbox_id = $1 and sandbox_id <> '';
 
@@ -71,13 +75,17 @@ select * from sessions where state in ('starting', 'running') order by id;
 -- falls back to the session quota here, which is where an unowned live
 -- sandbox belongs.
 --
--- @decision(DL-045)
+-- A held sync job's session (a finished sync job whose session is live
+-- with a sandbox) is excluded too: the job quota counts it.
+--
+-- @decision(DL-045) @decision(DL-101)
 select count(*) from sessions s
 where s.org_id = $1 and s.owner_id = $2 and s.state in ('starting', 'running')
   and not exists (
     select 1 from jobs j
     where j.session_id = s.id and j.org_id = s.org_id
-      and j.state not in ('succeeded', 'failed', 'cancelled')
+      and (j.state not in ('succeeded', 'failed', 'cancelled')
+           or (j.kind = 'sync' and j.state in ('succeeded', 'failed') and s.sandbox_id <> ''))
   );
 
 -- name: LockOwnerForQuota :exec
@@ -347,9 +355,9 @@ order by pos desc limit 1;
 insert into jobs (id, org_id, owner_id, session_id, kind, state, goal, unfinished, error,
                   attempt, created_at, updated_at, started_at, stopped_at, check_command,
                   check_proposed, cursor, verdict, assessment, model,
-                  max_duration_seconds, clock_started_at, clock_used_seconds)
+                  max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23);
+        $19, $20, $21, $22, $23, $24);
 
 -- name: GetJob :one
 select * from jobs where org_id = $1 and id = $2;
@@ -397,10 +405,17 @@ where org_id = $1
 
 -- name: CountLiveJobsForOwner :one
 -- Every state that is not terminal, `queued` included: a queued job
--- holds no sandbox yet but is committed to getting one.
-select count(*) from jobs
-where org_id = $1 and owner_id = $2
-  and state not in ('succeeded', 'failed', 'cancelled');
+-- holds no sandbox yet but is committed to getting one. A held sync job
+-- (finished, its session still live with a sandbox) keeps its slot.
+--
+-- @decision(DL-101)
+select count(*) from jobs j
+where j.org_id = $1 and j.owner_id = $2
+  and (j.state not in ('succeeded', 'failed', 'cancelled')
+       or (j.kind = 'sync' and j.state in ('succeeded', 'failed') and exists (
+         select 1 from sessions s
+         where s.id = j.session_id and s.org_id = j.org_id
+           and s.state in ('starting', 'running') and s.sandbox_id <> '')));
 
 -- name: LockOwnerForJobQuota :exec
 -- LockOwnerForQuota's counterpart for jobs, and deliberately a
@@ -434,9 +449,10 @@ where org_id = $1 and id = $2;
 -- @decision(DL-051)
 insert into job_deliverables (org_id, job_id, key, kind, status, detail, platform, owner,
                               name, branch, number, url, title, path, size, created_at, updated_at,
-                              forge, images_lost)
+                              forge, images_lost, head_commit, commits, files)
 select j.org_id, j.id, @key, @kind, @status, @detail, @platform, @owner, @name, @branch,
-       @number, @url, @title, @path, @size, @now, @now, @forge, @images_lost
+       @number, @url, @title, @path, @size, @now, @now, @forge, @images_lost,
+       @head_commit, @commits, @files
 from jobs j where j.org_id = @org_id and j.id = @job_id
 on conflict (job_id, key) do update
 set status = excluded.status, detail = excluded.detail, platform = excluded.platform,
@@ -444,8 +460,31 @@ set status = excluded.status, detail = excluded.detail, platform = excluded.plat
     number = excluded.number, url = excluded.url, title = excluded.title,
     path = excluded.path, size = excluded.size, updated_at = excluded.updated_at,
     forge = case when excluded.forge <> '' then excluded.forge else job_deliverables.forge end,
-    images_lost = excluded.images_lost
+    images_lost = excluded.images_lost, head_commit = excluded.head_commit,
+    commits = excluded.commits, files = excluded.files
 where job_deliverables.status <> 'verified';
+
+-- name: SetJobSyncApplied :execrows
+-- @decision(DL-102)
+update jobs set sync_applied_at = @applied_at, updated_at = @now
+where org_id = @org_id and id = @id;
+
+-- name: PutJobSeed :execrows
+-- A sync job's seed, written in the create's transaction.
+-- @decision(DL-100)
+insert into job_seeds (job_id, bundle, created_at)
+select j.id, @bundle, @now from jobs j where j.org_id = @org_id and j.id = @job_id
+on conflict (job_id) do update set bundle = excluded.bundle;
+
+-- name: GetJobSeed :one
+-- @decision(DL-100)
+select s.bundle from job_seeds s join jobs j on j.id = s.job_id
+where j.org_id = $1 and s.job_id = $2;
+
+-- name: DeleteJobSeed :exec
+-- @decision(DL-100)
+delete from job_seeds s using jobs j
+where j.id = s.job_id and j.org_id = $1 and s.job_id = $2;
 
 -- name: JobExists :one
 select exists (select 1 from jobs where org_id = $1 and id = $2);

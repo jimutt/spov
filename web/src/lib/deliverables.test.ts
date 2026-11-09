@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changeNounOf, deliveredSummary, fileURL, missingImage, outRelative, pullRequestName, type Deliverable } from "./deliverables";
+import { changeNounOf, deliveredSummary, fileURL, missingImage, outRelative, pullRequestName, syncState, type Deliverable } from "./deliverables";
 import type { Job } from "./format";
 
 describe("where a job's files are read", () => {
@@ -79,5 +79,16 @@ describe("an image in a report that did not load", () => {
 
     missingImage({ target: box.querySelector("a") } as unknown as Event);
     expect(box.querySelector("a")).not.toBeNull();
+  });
+});
+
+describe("a sync job's deliverable", () => {
+  // @decision(DL-101)
+  it("is its repository, summed up as changes rather than reports", () => {
+    const member = { kind: "sync", status: "verified", repository: "acme/app", branch: "main" } as Deliverable;
+    const job = { kind: "sync", deliverables: [member] } as unknown as Job;
+    expect(syncState(job)).toBe(member);
+    expect(deliveredSummary(job)).toBe("Repository changes");
+    expect(syncState({ kind: "report", deliverables: [] } as unknown as Job)).toBeUndefined();
   });
 });

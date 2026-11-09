@@ -34,7 +34,7 @@ type JobRequest struct {
 	// Kind decides what is delivered and what the sandbox may do.
 	//
 	// @decision(DL-045) @decision(DL-040)
-	Kind store.JobKind `json:"kind" enum:"pr,report" doc:"What the job delivers"`
+	Kind store.JobKind `json:"kind" enum:"pr,report,sync" doc:"What the job delivers"`
 	// Repos are the repositories the job's session is bootstrapped
 	// with, exactly as a session create takes them.
 	Repos   []RepoRef `json:"repos" minItems:"1"`
@@ -103,6 +103,20 @@ type JobRequest struct {
 	NoCredentials        bool     `json:"no_credentials,omitempty" doc:"Attach no routed credential"`
 	CredentialsPreferred []string `json:"credentials_preferred,omitempty" maxItems:"96" doc:"The configuration's narrowing: keep only these of the default, or none for none; it never adds one"`
 	Needs                []string `json:"needs,omitempty" maxItems:"16" doc:"Hosts the project needs; the launch notes any no routed credential covers"`
+	// Sync seeds a sync job's repository from a local checkout, as a
+	// synced session's; required for kind sync and refused on any
+	// other.
+	//
+	// @decision(DL-100)
+	Sync *SessionSyncRequest `json:"sync,omitempty" doc:"Seed a sync job's repository from a local git branch and commit; required for kind sync"`
+	// Hold is how long a finished sync job's sandbox is kept for its
+	// state to be taken, added to its timeout. HoldPreferred marks it as
+	// the client's configured default, which is cut to fit rather than
+	// refused.
+	//
+	// @decision(DL-101)
+	Hold          string `json:"hold,omitempty" doc:"For kind sync: how long the sandbox is held after the job finishes, as a duration such as 30m; 30m when empty"`
+	HoldPreferred bool   `json:"hold_preferred,omitempty" doc:"hold is the client's configured default: cut to fit rather than refused"`
 }
 
 // JobView is a job as the API shows it.
@@ -110,7 +124,7 @@ type JobRequest struct {
 // @decision(DL-045)
 type JobView struct {
 	ID      string         `json:"id" doc:"ULID"`
-	Kind    store.JobKind  `json:"kind" enum:"pr,report"`
+	Kind    store.JobKind  `json:"kind" enum:"pr,report,sync"`
 	State   store.JobState `json:"state" enum:"queued,provisioning,running,delivering,succeeded,failed,blocked,steered,cancelled"`
 	OwnerID string         `json:"owner_id"`
 	// SessionID is the ordinary session the job runs in, so a client
@@ -166,13 +180,37 @@ type JobView struct {
 	MaxDuration    string     `json:"max_duration,omitempty" doc:"How long the job may run unattended"`
 	ClockUsed      string     `json:"clock_used,omitempty" doc:"Unattended time used before the current stretch"`
 	ClockStartedAt *time.Time `json:"clock_started_at,omitempty" doc:"When the current unattended stretch began; absent while the clock is stopped"`
+	// Sync is a sync job's state: what it delivered and whether its
+	// sandbox is still held for the state to be taken.
+	//
+	// @decision(DL-101)
+	Sync *JobSyncView `json:"sync,omitempty" doc:"A sync job's repository state and its hold"`
+}
+
+// JobSyncView is a sync job's delivered state and its hold.
+//
+// @decision(DL-101)
+type JobSyncView struct {
+	Branch     string `json:"branch,omitempty"`
+	HeadCommit string `json:"head_commit,omitempty"`
+	Commits    int    `json:"commits"`
+	Files      int    `json:"files"`
+	Bytes      int64  `json:"bytes"`
+	// Held is derived: finished, with its session live and holding a
+	// sandbox (store.SyncHeld).
+	Held bool `json:"held" doc:"The sandbox is kept for the state to be taken with spov jobs apply"`
+	// HeldUntil is for display only: when the run reached running plus
+	// the sandbox's timeout.
+	HeldUntil  *time.Time `json:"held_until,omitempty" doc:"About when the hold runs out; for display only"`
+	AppliedAt  *time.Time `json:"applied_at,omitempty" doc:"When an apply released the sandbox"`
+	ReleasedAt *time.Time `json:"released_at,omitempty" doc:"When the sandbox ended"`
 }
 
 // DeliverableView is one member of a job's inventory.
 //
 // @decision(DL-051)
 type DeliverableView struct {
-	Kind   store.DeliverableKind   `json:"kind" enum:"pr,report"`
+	Kind   store.DeliverableKind   `json:"kind" enum:"pr,report,sync"`
 	Status store.DeliverableStatus `json:"status" enum:"verified,missing,unverified,over_limit,withdrawn"`
 	Detail string                  `json:"detail,omitempty" doc:"What was found about it, for a person"`
 	// Platform, Repository and Branch say where a pull request is from;
@@ -190,7 +228,13 @@ type DeliverableView struct {
 	Title string `json:"title,omitempty"`
 	// Path and Size are a report's; Path is what the file endpoint takes.
 	Path string `json:"path,omitempty" doc:"A report's path under the job's out directory"`
-	Size int64  `json:"size,omitempty" doc:"A report's size in bytes"`
+	Size int64  `json:"size,omitempty" doc:"A report's size in bytes, or the size a sync's export would have"`
+	// HeadCommit, Commits and Files are a sync member's.
+	//
+	// @decision(DL-101)
+	HeadCommit string `json:"head_commit,omitempty" doc:"A sync's HEAD commit"`
+	Commits    int    `json:"commits,omitempty" doc:"A sync's commits since its base"`
+	Files      int    `json:"files,omitempty" doc:"A sync's uncommitted changed files"`
 }
 
 // deliverableViewOf projects one member.
@@ -200,6 +244,7 @@ func deliverableViewOf(d store.Deliverable) DeliverableView {
 	v := DeliverableView{
 		Kind: d.Kind, Status: d.Status, Detail: d.Detail, Platform: d.Platform, Forge: d.Forge,
 		Branch: d.Branch, Number: d.Number, URL: d.URL, Title: d.Title, Path: d.Path, Size: d.Size,
+		HeadCommit: d.HeadCommit, Commits: d.Commits, Files: d.Files,
 	}
 	if d.Owner != "" || d.Name != "" {
 		v.Repository = d.Owner + "/" + d.Name
@@ -254,21 +299,58 @@ func partialOf(state store.JobState, gates []jobs.GateResult) bool {
 	return false
 }
 
-// jobViews projects jobs with their inventories, read in one query.
+// syncViewOf is a sync job's state and hold, from its member, its
+// session and the session's runs.
 //
-// @decision(DL-051) @decision(DL-060)
+// @decision(DL-101)
+func syncViewOf(j store.Job, members []store.Deliverable, sess store.Session, runs []store.Run) *JobSyncView {
+	v := &JobSyncView{Held: store.SyncHeld(j, sess), AppliedAt: j.SyncAppliedAt}
+	for _, m := range members {
+		if m.Kind == store.DeliverableSync {
+			v.Branch, v.HeadCommit = m.Branch, m.HeadCommit
+			v.Commits, v.Files, v.Bytes = m.Commits, m.Files, m.Size
+		}
+	}
+	if !sess.State.Live() {
+		v.ReleasedAt = sess.StoppedAt
+	}
+	if v.Held && len(runs) > 0 && sess.Request.Sandbox.Timeout > 0 {
+		if at := runs[len(runs)-1].RunningAt; at != nil {
+			until := at.Add(sess.Request.Sandbox.Timeout)
+			v.HeldUntil = &until
+		}
+	}
+	return v
+}
+
+// jobViews projects jobs with their inventories, read in one query, and
+// a sync job's hold from its session, read in one more.
+//
+// @decision(DL-051) @decision(DL-060) @decision(DL-101)
 func (s *Server) jobViews(ctx context.Context, list []store.Job) ([]JobView, error) {
 	ids := make([]string, 0, len(list))
+	var syncSessions []string
 	for _, j := range list {
 		ids = append(ids, j.ID)
+		if j.Kind == store.JobKindSync {
+			syncSessions = append(syncSessions, j.SessionID)
+		}
 	}
 	members, err := s.svc.JobDeliverables(ctx, principal(ctx), ids)
 	if err != nil {
 		return nil, err
 	}
+	sessions, runs, err := s.svc.syncJobSessions(ctx, principal(ctx), syncSessions)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]JobView, 0, len(list))
 	for _, j := range list {
-		out = append(out, jobViewOf(j, members[j.ID]))
+		v := jobViewOf(j, members[j.ID])
+		if j.Kind == store.JobKindSync {
+			v.Sync = syncViewOf(j, members[j.ID], sessions[j.SessionID], runs[j.SessionID])
+		}
+		out = append(out, v)
 	}
 	return out, nil
 }
@@ -350,13 +432,23 @@ func (s *Server) registerJobs() {
 		OperationID: "create-job", Method: http.MethodPost, Path: "/api/v1/jobs",
 		Summary: "Create an autonomous job", DefaultStatus: http.StatusAccepted, Tags: []string{"jobs"},
 		Errors: []int{http.StatusTooManyRequests, http.StatusNotImplemented},
+		// A sync job's seed is a bundle, as a session create's.
+		//
+		// @decision(DL-100)
+		MaxBodyBytes: MaxSessionBodyBytes,
 	}, func(ctx context.Context, in *createJobInput) (*jobOutput, error) {
 		job, err := s.svc.CreateJob(ctx, principal(ctx), in.Body)
 		if err != nil {
 			return nil, toJobHumaError(err)
 		}
-		// A new job has delivered nothing yet.
-		return &jobOutput{Body: jobViewOf(job, nil)}, nil
+		// A new job has delivered nothing yet, and a sync job holds
+		// nothing yet.
+		v := jobViewOf(job, nil)
+		// @decision(DL-101)
+		if job.Kind == store.JobKindSync {
+			v.Sync = &JobSyncView{}
+		}
+		return &jobOutput{Body: v}, nil
 	})
 
 	register(s.api, huma.Operation{

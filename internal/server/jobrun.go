@@ -50,6 +50,21 @@ func (s *Service) ProvisionJob(ctx context.Context, job store.Job) error {
 	s.logs[sess.ID] = log
 	s.mu.Unlock()
 
+	// The stored request carries no bundle; a sync job's waits in its
+	// seed row. None is a seed with nothing unpushed. A seed that cannot
+	// be read fails this attempt rather than launching without it.
+	//
+	// @decision(DL-100)
+	if job.Kind == store.JobKindSync && sess.Request.Sync != nil {
+		bundle, err := s.deps.Store.Jobs().Seed(ctx, job.OrgID, job.ID)
+		switch {
+		case err == nil:
+			sess.Request.Sync.Bundle = bundle
+		case !errors.Is(err, store.ErrNotFound):
+			return fmt.Errorf("reading the job's seed: %w", err)
+		}
+	}
+
 	// The launch runs on the caller's context: unlike Service.Create,
 	// the supervisor is waiting for it and owns the timeout.
 	s.launchJob(ctx, sess, job, log)
@@ -64,6 +79,15 @@ func (s *Service) ProvisionJob(ctx context.Context, job store.Job) error {
 	}
 	switch after.State {
 	case store.StateRunning:
+		// The seed is applied and the session committed running, so it
+		// is not needed again; a failed launch keeps it for the next.
+		//
+		// @decision(DL-100)
+		if job.Kind == store.JobKindSync {
+			if err := s.deps.Store.Jobs().DeleteSeed(ctx, job.OrgID, job.ID); err != nil {
+				s.deps.Warn(fmt.Sprintf("job %s: dropping its seed: %s", job.ID, redact.Error(err)))
+			}
+		}
 		return nil
 	case store.StateFailed, store.StateStopped:
 		if after.Error != "" {

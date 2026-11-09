@@ -203,7 +203,7 @@
           data-testid="jobs-row"
         >
           <span class="pt-0.5 text-md max-md:col-start-1 max-md:row-start-2 max-md:pt-0 max-md:text-sm" role="cell">
-            <StateMark mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial)} /><span
+            <StateMark mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial, job.sync?.held)} /><span
               class="text-soft before:mx-2 before:content-['·'] md:hidden">{kindName(job.kind)} job</span
             >
           </span>

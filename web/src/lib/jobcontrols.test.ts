@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "./api/client";
-import { CANCELLABLE, cancellable, endable, ended } from "./jobcontrols";
+import { CANCELLABLE, cancellable, discardable, endable, ended } from "./jobcontrols";
 import { KNOWN_JOB_STATES } from "./steer";
 
 describe("which job can be cancelled from the page", () => {
@@ -65,6 +65,18 @@ describe("which session can be ended from the page", () => {
     expect(endable("stopped", true, undefined)).toBe(false);
     expect(endable("failed", true, undefined)).toBe(false);
     expect(endable(undefined, true, undefined)).toBe(false);
+  });
+});
+
+describe("a held sync job", () => {
+  // @decision(DL-101) @decision(DL-102)
+  it("offers Discard in place of End session", () => {
+    expect(endable("running", true, "succeeded", true)).toBe(false);
+    expect(endable("running", true, "succeeded", false)).toBe(true);
+    expect(discardable({ kind: "sync", sync: { held: true } })).toBe(true);
+    expect(discardable({ kind: "sync", sync: { held: false } })).toBe(false);
+    expect(discardable({ kind: "report" })).toBe(false);
+    expect(discardable(undefined)).toBe(false);
   });
 });
 

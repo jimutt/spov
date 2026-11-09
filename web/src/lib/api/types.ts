@@ -92,6 +92,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** End a held sync job's sandbox */
+        post: operations["release-job"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{id}/resume": {
         parameters: {
             query?: never;
@@ -103,6 +120,23 @@ export interface paths {
         put?: never;
         /** Hand a suspended job back to its loop */
         post: operations["resume-job"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{id}/sync-export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export a sync job's git commits and working-tree changes from its sandbox */
+        post: operations["export-job-sync"];
         delete?: never;
         options?: never;
         head?: never;
@@ -850,12 +884,24 @@ export interface components {
         };
         DeliverableView: {
             branch?: string;
+            /**
+             * Format: int64
+             * @description A sync's commits since its base
+             */
+            commits?: number;
             /** @description What was found about it, for a person */
             detail?: string;
+            /**
+             * Format: int64
+             * @description A sync's uncommitted changed files
+             */
+            files?: number;
             /** @description The platform's kind: github, forgejo, gitea or gitlab, where a pull request is a merge request */
             forge?: string;
+            /** @description A sync's HEAD commit */
+            head_commit?: string;
             /** @enum {string} */
-            kind: "pr" | "report";
+            kind: "pr" | "report" | "sync";
             /**
              * Format: int64
              * @description The pull request's number
@@ -869,7 +915,7 @@ export interface components {
             repository?: string;
             /**
              * Format: int64
-             * @description A report's size in bytes
+             * @description A report's size in bytes, or the size a sync's export would have
              */
             size?: number;
             /** @enum {string} */
@@ -1044,12 +1090,16 @@ export interface components {
             git_access_preferred?: boolean;
             /** @description What the job should accomplish */
             goal: string;
+            /** @description For kind sync: how long the sandbox is held after the job finishes, as a duration such as 30m; 30m when empty */
+            hold?: string;
+            /** @description hold is the client's configured default: cut to fit rather than refused */
+            hold_preferred?: boolean;
             image?: string;
             /**
              * @description What the job delivers
              * @enum {string}
              */
-            kind: "pr" | "report";
+            kind: "pr" | "report" | "sync";
             /** @description Workspace directory to start in; the workspace root when empty */
             landing?: string;
             /** @description How long the job may run unattended, as a duration such as 45m; your default, else 1h, when empty */
@@ -1064,6 +1114,35 @@ export interface components {
             no_credentials?: boolean;
             repos: components["schemas"]["RepoRef"][] | null;
             sandbox?: components["schemas"]["SandboxConfigView"];
+            /** @description Seed a sync job's repository from a local git branch and commit; required for kind sync */
+            sync?: components["schemas"]["SessionSyncRequest"];
+        };
+        JobSyncView: {
+            /**
+             * Format: date-time
+             * @description When an apply released the sandbox
+             */
+            applied_at?: string;
+            branch?: string;
+            /** Format: int64 */
+            bytes: number;
+            /** Format: int64 */
+            commits: number;
+            /** Format: int64 */
+            files: number;
+            head_commit?: string;
+            /** @description The sandbox is kept for the state to be taken with spov jobs apply */
+            held: boolean;
+            /**
+             * Format: date-time
+             * @description About when the hold runs out; for display only
+             */
+            held_until?: string;
+            /**
+             * Format: date-time
+             * @description When the sandbox ended
+             */
+            released_at?: string;
         };
         JobView: {
             /**
@@ -1092,7 +1171,7 @@ export interface components {
             /** @description ULID */
             id: string;
             /** @enum {string} */
-            kind: "pr" | "report";
+            kind: "pr" | "report" | "sync";
             /** @description How long the job may run unattended */
             max_duration?: string;
             /** @description Model the job runs on, as provider/model; empty is OpenCode's default */
@@ -1107,6 +1186,8 @@ export interface components {
             state: "queued" | "provisioning" | "running" | "delivering" | "succeeded" | "failed" | "blocked" | "steered" | "cancelled";
             /** Format: date-time */
             stopped_at?: string;
+            /** @description A sync job's repository state and its hold */
+            sync?: components["schemas"]["JobSyncView"];
             /** @description What the agent said it left unfinished */
             unfinished?: string;
             /** Format: date-time */
@@ -1465,6 +1546,16 @@ export interface components {
         ReadyEvent: {
             session: components["schemas"]["SessionView"];
         };
+        ReleaseJobRequest: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ReleaseJobRequest.json
+             */
+            readonly $schema?: string;
+            /** @description The state was applied somewhere: recorded as applied_at */
+            applied?: boolean;
+        };
         RepoRef: {
             name: string;
             owner: string;
@@ -1600,10 +1691,11 @@ export interface components {
             tier?: "user" | "org";
         };
         SessionJobView: {
+            held?: boolean;
             /** @description ULID */
             id: string;
             /** @enum {string} */
-            kind: "pr" | "report";
+            kind: "pr" | "report" | "sync";
             partial?: boolean;
             /** @enum {string} */
             state: "queued" | "provisioning" | "running" | "delivering" | "succeeded" | "failed" | "blocked" | "steered" | "cancelled";
@@ -2409,6 +2501,78 @@ export interface operations {
             };
         };
     };
+    "release-job": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Job ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ReleaseJobRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "resume-job": {
         parameters: {
             query?: never;
@@ -2427,6 +2591,74 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "export-job-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Job ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncExportView"];
+                };
             };
             /** @description Unauthorized */
             401: {

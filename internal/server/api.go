@@ -43,7 +43,8 @@ const (
 )
 
 func maxBodyBytesFor(path string) int64 {
-	if path == APIPrefix+"sessions" {
+	// @decision(DL-100)
+	if path == APIPrefix+"sessions" || path == APIPrefix+"jobs" {
 		return MaxSessionBodyBytes
 	}
 	// @decision(DL-098)

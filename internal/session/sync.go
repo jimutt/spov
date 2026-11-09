@@ -124,14 +124,126 @@ func ExportSync(ctx context.Context, h sandbox.Handle, dir, baseCommit string) (
 		return git.ExportedState{}, fmt.Errorf("session: invalid base commit %q", baseCommit)
 	}
 	repoPath := path.Join(opencode.WorkspaceRoot, dir)
-	script := `set -e
+	res, err := h.Exec(ctx, []string{"bash", "-c", syncStateScript, "spov-export", repoPath, base, "export"})
+	if err != nil {
+		return git.ExportedState{}, fmt.Errorf("session: export sandbox repository state: %w", err)
+	}
+	if res.ExitCode != 0 {
+		return git.ExportedState{}, fmt.Errorf("session: export sandbox repository state: %s", execDetail(res))
+	}
+	var wire struct {
+		Branch      string   `json:"branch"`
+		BaseCommit  string   `json:"base_commit"`
+		HeadCommit  string   `json:"head_commit"`
+		Bundle      string   `json:"bundle"`
+		WorktreeTar string   `json:"worktree_tar"`
+		Deleted     []string `json:"deleted"`
+	}
+	if err := json.Unmarshal([]byte(res.Stdout), &wire); err != nil {
+		return git.ExportedState{}, fmt.Errorf("session: decode exported sandbox state: %w", err)
+	}
+	var bundleBytes, tarBytes []byte
+	if wire.Bundle != "" {
+		bundleBytes, err = base64.StdEncoding.DecodeString(wire.Bundle)
+		if err != nil {
+			return git.ExportedState{}, fmt.Errorf("session: decode exported bundle: %w", err)
+		}
+	}
+	if wire.WorktreeTar != "" {
+		tarBytes, err = base64.StdEncoding.DecodeString(wire.WorktreeTar)
+		if err != nil {
+			return git.ExportedState{}, fmt.Errorf("session: decode exported worktree archive: %w", err)
+		}
+	}
+	if len(bundleBytes)+len(tarBytes) > git.MaxSyncExportBytes {
+		return git.ExportedState{}, fmt.Errorf("session: exported sandbox state exceeds %d MiB limit", git.MaxSyncExportBytes>>20)
+	}
+	return git.ExportedState{
+		Branch:      wire.Branch,
+		BaseCommit:  wire.BaseCommit,
+		HeadCommit:  wire.HeadCommit,
+		Bundle:      bundleBytes,
+		WorktreeTar: tarBytes,
+		Deleted:     wire.Deleted,
+	}, nil
+}
+
+// SyncSummary is what InspectSync measures of a sandbox's repository:
+// where it is, how much changed since the base, and the size its export
+// would have. It carries no contents.
+//
+// @decision(DL-101)
+type SyncSummary struct {
+	Branch     string
+	HeadCommit string
+	// Commits counts base..HEAD, and is zero when Rewritten.
+	Commits int
+	// Files counts the changed, added and deleted paths.
+	Files int
+	// Bytes is the size ExportSync's bundle and archive would have.
+	Bytes int64
+	// Rewritten says the base is no longer an ancestor of HEAD.
+	Rewritten bool
+}
+
+// InspectSync measures a sandbox repository's state as ExportSync would
+// package it, in one exec, building the bundle and archive only to take
+// their sizes.
+//
+// @decision(DL-101)
+func InspectSync(ctx context.Context, h sandbox.Handle, dir, baseCommit string) (SyncSummary, error) {
+	base := strings.ToLower(strings.TrimSpace(baseCommit))
+	if base != "" && !git.ValidCommitSHA(base) {
+		return SyncSummary{}, fmt.Errorf("session: invalid base commit %q", baseCommit)
+	}
+	res, err := h.Exec(ctx, []string{"bash", "-c", syncStateScript, "spov-inspect",
+		path.Join(opencode.WorkspaceRoot, dir), base, "inspect"})
+	if err != nil {
+		return SyncSummary{}, fmt.Errorf("session: inspect sandbox repository state: %w", err)
+	}
+	if res.ExitCode != 0 {
+		return SyncSummary{}, fmt.Errorf("session: inspect sandbox repository state: %s", execDetail(res))
+	}
+	var wire struct {
+		Branch     string `json:"branch"`
+		HeadCommit string `json:"head_commit"`
+		Commits    int    `json:"commits"`
+		Files      int    `json:"files"`
+		Bytes      int64  `json:"bytes"`
+		Rewritten  bool   `json:"rewritten"`
+	}
+	if err := json.Unmarshal([]byte(res.Stdout), &wire); err != nil {
+		return SyncSummary{}, fmt.Errorf("session: decode inspected sandbox state: %w", err)
+	}
+	return SyncSummary(wire), nil
+}
+
+// execDetail is a failed exec's message, redacted.
+func execDetail(res sandbox.ExecResult) string {
+	detail := strings.TrimSpace(res.Stderr)
+	if detail == "" {
+		detail = strings.TrimSpace(res.Stdout)
+	}
+	if detail == "" {
+		detail = fmt.Sprintf("exit %d", res.ExitCode)
+	}
+	return git.RedactAll(detail)
+}
+
+// syncStateScript reads the repository at $1 against the base $2. In
+// the mode "export" ($3) it prints the state ExportSync decodes and
+// fails over the bound; in "inspect" it prints only the counts and the
+// sizes, whatever they are.
+//
+// @decision(DL-027) @decision(DL-101)
+const syncStateScript = `set -e
 cd "$1"
-base="$2"
-python3 - "$base" <<'PY'
+python3 - "$2" "$3" <<'PY'
 import base64, json, os, subprocess, sys, tempfile
 
 MAX_BYTES = 32 * 1024 * 1024
 base = sys.argv[1].strip().lower()
+inspect = sys.argv[2] == "inspect"
 
 def run(*args, check=True):
     r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -145,6 +257,7 @@ head = run("git", "rev-parse", "--verify", "HEAD").stdout.decode().strip().lower
 branch_res = run("git", "symbolic-ref", "-q", "--short", "HEAD", check=False)
 branch = branch_res.stdout.decode().strip() if branch_res.returncode == 0 else ""
 
+given_base = base
 if not base:
     origin_head = run("git", "rev-parse", "--verify", "-q", "refs/remotes/origin/HEAD", check=False)
     if origin_head.returncode == 0:
@@ -172,11 +285,12 @@ if head and head != base:
         run("git", "bundle", "create", bpath, rev_arg)
         bsize = os.path.getsize(bpath)
         total_bytes += bsize
-        if total_bytes > MAX_BYTES:
+        if total_bytes > MAX_BYTES and not inspect:
             sys.stderr.write(f"exported sandbox state exceeds {MAX_BYTES // (1024 * 1024)} MiB limit\n")
             sys.exit(1)
-        with open(bpath, "rb") as f:
-            bundle_b64 = base64.b64encode(f.read()).decode("ascii")
+        if not inspect:
+            with open(bpath, "rb") as f:
+                bundle_b64 = base64.b64encode(f.read()).decode("ascii")
     finally:
         if os.path.exists(bpath):
             os.remove(bpath)
@@ -229,15 +343,33 @@ if to_pack:
         run("tar", "-czf", tpath, "--null", "--no-recursion", "-T", lpath)
         tsize = os.path.getsize(tpath)
         total_bytes += tsize
-        if total_bytes > MAX_BYTES:
+        if total_bytes > MAX_BYTES and not inspect:
             sys.stderr.write(f"exported sandbox state exceeds {MAX_BYTES // (1024 * 1024)} MiB limit\n")
             sys.exit(1)
-        with open(tpath, "rb") as f:
-            tar_b64 = base64.b64encode(f.read()).decode("ascii")
+        if not inspect:
+            with open(tpath, "rb") as f:
+                tar_b64 = base64.b64encode(f.read()).decode("ascii")
     finally:
         for p in (lpath, tpath):
             if os.path.exists(p):
                 os.remove(p)
+
+if inspect:
+    commits, rewritten = 0, False
+    if given_base and head != given_base:
+        if run("git", "merge-base", "--is-ancestor", given_base, head, check=False).returncode == 0:
+            commits = int(run("git", "rev-list", "--count", f"{given_base}..HEAD").stdout.decode().strip() or "0")
+        else:
+            rewritten = True
+    sys.stdout.write(json.dumps({
+        "branch": branch,
+        "head_commit": head,
+        "commits": commits,
+        "files": len(to_pack) + len(deleted),
+        "bytes": total_bytes,
+        "rewritten": rewritten,
+    }))
+    sys.exit(0)
 
 out = {
     "branch": branch,
@@ -250,56 +382,6 @@ out = {
 sys.stdout.write(json.dumps(out))
 PY
 `
-	res, err := h.Exec(ctx, []string{"bash", "-c", script, "spov-export", repoPath, base})
-	if err != nil {
-		return git.ExportedState{}, fmt.Errorf("session: export sandbox repository state: %w", err)
-	}
-	if res.ExitCode != 0 {
-		detail := strings.TrimSpace(res.Stderr)
-		if detail == "" {
-			detail = strings.TrimSpace(res.Stdout)
-		}
-		if detail == "" {
-			detail = fmt.Sprintf("exit %d", res.ExitCode)
-		}
-		return git.ExportedState{}, fmt.Errorf("session: export sandbox repository state: %s", git.RedactAll(detail))
-	}
-	var wire struct {
-		Branch      string   `json:"branch"`
-		BaseCommit  string   `json:"base_commit"`
-		HeadCommit  string   `json:"head_commit"`
-		Bundle      string   `json:"bundle"`
-		WorktreeTar string   `json:"worktree_tar"`
-		Deleted     []string `json:"deleted"`
-	}
-	if err := json.Unmarshal([]byte(res.Stdout), &wire); err != nil {
-		return git.ExportedState{}, fmt.Errorf("session: decode exported sandbox state: %w", err)
-	}
-	var bundleBytes, tarBytes []byte
-	if wire.Bundle != "" {
-		bundleBytes, err = base64.StdEncoding.DecodeString(wire.Bundle)
-		if err != nil {
-			return git.ExportedState{}, fmt.Errorf("session: decode exported bundle: %w", err)
-		}
-	}
-	if wire.WorktreeTar != "" {
-		tarBytes, err = base64.StdEncoding.DecodeString(wire.WorktreeTar)
-		if err != nil {
-			return git.ExportedState{}, fmt.Errorf("session: decode exported worktree archive: %w", err)
-		}
-	}
-	if len(bundleBytes)+len(tarBytes) > git.MaxSyncExportBytes {
-		return git.ExportedState{}, fmt.Errorf("session: exported sandbox state exceeds %d MiB limit", git.MaxSyncExportBytes>>20)
-	}
-	return git.ExportedState{
-		Branch:      wire.Branch,
-		BaseCommit:  wire.BaseCommit,
-		HeadCommit:  wire.HeadCommit,
-		Bundle:      bundleBytes,
-		WorktreeTar: tarBytes,
-		Deleted:     wire.Deleted,
-	}, nil
-}
 
 // shortCommit is a commit as a person reads it.
 func shortCommit(sha string) string {

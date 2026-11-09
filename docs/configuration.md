@@ -77,6 +77,7 @@ sandbox:
   job_credentials: [none]           # the same for spov jobs create; never inherits credentials
   needs: [npm.acme.com]             # hosts the project needs; a launch says when no routed credential covers one
   job_max_duration: 2h              # a job's wall clock when --max-duration is unset; at least 1m, clamped to your limit (quotas.max_job_duration)
+  job_sync_hold: 1h                 # how long a finished sync job's sandbox is held for spov jobs apply when --hold is unset; 30m by default, at least 1m
   sync: false                       # unset (the default): a plain spov fly inside a checkout syncs it; true: always (--sync); false: never (--no-sync)
   addons: [rust, postgres@16, node@22]  # dotnet, java, php, playwright, postgres, redis, ruby, rust; or bun, go, node, python, uv
   apt: [libvips-dev]                # extra Debian packages

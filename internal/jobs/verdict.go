@@ -547,6 +547,10 @@ func changeNoun(members []store.Deliverable) string {
 //
 // @decision(DL-050)
 func judgeDeliverable(job store.Job, events []store.Event, members []store.Deliverable) GateResult {
+	// @decision(DL-101)
+	if job.Kind == store.JobKindSync {
+		return judgeSync(job, events, members)
+	}
 	res := GateResult{Gate: GateDeliverable}
 	noun := changeNoun(members)
 	if job.Kind == store.JobKindReport {

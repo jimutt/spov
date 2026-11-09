@@ -66,6 +66,28 @@ func (p pgSessions) Lock(ctx context.Context, orgID, id string) error {
 	return nil
 }
 
+// ByIDs reads several sessions in one query.
+//
+// @decision(DL-101)
+func (p pgSessions) ByIDs(ctx context.Context, orgID string, ids []string) (map[string]store.Session, error) {
+	out := make(map[string]store.Session, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := p.s.q.SessionsByIDs(ctx, sqlcgen.SessionsByIDsParams{OrgID: orgID, Ids: ids})
+	if err != nil {
+		return nil, mapErr("sessions by ids", err)
+	}
+	for _, r := range rows {
+		sess, err := sessionFromRow(r)
+		if err != nil {
+			return nil, err
+		}
+		out[sess.ID] = sess
+	}
+	return out, nil
+}
+
 func (p pgSessions) Get(ctx context.Context, orgID, ref string) (store.Session, error) {
 	row, err := p.s.q.GetSessionByID(ctx, sqlcgen.GetSessionByIDParams{ID: ref, OrgID: orgID})
 	if err == nil {

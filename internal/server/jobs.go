@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/auth"
+	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/jobs"
 	"github.com/jimutt/spov/internal/redact"
 	"github.com/jimutt/spov/internal/store"
@@ -109,7 +110,7 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	// and the caller's own timeout is not used.
 	//
 	// @decision(DL-049)
-	clock, timeout, err := jobClock(req.MaxDuration, req.MaxDurationPreferred, profile.DefaultJobDuration, quota)
+	clock, timeout, err := jobClockFor(req, profile.DefaultJobDuration, quota)
 	if err != nil {
 		// @decision(DL-011)
 		var over overLimit
@@ -165,7 +166,15 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	if err := job.Validate(); err != nil {
 		return store.Job{}, errors.Join(ErrInvalidRequest, err)
 	}
-	if err := s.createJobWithinQuota(ctx, sess, job, quota.MaxConcurrentJobs); err != nil {
+	// The bundle is not part of the stored request; it waits in its own
+	// row until the launch applies it.
+	//
+	// @decision(DL-100)
+	var seed []byte
+	if sreq.Sync != nil {
+		seed = sreq.Sync.Bundle
+	}
+	if err := s.createJobWithinQuota(ctx, sess, job, seed, quota.MaxConcurrentJobs); err != nil {
 		return store.Job{}, err
 	}
 	// @decision(DL-013)
@@ -192,7 +201,7 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 // no limit.
 //
 // @decision(DL-045) @decision(DL-009)
-func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, job store.Job, max int) error {
+func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, job store.Job, seed []byte, max int) error {
 	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
 		if max > 0 {
 			n, err := tx.Jobs().CountLive(ctx, job.OrgID, job.OwnerID)
@@ -208,7 +217,14 @@ func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, 
 		if err := tx.Sessions().Create(ctx, sess); err != nil {
 			return err
 		}
-		return tx.Jobs().Create(ctx, job)
+		if err := tx.Jobs().Create(ctx, job); err != nil {
+			return err
+		}
+		// @decision(DL-100)
+		if len(seed) > 0 {
+			return tx.Jobs().PutSeed(ctx, job.OrgID, job.ID, seed)
+		}
+		return nil
 	})
 	if errors.Is(err, store.ErrConflict) {
 		return ErrNameInUse
@@ -243,9 +259,22 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string) (store.Session
 			"the check command is %d bytes; the limit is %d", len(check), MaxCheckBytes))
 	}
 	switch req.Kind {
-	case store.JobKindPR, store.JobKindReport:
+	case store.JobKindPR, store.JobKindReport, store.JobKindSync:
 	default:
-		problems = append(problems, fmt.Sprintf("unknown kind %q; it is one of pr or report", req.Kind))
+		problems = append(problems, fmt.Sprintf("unknown kind %q; it is one of pr, report or sync", req.Kind))
+	}
+	// @decision(DL-100) @decision(DL-101)
+	if req.Kind == store.JobKindSync {
+		if req.Sync == nil {
+			problems = append(problems, "a sync job needs a seed: run `spov jobs create --kind sync` inside a checkout")
+		}
+	} else {
+		if req.Sync != nil {
+			problems = append(problems, "only a sync job takes a seed")
+		}
+		if strings.TrimSpace(req.Hold) != "" {
+			problems = append(problems, "only a sync job takes a hold")
+		}
 	}
 	if len(problems) > 0 {
 		return store.SessionRequest{}, fmt.Errorf("%w: %s", ErrInvalidRequest, strings.Join(problems, "; "))
@@ -255,13 +284,32 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string) (store.Session
 	for i, r := range req.Repos {
 		repos[i] = store.RepoRef(r)
 	}
+	// A sync job lands in its one repository, as a synced session does,
+	// so its check runs there.
+	//
+	// @decision(DL-100)
+	landing := req.Landing
+	if req.Kind == store.JobKindSync && len(repos) == 1 {
+		dir := git.SingleRepoDir(repos[0].Owner, repos[0].Name)
+		if landing != "" && strings.Trim(landing, "/") != dir {
+			return store.SessionRequest{}, fmt.Errorf("%w: a sync job works in its repository's directory, %s, not %s",
+				ErrInvalidRequest, dir, landing)
+		}
+		landing = dir
+	}
+	seed, err := SessionRequest{Sync: req.Sync}.syncToStore()
+	if err != nil {
+		return store.SessionRequest{}, err
+	}
 	sreq := store.SessionRequest{
 		// The job's own id, not a timestamp; see jobSessionName.
 		Name:    jobSessionName(jobID),
 		Repos:   repos,
-		Landing: req.Landing,
-		Image:   req.Image,
-		Egress:  req.Egress,
+		Landing: landing,
+		// @decision(DL-100)
+		Sync:   seed,
+		Image:  req.Image,
+		Egress: req.Egress,
 		// @decision(DL-068)
 		EgressExtraDomains: req.EgressExtraDomains,
 		// A job's timeout follows from its clock (jobClock), so the
@@ -346,6 +394,53 @@ func jobClock(asked string, preferred bool, profileDefault time.Duration, q Quot
 	return clock, min(clock+jobs.WallClockMargin+jobs.SteerHeadroom, ceiling), nil
 }
 
+// jobClockFor is jobClock for the request's kind. A sync job's sandbox
+// also lives through its hold: the clock is resolved leaving room for
+// the shortest hold, and the timeout is the clock, the margin, the
+// steering headroom and the hold, with the headroom cut first and then
+// the hold when the sum is over the cap. An explicit hold that cannot
+// fit is refused; a configured or default one is cut.
+//
+// @decision(DL-049) @decision(DL-101)
+func jobClockFor(req JobRequest, profileDefault time.Duration, q Quotas) (clock, timeout time.Duration, err error) {
+	if req.Kind != store.JobKindSync {
+		return jobClock(req.MaxDuration, req.MaxDurationPreferred, profileDefault, q)
+	}
+	hold := jobs.DefaultSyncHold
+	asked := strings.TrimSpace(req.Hold)
+	if asked != "" {
+		d, perr := time.ParseDuration(asked)
+		if perr != nil || d < jobs.MinSyncHold {
+			err := fmt.Errorf("%w: hold %q is not a duration of at least %s, such as 30m", ErrInvalidRequest, asked, jobs.MinSyncHold)
+			if req.HoldPreferred {
+				err = fmt.Errorf("%w (from sandbox.job_sync_hold in your config)", err)
+			}
+			return 0, 0, err
+		}
+		hold = d
+	}
+	reserved := q
+	reserved.MaxTimeout -= jobs.MinSyncHold
+	if clock, _, err = jobClock(req.MaxDuration, req.MaxDurationPreferred, profileDefault, reserved); err != nil {
+		// The real cap's refusal, when it has one, names the limit the
+		// caller knows.
+		if _, _, real := jobClock(req.MaxDuration, req.MaxDurationPreferred, profileDefault, q); real != nil {
+			return 0, 0, real
+		}
+		return 0, 0, err
+	}
+	room := q.MaxTimeout - clock - jobs.WallClockMargin
+	if hold > room {
+		if asked != "" && !req.HoldPreferred {
+			return 0, 0, overLimit{fmt.Errorf("%w: a hold of %s does not fit in your %s sandbox limit after the job's"+
+				" %s and its launch and delivery; ask for at most %s", ErrInvalidRequest, hold, q.MaxTimeout, clock, room)}
+		}
+		hold = room
+	}
+	headroom := min(jobs.SteerHeadroom, room-hold)
+	return clock, clock + jobs.WallClockMargin + headroom + hold, nil
+}
+
 // parseJobDuration reads a job duration as the API and the profile take
 // it: a Go duration of at least MinWallClock. Empty is zero.
 //
@@ -413,6 +508,25 @@ func (s *Service) JobDeliverables(ctx context.Context, p auth.Principal, ids []s
 		return nil, nil
 	}
 	return s.deps.Store.Jobs().Deliverables(ctx, p.OrgID, ids)
+}
+
+// syncJobSessions reads the sessions of a page's sync jobs and their
+// runs, one query each, for the hold on each job's view.
+//
+// @decision(DL-101)
+func (s *Service) syncJobSessions(ctx context.Context, p auth.Principal, ids []string) (map[string]store.Session, map[string][]store.Run, error) {
+	if len(ids) == 0 {
+		return nil, nil, nil
+	}
+	sessions, err := s.deps.Store.Sessions().ByIDs(ctx, p.OrgID, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	runs, err := s.deps.Store.Runs().List(ctx, p.OrgID, ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sessions, runs, nil
 }
 
 // GetJobFile reads one file a job delivered, under the same rules as
@@ -763,6 +877,12 @@ func (s *Service) DeleteSession(ctx context.Context, p auth.Principal, ref strin
 		return s.Delete(ctx, p, ref)
 	case err != nil:
 		return err
+	// A held sync job's work is lost with its sandbox, so only apply
+	// or release ends it.
+	//
+	// @decision(DL-102)
+	case store.SyncHeld(job, sess):
+		return heldError(job)
 	case job.State.Terminal():
 		// The job is done with; the session is an ordinary one now.
 		return s.Delete(ctx, p, ref)

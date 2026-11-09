@@ -296,8 +296,10 @@ export function jobMark(state: string, partial = false): Mark {
  *
  * @decision(DL-060) @decision(DL-050)
  */
-export function jobWord(state: string, partial = false): string {
-  return state === "succeeded" && partial ? "Succeeded, partly" : stateWord(state);
+export function jobWord(state: string, partial = false, held = false): string {
+  const word = state === "succeeded" && partial ? "Succeeded, partly" : stateWord(state);
+  // A held sync job's sandbox waits for `spov jobs apply`. @decision(DL-101)
+  return held ? `${word}, held` : word;
 }
 
 /** gateMark is a gate outcome's mark. `unverified` stays neutral. @decision(DL-056) */
@@ -329,6 +331,8 @@ export function stateWord(state: string): string {
 export const KIND_NAMES: Record<Job["kind"], string> = {
   pr: "Pull request",
   report: "Report",
+  // @decision(DL-100)
+  sync: "Sync",
 };
 
 /** kindName names a kind, falling back to the API's word. @decision(DL-056) */
@@ -376,7 +380,9 @@ export function listState(s: Session): ListState {
   let why = "";
   if (!live(s)) why = `Sandbox ${s.state}`;
   else if (j.state === "steered" || j.state === "blocked") why = "Waiting for you";
-  return { mark: jobMark(j.state, j.partial), word: jobWord(j.state, j.partial), why };
+  // @decision(DL-101)
+  if (j.held) why = "Held for spov jobs apply";
+  return { mark: jobMark(j.state, j.partial), word: jobWord(j.state, j.partial, j.held), why };
 }
 
 /** The clock bar under a session page's title. @decision(DL-057) */

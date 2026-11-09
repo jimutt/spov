@@ -79,6 +79,13 @@ func AgentsMarkdown(repos []WorkspaceRepo, jobKind string) string {
 	b.WriteString("`CLAUDE.md` if they exist. They carry the conventions your work is judged\n")
 	b.WriteString("against, and nothing else will tell you what they say.\n")
 
+	// @decision(DL-100)
+	if jobKind == "sync" {
+		writeSyncSection(&b, repos)
+		writeScratchSection(&b, jobKind)
+		return b.String()
+	}
+
 	b.WriteString("\n## Opening pull requests\n\n")
 	b.WriteString("Use the CLI named for the repository you are working in; they are not\n")
 	b.WriteString("interchangeable, and are already authenticated:\n\n")
@@ -106,6 +113,27 @@ func AgentsMarkdown(repos []WorkspaceRepo, jobKind string) string {
 	writeRefusalSection(&b)
 	writeScratchSection(&b, jobKind)
 	return b.String()
+}
+
+// writeSyncSection replaces the pull request section for a sync job,
+// whose result is the repository it leaves. A repository with no
+// platform was seeded from a bundle alone and has no origin.
+//
+// @decision(DL-100)
+func writeSyncSection(b *strings.Builder, repos []WorkspaceRepo) {
+	b.WriteString("\n## Where your work goes\n\n")
+	b.WriteString("This is a sync job. Its result is the repository's state when you finish:\n")
+	b.WriteString("the commits on the branch you started on, plus any uncommitted changes. They\n")
+	b.WriteString("are taken back into the checkout the job was started from. Do not push, and\n")
+	b.WriteString("do not open a pull request.\n")
+	for _, r := range repos {
+		if r.Platform == "" {
+			b.WriteString("\nThe repository has no `origin` remote and no git credentials: it was\n")
+			b.WriteString("seeded from the local checkout alone, so fetching or pushing will fail.\n")
+			return
+		}
+	}
+	writeRefusalSection(b)
 }
 
 // writeRefusalSection says what a refused forge command means, so an

@@ -133,6 +133,8 @@ type shownSandbox struct {
 	Needs          []string `json:"needs,omitempty" yaml:"needs,omitempty"`
 	// @decision(DL-049)
 	JobMaxDuration string `json:"job_max_duration,omitempty" yaml:"job_max_duration,omitempty"`
+	// @decision(DL-101)
+	JobSyncHold string `json:"job_sync_hold,omitempty" yaml:"job_sync_hold,omitempty"`
 	// @decision(DL-027)
 	// Sync is null when unset, which is spov fly's automatic mode.
 	//
@@ -217,6 +219,7 @@ func newShownConfig(res config.Result, credentialBackend string, stored *shownSt
 			JobCredentials:     c.Sandbox.JobCredentials,
 			Needs:              c.Sandbox.Needs,
 			JobMaxDuration:     configuredDuration(c.Sandbox.JobMaxDuration),
+			JobSyncHold:        configuredDuration(c.Sandbox.JobSyncHold),
 			Sync:               c.Sandbox.Sync,
 			Addons:             c.Sandbox.Addons,
 			Apt:                c.Sandbox.Apt,

@@ -627,8 +627,12 @@ func (s *Supervisor) deliver(ctx context.Context, job store.Job) error {
 		return err
 	}
 	if !done {
-		// @decision(DL-049)
-		s.stopBoundedRun(ctx, job)
+		// @decision(DL-049) @decision(DL-101)
+		if job.Kind == store.JobKindSync {
+			s.endSyncRun(ctx, job)
+		} else {
+			s.stopBoundedRun(ctx, job)
+		}
 		// Every kind leaves evidence; only a report leaves files.
 		s.collectEvidence(ctx, job)
 	}
@@ -637,6 +641,10 @@ func (s *Supervisor) deliver(ctx context.Context, job store.Job) error {
 	//
 	// @decision(DL-051)
 	if err := s.collectOut(ctx, job); err != nil {
+		return err
+	}
+	// @decision(DL-101)
+	if err := s.collectSync(ctx, job); err != nil {
 		return err
 	}
 	// Both read the stored evidence and the forge, never the sandbox, so
@@ -689,9 +697,13 @@ func (s *Supervisor) concludeJob(ctx context.Context, job store.Job, started tim
 	}
 	// The only thing that stops a finished job's sandbox. It runs after
 	// the verdict is written, so a failure here cannot leave the job
-	// `delivering` with its gates unread.
+	// `delivering` with its gates unread. A finished sync job's sandbox
+	// is held for its state to be taken instead.
 	//
-	// @decision(DL-050)
+	// @decision(DL-050) @decision(DL-101)
+	if job.Kind == store.JobKindSync {
+		return nil
+	}
 	s.terminate(ctx, job)
 	return nil
 }

@@ -182,6 +182,11 @@ func (p Plugin) workspaceNote() string {
 		fmt.Fprintf(&b, "\n- %s at %s (%s, use `%s`)",
 			r.Slug, path.Join(WorkspaceRoot, r.Dir), r.Host, cli)
 	}
+	// @decision(DL-100)
+	if p.Kind == "sync" {
+		b.WriteString("\n\nWork in that directory. " + AgentsFile + " has the rest.")
+		return b.String()
+	}
 	b.WriteString("\n\nWork in those directories. " + AgentsFile +
 		" has the rest, including how to open a pull request.")
 	return b.String()
@@ -194,6 +199,9 @@ func (p Plugin) deliverableNote() string {
 	switch p.Kind {
 	case "report":
 		return reportEpilogue()
+	case "sync":
+		// @decision(DL-100)
+		return syncEpilogue
 	case "pr":
 		// @decision(DL-051)
 		if usesCLI(p.Workspace, CLIGlab) {
@@ -296,6 +304,15 @@ func denialNote(kind string) string {
 	}
 	return note + " If the same call keeps being denied, the job will be ended."
 }
+
+// syncEpilogue tells a sync job that its result is the repository as
+// it leaves it.
+//
+// @decision(DL-100)
+const syncEpilogue = "\n\nThis job's result is the repository's state when you finish: the commits " +
+	"on the branch you started on, plus any changes you have not committed. Work on that " +
+	"branch. You do not need to push or open a pull request, and nothing you push is part " +
+	"of the result."
 
 // branchEpilogue tells a `pr` job to work on a branch. This is a
 // guardrail on an honest run, not a boundary: an agent that ignores it
@@ -531,7 +548,10 @@ func PermissionsForKind(kind string) JobKindPermissions {
 		ActionExternalDirectory,
 	}
 	switch kind {
-	case "pr":
+	// A sync job's work is the same as a pr job's, without the push.
+	//
+	// @decision(DL-100)
+	case "pr", "sync":
 		// A pr job changes files, so it gets the write gate.
 		return JobKindPermissions{
 			Allow: append(append([]string{}, base...), ActionEdit),

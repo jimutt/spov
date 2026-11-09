@@ -1137,6 +1137,8 @@ func (env *Env) wireJobs(deps server.Deps, srv *server.Server, rec *server.Recor
 	deps.Jobs.Open = svc.OpenJobGoal
 	deps.Jobs.Adopt = svc.AdoptJobSandbox
 	deps.Jobs.OpenOut = svc.OpenJobOut
+	// @decision(DL-101)
+	deps.Jobs.InspectSync = svc.InspectJobSync
 	deps.Jobs.Evidence = svc.CollectJobEvidence
 	deps.Jobs.Outcome = svc.CollectJobOutcome
 	deps.Jobs.Mark = svc.MarkJobEvent

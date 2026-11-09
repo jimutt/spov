@@ -47,6 +47,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		envVars  []string
 		wait     bool
 		timeout  time.Duration
+		hold     string
 	)
 	cmd := &cobra.Command{
 		Use:   "create [goal]",
@@ -71,12 +72,12 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 			return createJob(cmd.Context(), env, createOptions{
 				Goal: goal, Kind: kind, Repos: repos, Landing: landing, Check: check,
 				Model: model, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
-				Env: envVars, Wait: wait, Timeout: timeout,
+				Env: envVars, Wait: wait, Timeout: timeout, Hold: hold,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&kind, "kind", string(store.JobKindPR),
-		"what the job delivers: pr or report")
+		"what the job delivers: pr, report, or sync (run inside a checkout: the work comes back with `spov jobs apply`)")
 	cmd.Flags().StringArrayVar(&repos, "repo", nil,
 		"repository to work in as owner/name, or platform:owner/name (repeatable); overrides the configured list")
 	cmd.Flags().StringVar(&landing, "landing", "", "workspace directory to start in (defaults to the workspace root)")
@@ -85,9 +86,16 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 	// example names the repository directory.
 	//
 	// @decision(DL-050) @decision(DL-037)
+	// A sync job lands in its repository, so its check is relative to it.
+	//
+	// @decision(DL-100)
 	cmd.Flags().StringVar(&check, "check", "",
-		"command that verifies the work, run at the workspace root, e.g. ./repo/scripts/check.sh;"+
-			" its exit status is one of the job's gates")
+		"command that verifies the work, run at the workspace root, e.g. ./repo/scripts/check.sh"+
+			" (for --kind sync, in the repository: ./scripts/check.sh); its exit status is one of the job's gates")
+	// @decision(DL-101)
+	cmd.Flags().StringVar(&hold, "hold", "",
+		"for --kind sync: how long the sandbox is kept after the job finishes, for `spov jobs apply`, e.g. 1h;"+
+			" sandbox.job_sync_hold, then 30m, when unset")
 	// @decision(DL-014)
 	cmd.Flags().StringVar(&model, "model", "",
 		"model to run on as provider/model, e.g. anthropic/claude-sonnet-5; your account default when unset")
@@ -143,6 +151,10 @@ type createOptions struct {
 	// @decision(DL-103)
 	Wait    bool
 	Timeout time.Duration
+	// Hold is --hold, a sync job's hold.
+	//
+	// @decision(DL-101)
+	Hold string
 }
 
 // readGoal takes the goal from the argument or from a file. A goal is
@@ -188,9 +200,31 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 	if err != nil {
 		return err
 	}
-	refs, err := env.resolveRepoRefs(ctx, c, cfg, opts.Repos)
-	if err != nil {
-		return err
+	// A sync job is seeded from the checkout it is created in, as a
+	// synced `spov fly`, and checked before the server is asked.
+	//
+	// @decision(DL-100)
+	var refs []server.RepoRef
+	var seed *server.SessionSyncRequest
+	if store.JobKind(opts.Kind) == store.JobKindSync {
+		if len(opts.Repos) > 1 {
+			return errors.New("a sync job works in one repository, the checkout's; drop the extra --repo flags")
+		}
+		ref, req, checkout, err := env.resolveSyncLaunch(ctx, c, cfg, opts.Repos)
+		if err != nil {
+			return fmt.Errorf("a sync job starts from the checkout it is created in: %w", err)
+		}
+		if ref.Platform == "" {
+			env.deferWarning(bundleOnlyNote(checkout))
+		}
+		refs, seed = []server.RepoRef{ref}, req
+	} else {
+		if opts.Hold != "" {
+			return errors.New("--hold is for --kind sync")
+		}
+		if refs, err = env.resolveRepoRefs(ctx, c, cfg, opts.Repos); err != nil {
+			return err
+		}
 	}
 	// The same sandbox shape, image, egress and git identity a `spov fly`
 	// would send, so a `pr` job's commits are attributed to the caller.
@@ -239,6 +273,10 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		// @decision(DL-075)
 		Credentials: opts.Routed.Names, NoCredentials: opts.Routed.None,
 		CredentialsPreferred: sb.JobCredentials, Needs: sb.Needs,
+		// @decision(DL-100) @decision(DL-101)
+		Sync:          seed,
+		Hold:          syncHold(opts, sb.JobSyncHold),
+		HoldPreferred: seed != nil && opts.Hold == "" && sb.JobSyncHold > 0,
 	})
 	if err != nil {
 		return jobError(err)
@@ -265,6 +303,16 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		return waitAndReport(ctx, env, c, job.ID, opts.Timeout, opts.JSON, true)
 	}
 	return nil
+}
+
+// syncHold is the hold a sync job asks for: --hold, else the config's.
+//
+// @decision(DL-101)
+func syncHold(opts createOptions, configured time.Duration) string {
+	if store.JobKind(opts.Kind) != store.JobKindSync {
+		return ""
+	}
+	return firstNonEmpty(opts.Hold, configuredDuration(configured))
 }
 
 // jobError turns the server's refusals into something a terminal can
@@ -301,7 +349,9 @@ func newJobsCmd(env *Env) *cobra.Command {
 	}
 	listJobs(env, list)
 	cmd.AddCommand(newJobsCreateCmd(env), list, newJobsShowCmd(env), newJobsReportCmd(env),
-		newJobsCancelCmd(env), newJobsResumeCmd(env), newJobsInterruptCmd(env), newJobsWaitCmd(env))
+		newJobsCancelCmd(env), newJobsResumeCmd(env), newJobsInterruptCmd(env), newJobsWaitCmd(env),
+		// @decision(DL-102)
+		newJobsApplyCmd(env), newJobsReleaseCmd(env))
 	return cmd
 }
 
@@ -360,7 +410,8 @@ func newJobsCancelCmd(env *Env) *cobra.Command {
 				return err
 			}
 			if err := c.CancelJob(cmd.Context(), args[0]); err != nil {
-				return jobError(err)
+				// @decision(DL-102)
+				return heldCancelHint(cmd.Context(), c, args[0], jobError(err))
 			}
 			_, err = fmt.Fprintf(env.Out, "job %s cancelled\n", args[0])
 			return err
@@ -493,8 +544,9 @@ func writeJobTable(env *Env, jobs []server.JobView, now time.Time) error {
 		return err
 	}
 	for _, j := range jobs {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-			j.ID, j.Kind, j.State, formatAge(now.Sub(j.CreatedAt)), firstLine(j.Goal, 48))
+		// @decision(DL-101)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s%s\t%s\t%s\n",
+			j.ID, j.Kind, j.State, heldMark(j.Sync), formatAge(now.Sub(j.CreatedAt)), firstLine(j.Goal, 48))
 	}
 	return w.Flush()
 }
@@ -513,7 +565,17 @@ func writeJobDetail(env *Env, j server.JobView) error {
 	if j.Partial {
 		state += ", partly"
 	}
+	// @decision(DL-101)
+	state += heldMark(j.Sync)
 	_, _ = fmt.Fprintf(w, "State\t%s\n", state)
+	if j.Sync != nil && j.Sync.Held {
+		held := "held"
+		if j.Sync.HeldUntil != nil {
+			held = "until about " + j.Sync.HeldUntil.Local().Format("15:04")
+		}
+		_, _ = fmt.Fprintf(w, "Held\t%s: spov jobs apply %s takes the work, spov jobs release %s discards it\n",
+			held, j.ID, j.ID)
+	}
 	_, _ = fmt.Fprintf(w, "Session\t%s\n", j.SessionID)
 	_, _ = fmt.Fprintf(w, "Created\t%s\n", j.CreatedAt.Format(time.RFC3339))
 	if j.StartedAt != nil {
@@ -628,6 +690,12 @@ func deliverableLine(d server.DeliverableView) string {
 		line = fmt.Sprintf("%s from %s in %s (%s)", noun, d.Branch, d.Repository, d.Platform)
 		if d.Number > 0 {
 			line = fmt.Sprintf("%s %s in %s (%s)  %s", noun, git.ChangeRef(d.Forge, d.Number), d.Repository, d.Platform, d.URL)
+		}
+	// @decision(DL-101)
+	case store.DeliverableSync:
+		line = fmt.Sprintf("repository %s on %s", d.Repository, d.Branch)
+		if d.HeadCommit != "" {
+			line += " at " + shortSHA(d.HeadCommit)
 		}
 	default:
 		line = fmt.Sprintf("report %s  %q", d.Path, d.Title)

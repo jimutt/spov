@@ -121,6 +121,7 @@ type Job struct {
 	ClockStartedAt     pgtype.Timestamptz
 	ClockUsedSeconds   int64
 	Unfinished         string
+	SyncAppliedAt      pgtype.Timestamptz
 }
 
 type JobDeliverable struct {
@@ -143,6 +144,9 @@ type JobDeliverable struct {
 	UpdatedAt  pgtype.Timestamptz
 	Forge      string
 	ImagesLost bool
+	HeadCommit string
+	Commits    int32
+	Files      int32
 }
 
 type JobFile struct {
@@ -153,6 +157,12 @@ type JobFile struct {
 	Size        int64
 	Body        []byte
 	CreatedAt   pgtype.Timestamptz
+}
+
+type JobSeed struct {
+	JobID     string
+	Bundle    []byte
+	CreatedAt pgtype.Timestamptz
 }
 
 type Message struct {

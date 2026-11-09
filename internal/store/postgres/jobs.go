@@ -58,6 +58,8 @@ func (p pgJobs) Create(ctx context.Context, j store.Job) error {
 		ClockStartedAt:     tsPtr(j.ClockStartedAt),
 		// @decision(DL-049)
 		ClockUsedSeconds: int64(j.ClockUsed / time.Second),
+		// @decision(DL-102)
+		SyncAppliedAt: tsPtr(j.SyncAppliedAt),
 	}))
 }
 
@@ -273,6 +275,60 @@ func (p pgJobs) update(ctx context.Context, s *Store, j store.Job) error {
 	if n == 0 {
 		return store.ErrNotFound
 	}
+	// @decision(DL-100)
+	if stamped.State.Terminal() {
+		if err := s.q.DeleteJobSeed(ctx, sqlcgen.DeleteJobSeedParams{OrgID: j.OrgID, JobID: j.ID}); err != nil {
+			return mapErr("delete job seed", err)
+		}
+	}
+	return nil
+}
+
+// PutSeed writes a sync job's seed; a job that is not the org's is
+// ErrNotFound.
+//
+// @decision(DL-100)
+func (p pgJobs) PutSeed(ctx context.Context, orgID, jobID string, bundle []byte) error {
+	if bundle == nil {
+		bundle = []byte{}
+	}
+	n, err := p.s.q.PutJobSeed(ctx, sqlcgen.PutJobSeedParams{
+		Bundle: bundle, Now: ts(p.s.now()), OrgID: orgID, JobID: jobID,
+	})
+	if err != nil {
+		return mapErr("put job seed", err)
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// @decision(DL-100)
+func (p pgJobs) Seed(ctx context.Context, orgID, jobID string) ([]byte, error) {
+	b, err := p.s.q.GetJobSeed(ctx, sqlcgen.GetJobSeedParams{OrgID: orgID, JobID: jobID})
+	if err != nil {
+		return nil, mapErr("get job seed", err)
+	}
+	return b, nil
+}
+
+// @decision(DL-100)
+func (p pgJobs) DeleteSeed(ctx context.Context, orgID, jobID string) error {
+	return mapErr("delete job seed", p.s.q.DeleteJobSeed(ctx, sqlcgen.DeleteJobSeedParams{OrgID: orgID, JobID: jobID}))
+}
+
+// @decision(DL-102)
+func (p pgJobs) SetSyncApplied(ctx context.Context, orgID, jobID string, at time.Time) error {
+	n, err := p.s.q.SetJobSyncApplied(ctx, sqlcgen.SetJobSyncAppliedParams{
+		AppliedAt: ts(at), Now: ts(p.s.now()), OrgID: orgID, ID: jobID,
+	})
+	if err != nil {
+		return mapErr("set job sync applied", err)
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
 	return nil
 }
 
@@ -299,6 +355,10 @@ func (p pgJobs) PutDeliverable(ctx context.Context, orgID string, d store.Delive
 		Size:       d.Size,
 		Forge:      d.Forge,
 		ImagesLost: d.ImagesLost,
+		// @decision(DL-101)
+		HeadCommit: d.HeadCommit,
+		Commits:    int32(d.Commits),
+		Files:      int32(d.Files),
 		Now:        ts(p.s.now()),
 	})
 	if err != nil {

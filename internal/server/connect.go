@@ -64,6 +64,25 @@ var ErrTooManyMints = errors.New("server: too many connection requests for this 
 // @decision(DL-003)
 var ErrPasswordUnavailable = errors.New("server: password unavailable")
 
+// ConnectClient is Connect for a client of the API: nobody joins a
+// finished job's session, so a held sync job's state stays what was
+// judged until it is taken. The server's own reads (the recorder, the
+// supervisor's seams) go through Connect and are not refused.
+//
+// @decision(DL-101) @decision(DL-030)
+func (s *Service) ConnectClient(ctx context.Context, p auth.Principal, ref string) (Connection, error) {
+	sess, err := s.Get(ctx, p, ref)
+	if err != nil {
+		return Connection{}, err
+	}
+	if job, err := s.deps.Store.Jobs().BySession(ctx, sess.OrgID, sess.ID); err == nil && job.State.Terminal() {
+		return Connection{}, finishedJobError(job)
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return Connection{}, err
+	}
+	return s.Connect(ctx, p, sess.ID)
+}
+
 // Connect mints connection credentials for a running session.
 //
 // @decision(DL-030)
@@ -75,7 +94,6 @@ func (s *Service) Connect(ctx context.Context, p auth.Principal, ref string) (Co
 	if sess.State != store.StateRunning || sess.SandboxID == "" {
 		return Connection{}, fmt.Errorf("%w (state %s)", ErrSessionNotRunning, sess.State)
 	}
-
 	now := s.deps.Now()
 	// Counting and reserving are one atomic step, in one transaction that
 	// holds the session's row, so the limit is exact across replicas.
