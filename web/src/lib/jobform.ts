@@ -26,11 +26,14 @@ export const KINDS = ["pr", "report"] as const satisfies readonly JobKind[];
 /**
  * `satisfies` above catches a kind KINDS invents; this catches one it
  * misses. Exported rather than local so it counts as read by
- * `astro check`'s unused-constant hint.
+ * `astro check`'s unused-constant hint. `sync` is left out on purpose: a
+ * sync job is seeded from a local checkout, which a browser has not got.
+ *
+ * @decision(DL-100)
  */
 export const everyKindIsOffered: Exclude<
   JobKind,
-  (typeof KINDS)[number]
+  (typeof KINDS)[number] | "sync"
 > extends never
   ? true
   : never = true;
@@ -44,7 +47,7 @@ export const everyKindIsOffered: Exclude<
  * naming it here answers a question nobody standing at this form is
  * asking.
  */
-export const KIND_BLURB: Record<JobKind, string> = {
+export const KIND_BLURB: Record<(typeof KINDS)[number], string> = {
   pr: "Pushes a branch and opens a pull request (a merge request on GitLab).",
   report: "Writes a report you read on the session page.",
 };

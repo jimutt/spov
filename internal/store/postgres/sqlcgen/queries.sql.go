@@ -76,9 +76,13 @@ func (q *Queries) CountJobs(ctx context.Context, arg CountJobsParams) (int64, er
 }
 
 const countLiveJobsForOwner = `-- name: CountLiveJobsForOwner :one
-select count(*) from jobs
-where org_id = $1 and owner_id = $2
-  and state not in ('succeeded', 'failed', 'cancelled')
+select count(*) from jobs j
+where j.org_id = $1 and j.owner_id = $2
+  and (j.state not in ('succeeded', 'failed', 'cancelled')
+       or (j.kind = 'sync' and j.state in ('succeeded', 'failed') and exists (
+         select 1 from sessions s
+         where s.id = j.session_id and s.org_id = j.org_id
+           and s.state in ('starting', 'running') and s.sandbox_id <> '')))
 `
 
 type CountLiveJobsForOwnerParams struct {
@@ -87,7 +91,10 @@ type CountLiveJobsForOwnerParams struct {
 }
 
 // Every state that is not terminal, `queued` included: a queued job
-// holds no sandbox yet but is committed to getting one.
+// holds no sandbox yet but is committed to getting one. A held sync job
+// (finished, its session still live with a sandbox) keeps its slot.
+//
+// @decision(DL-101)
 func (q *Queries) CountLiveJobsForOwner(ctx context.Context, arg CountLiveJobsForOwnerParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countLiveJobsForOwner, arg.OrgID, arg.OwnerID)
 	var count int64
@@ -101,7 +108,8 @@ where s.org_id = $1 and s.owner_id = $2 and s.state in ('starting', 'running')
   and not exists (
     select 1 from jobs j
     where j.session_id = s.id and j.org_id = s.org_id
-      and j.state not in ('succeeded', 'failed', 'cancelled')
+      and (j.state not in ('succeeded', 'failed', 'cancelled')
+           or (j.kind = 'sync' and j.state in ('succeeded', 'failed') and s.sandbox_id <> ''))
   )
 `
 
@@ -122,7 +130,10 @@ type CountLiveSessionsForOwnerParams struct {
 // falls back to the session quota here, which is where an unowned live
 // sandbox belongs.
 //
-// @decision(DL-045)
+// A held sync job's session (a finished sync job whose session is live
+// with a sandbox) is excluded too: the job quota counts it.
+//
+// @decision(DL-045) @decision(DL-101)
 func (q *Queries) CountLiveSessionsForOwner(ctx context.Context, arg CountLiveSessionsForOwnerParams) (int64, error) {
 	row := q.db.QueryRow(ctx, countLiveSessionsForOwner, arg.OrgID, arg.OwnerID)
 	var count int64
@@ -225,9 +236,9 @@ const createJob = `-- name: CreateJob :exec
 insert into jobs (id, org_id, owner_id, session_id, kind, state, goal, unfinished, error,
                   attempt, created_at, updated_at, started_at, stopped_at, check_command,
                   check_proposed, cursor, verdict, assessment, model,
-                  max_duration_seconds, clock_started_at, clock_used_seconds)
+                  max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23)
+        $19, $20, $21, $22, $23, $24)
 `
 
 type CreateJobParams struct {
@@ -254,6 +265,7 @@ type CreateJobParams struct {
 	MaxDurationSeconds int64
 	ClockStartedAt     pgtype.Timestamptz
 	ClockUsedSeconds   int64
+	SyncAppliedAt      pgtype.Timestamptz
 }
 
 // EVERY column the row carries, not only the ones a job happens to be
@@ -286,6 +298,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) error {
 		arg.MaxDurationSeconds,
 		arg.ClockStartedAt,
 		arg.ClockUsedSeconds,
+		arg.SyncAppliedAt,
 	)
 	return err
 }
@@ -489,6 +502,22 @@ func (q *Queries) DeleteExpiredDeviceCodes(ctx context.Context, expiresAt pgtype
 	return result.RowsAffected(), nil
 }
 
+const deleteJobSeed = `-- name: DeleteJobSeed :exec
+delete from job_seeds s using jobs j
+where j.id = s.job_id and j.org_id = $1 and s.job_id = $2
+`
+
+type DeleteJobSeedParams struct {
+	OrgID string
+	JobID string
+}
+
+// @decision(DL-100)
+func (q *Queries) DeleteJobSeed(ctx context.Context, arg DeleteJobSeedParams) error {
+	_, err := q.db.Exec(ctx, deleteJobSeed, arg.OrgID, arg.JobID)
+	return err
+}
+
 const deleteOrgCredential = `-- name: DeleteOrgCredential :execrows
 delete from org_credentials where org_id = $1 and platform = $2
 `
@@ -557,7 +586,7 @@ func (q *Queries) DeleteUserCredential(ctx context.Context, arg DeleteUserCreden
 }
 
 const deliverablesForJobs = `-- name: DeliverablesForJobs :many
-select org_id, job_id, key, kind, status, detail, platform, owner, name, branch, number, url, title, path, size, created_at, updated_at, forge, images_lost from job_deliverables
+select org_id, job_id, key, kind, status, detail, platform, owner, name, branch, number, url, title, path, size, created_at, updated_at, forge, images_lost, head_commit, commits, files from job_deliverables
 where org_id = $1 and job_id = any($2::text[])
 order by job_id, key
 `
@@ -597,6 +626,9 @@ func (q *Queries) DeliverablesForJobs(ctx context.Context, arg DeliverablesForJo
 			&i.UpdatedAt,
 			&i.Forge,
 			&i.ImagesLost,
+			&i.HeadCommit,
+			&i.Commits,
+			&i.Files,
 		); err != nil {
 			return nil, err
 		}
@@ -815,7 +847,7 @@ func (q *Queries) GetImagePrune(ctx context.Context) (pgtype.Timestamptz, error)
 }
 
 const getJob = `-- name: GetJob :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished from jobs where org_id = $1 and id = $2
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs where org_id = $1 and id = $2
 `
 
 type GetJobParams struct {
@@ -850,12 +882,13 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (Job, error) {
 		&i.ClockStartedAt,
 		&i.ClockUsedSeconds,
 		&i.Unfinished,
+		&i.SyncAppliedAt,
 	)
 	return i, err
 }
 
 const getJobBySession = `-- name: GetJobBySession :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished from jobs where org_id = $1 and session_id = $2
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs where org_id = $1 and session_id = $2
 `
 
 type GetJobBySessionParams struct {
@@ -890,6 +923,7 @@ func (q *Queries) GetJobBySession(ctx context.Context, arg GetJobBySessionParams
 		&i.ClockStartedAt,
 		&i.ClockUsedSeconds,
 		&i.Unfinished,
+		&i.SyncAppliedAt,
 	)
 	return i, err
 }
@@ -920,7 +954,7 @@ func (q *Queries) GetJobFile(ctx context.Context, arg GetJobFileParams) (JobFile
 }
 
 const getJobForUpdate = `-- name: GetJobForUpdate :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished from jobs where org_id = $1 and id = $2 for update
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs where org_id = $1 and id = $2 for update
 `
 
 type GetJobForUpdateParams struct {
@@ -959,8 +993,27 @@ func (q *Queries) GetJobForUpdate(ctx context.Context, arg GetJobForUpdateParams
 		&i.ClockStartedAt,
 		&i.ClockUsedSeconds,
 		&i.Unfinished,
+		&i.SyncAppliedAt,
 	)
 	return i, err
+}
+
+const getJobSeed = `-- name: GetJobSeed :one
+select s.bundle from job_seeds s join jobs j on j.id = s.job_id
+where j.org_id = $1 and s.job_id = $2
+`
+
+type GetJobSeedParams struct {
+	OrgID string
+	JobID string
+}
+
+// @decision(DL-100)
+func (q *Queries) GetJobSeed(ctx context.Context, arg GetJobSeedParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getJobSeed, arg.OrgID, arg.JobID)
+	var bundle []byte
+	err := row.Scan(&bundle)
+	return bundle, err
 }
 
 const getLiveSessionByName = `-- name: GetLiveSessionByName :one
@@ -1350,7 +1403,7 @@ func (q *Queries) JobExists(ctx context.Context, arg JobExistsParams) (bool, err
 }
 
 const jobsBySessions = `-- name: JobsBySessions :many
-select distinct on (session_id) id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished from jobs
+select distinct on (session_id) id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs
 where org_id = $1 and session_id = any($2::text[])
 order by session_id, id desc
 `
@@ -1400,6 +1453,7 @@ func (q *Queries) JobsBySessions(ctx context.Context, arg JobsBySessionsParams) 
 			&i.ClockStartedAt,
 			&i.ClockUsedSeconds,
 			&i.Unfinished,
+			&i.SyncAppliedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1845,7 +1899,7 @@ func (q *Queries) ListJobFiles(ctx context.Context, arg ListJobFilesParams) ([]L
 }
 
 const listJobs = `-- name: ListJobs :many
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished from jobs
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs
 where org_id = $1
   and ($2::text is null or session_id = $2::text)
   and ($3::text is null or owner_id = $3::text)
@@ -1906,6 +1960,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.ClockStartedAt,
 			&i.ClockUsedSeconds,
 			&i.Unfinished,
+			&i.SyncAppliedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1918,7 +1973,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 }
 
 const listLiveJobs = `-- name: ListLiveJobs :many
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished from jobs
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs
 where state not in ('succeeded', 'failed', 'cancelled')
 order by id desc
 `
@@ -1958,6 +2013,7 @@ func (q *Queries) ListLiveJobs(ctx context.Context) ([]Job, error) {
 			&i.ClockStartedAt,
 			&i.ClockUsedSeconds,
 			&i.Unfinished,
+			&i.SyncAppliedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2450,17 +2506,19 @@ func (q *Queries) PutAllowlistEntry(ctx context.Context, arg PutAllowlistEntryPa
 const putDeliverable = `-- name: PutDeliverable :execrows
 insert into job_deliverables (org_id, job_id, key, kind, status, detail, platform, owner,
                               name, branch, number, url, title, path, size, created_at, updated_at,
-                              forge, images_lost)
+                              forge, images_lost, head_commit, commits, files)
 select j.org_id, j.id, $1, $2, $3, $4, $5, $6, $7, $8,
-       $9, $10, $11, $12, $13, $14, $14, $15, $16
-from jobs j where j.org_id = $17 and j.id = $18
+       $9, $10, $11, $12, $13, $14, $14, $15, $16,
+       $17, $18, $19
+from jobs j where j.org_id = $20 and j.id = $21
 on conflict (job_id, key) do update
 set status = excluded.status, detail = excluded.detail, platform = excluded.platform,
     owner = excluded.owner, name = excluded.name, branch = excluded.branch,
     number = excluded.number, url = excluded.url, title = excluded.title,
     path = excluded.path, size = excluded.size, updated_at = excluded.updated_at,
     forge = case when excluded.forge <> '' then excluded.forge else job_deliverables.forge end,
-    images_lost = excluded.images_lost
+    images_lost = excluded.images_lost, head_commit = excluded.head_commit,
+    commits = excluded.commits, files = excluded.files
 where job_deliverables.status <> 'verified'
 `
 
@@ -2481,6 +2539,9 @@ type PutDeliverableParams struct {
 	Now        pgtype.Timestamptz
 	Forge      string
 	ImagesLost bool
+	HeadCommit string
+	Commits    int32
+	Files      int32
 	OrgID      string
 	JobID      string
 }
@@ -2506,6 +2567,9 @@ func (q *Queries) PutDeliverable(ctx context.Context, arg PutDeliverableParams) 
 		arg.Now,
 		arg.Forge,
 		arg.ImagesLost,
+		arg.HeadCommit,
+		arg.Commits,
+		arg.Files,
 		arg.OrgID,
 		arg.JobID,
 	)
@@ -2540,6 +2604,34 @@ func (q *Queries) PutJobFile(ctx context.Context, arg PutJobFileParams) (int64, 
 		arg.ContentType,
 		arg.Size,
 		arg.Body,
+		arg.Now,
+		arg.OrgID,
+		arg.JobID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const putJobSeed = `-- name: PutJobSeed :execrows
+insert into job_seeds (job_id, bundle, created_at)
+select j.id, $1, $2 from jobs j where j.org_id = $3 and j.id = $4
+on conflict (job_id) do update set bundle = excluded.bundle
+`
+
+type PutJobSeedParams struct {
+	Bundle []byte
+	Now    pgtype.Timestamptz
+	OrgID  string
+	JobID  string
+}
+
+// A sync job's seed, written in the create's transaction.
+// @decision(DL-100)
+func (q *Queries) PutJobSeed(ctx context.Context, arg PutJobSeedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, putJobSeed,
+		arg.Bundle,
 		arg.Now,
 		arg.OrgID,
 		arg.JobID,
@@ -2831,6 +2923,57 @@ func (q *Queries) SessionCancelRequested(ctx context.Context, arg SessionCancelR
 	return cancelled, err
 }
 
+const sessionsByIDs = `-- name: SessionsByIDs :many
+select id, org_id, owner_id, name, state, sandbox_id, request, clones, landing, error, created_at, updated_at, stopped_at, cancel_requested_at, credentials, git_token_minted_at, git_token_expires_at, opencode_grant, booted, routed_credentials from sessions where org_id = $1 and id = any($2::text[])
+`
+
+type SessionsByIDsParams struct {
+	OrgID string
+	Ids   []string
+}
+
+// @decision(DL-101)
+func (q *Queries) SessionsByIDs(ctx context.Context, arg SessionsByIDsParams) ([]Session, error) {
+	rows, err := q.db.Query(ctx, sessionsByIDs, arg.OrgID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Session
+	for rows.Next() {
+		var i Session
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.OwnerID,
+			&i.Name,
+			&i.State,
+			&i.SandboxID,
+			&i.Request,
+			&i.Clones,
+			&i.Landing,
+			&i.Error,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StoppedAt,
+			&i.CancelRequestedAt,
+			&i.Credentials,
+			&i.GitTokenMintedAt,
+			&i.GitTokenExpiresAt,
+			&i.OpencodeGrant,
+			&i.Booted,
+			&i.RoutedCredentials,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setImagePrune = `-- name: SetImagePrune :exec
 insert into image_prunes (id, pruned_at) values (true, $1)
 on conflict (id) do update set pruned_at = excluded.pruned_at
@@ -2839,6 +2982,32 @@ on conflict (id) do update set pruned_at = excluded.pruned_at
 func (q *Queries) SetImagePrune(ctx context.Context, prunedAt pgtype.Timestamptz) error {
 	_, err := q.db.Exec(ctx, setImagePrune, prunedAt)
 	return err
+}
+
+const setJobSyncApplied = `-- name: SetJobSyncApplied :execrows
+update jobs set sync_applied_at = $1, updated_at = $2
+where org_id = $3 and id = $4
+`
+
+type SetJobSyncAppliedParams struct {
+	AppliedAt pgtype.Timestamptz
+	Now       pgtype.Timestamptz
+	OrgID     string
+	ID        string
+}
+
+// @decision(DL-102)
+func (q *Queries) SetJobSyncApplied(ctx context.Context, arg SetJobSyncAppliedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setJobSyncApplied,
+		arg.AppliedAt,
+		arg.Now,
+		arg.OrgID,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setMintExpiry = `-- name: SetMintExpiry :execrows

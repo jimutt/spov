@@ -198,3 +198,29 @@ func TestTheGuideNamesGlabForGitLab(t *testing.T) {
 		t.Errorf("guide:\n%s", md)
 	}
 }
+
+// A sync job's guide says where its work goes instead of how to open a
+// pull request, and a repository seeded from a bundle alone says it has
+// no origin.
+//
+// @decision(DL-100)
+func TestASyncJobsGuideSaysItsWorkStaysInTheRepository(t *testing.T) {
+	forged := AgentsMarkdown([]WorkspaceRepo{
+		{Slug: "acme/api", Dir: "api", Platform: "gh", Host: "github.com", CLI: CLIGh},
+	}, "sync")
+	for _, want := range []string{"This is a sync job", "Do not push", "When a forge command is refused"} {
+		if !strings.Contains(forged, want) {
+			t.Errorf("sync guide does not say %q:\n%s", want, forged)
+		}
+	}
+	if strings.Contains(forged, "Opening pull requests") || strings.Contains(forged, "gh pr create") {
+		t.Errorf("sync guide tells the agent to open a pull request:\n%s", forged)
+	}
+	if strings.Contains(forged, "no `origin`") {
+		t.Errorf("a cloned repository is said to have no origin:\n%s", forged)
+	}
+	local := AgentsMarkdown([]WorkspaceRepo{{Slug: "local/app", Dir: "app", Host: "local"}}, "sync")
+	if !strings.Contains(local, "no `origin` remote and no git credentials") {
+		t.Errorf("a bundle-only repository is not said to have no origin:\n%s", local)
+	}
+}

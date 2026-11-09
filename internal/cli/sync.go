@@ -219,6 +219,14 @@ func (e *Env) verifySyncCheckout(ctx context.Context, cfg config.Config, view se
 	if view.Job != nil {
 		return git.LocalCheckout{}, fmt.Errorf("--sync is for interactive sessions, not autonomous jobs")
 	}
+	return e.verifyCheckoutOf(ctx, cfg, view)
+}
+
+// verifyCheckoutOf is verifySyncCheckout for any session, a sync job's
+// included.
+//
+// @decision(DL-027) @decision(DL-102)
+func (e *Env) verifyCheckoutOf(ctx context.Context, cfg config.Config, view server.SessionView) (git.LocalCheckout, error) {
 	want, ok := singleViewRepo(view)
 	if !ok {
 		n := len(view.Repos)
@@ -301,18 +309,33 @@ func (e *Env) syncSessionBack(ctx context.Context, c *client.Client, cfg config.
 	if err != nil {
 		return fmt.Errorf("exporting sandbox state: %w", err)
 	}
+	res, err := landExport(syncCtx, checkout, view, exportedView)
+	if err != nil {
+		return err
+	}
+	printSyncResult(e, res)
+	return nil
+}
 
+// landExport applies an exported state to the local checkout, in place
+// when it is still where the session started, else on a branch named
+// for the session.
+//
+// @decision(DL-027)
+func landExport(ctx context.Context, checkout git.LocalCheckout, view server.SessionView, exportedView server.SyncExportView) (git.SyncResult, error) {
+	syncCtx := ctx
+	var err error
 	var bundleBytes, tarBytes []byte
 	if exportedView.Bundle != "" {
 		bundleBytes, err = base64.StdEncoding.DecodeString(exportedView.Bundle)
 		if err != nil {
-			return fmt.Errorf("decoding exported bundle: %w", err)
+			return git.SyncResult{}, fmt.Errorf("decoding exported bundle: %w", err)
 		}
 	}
 	if exportedView.WorktreeTar != "" {
 		tarBytes, err = base64.StdEncoding.DecodeString(exportedView.WorktreeTar)
 		if err != nil {
-			return fmt.Errorf("decoding exported worktree archive: %w", err)
+			return git.SyncResult{}, fmt.Errorf("decoding exported worktree archive: %w", err)
 		}
 	}
 	baseCommit := exportedView.BaseCommit
@@ -332,7 +355,7 @@ func (e *Env) syncSessionBack(ctx context.Context, c *client.Client, cfg config.
 		}
 	}
 
-	res, err := git.ApplySync(syncCtx, checkout.Root, displayName(view), startBranch, git.ExportedState{
+	return git.ApplySync(syncCtx, checkout.Root, displayName(view), startBranch, git.ExportedState{
 		Branch:      exportedView.Branch,
 		BaseCommit:  baseCommit,
 		HeadCommit:  exportedView.HeadCommit,
@@ -340,11 +363,6 @@ func (e *Env) syncSessionBack(ctx context.Context, c *client.Client, cfg config.
 		WorktreeTar: tarBytes,
 		Deleted:     exportedView.Deleted,
 	})
-	if err != nil {
-		return err
-	}
-	printSyncResult(e, res)
-	return nil
 }
 
 // printSyncResult reports how the sandbox's repository state landed

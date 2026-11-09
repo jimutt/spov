@@ -68,6 +68,11 @@ type SessionStore interface {
 	// Get resolves a session by ID or, failing that, by name among the
 	// org's live sessions.
 	Get(ctx context.Context, orgID, ref string) (Session, error)
+	// ByIDs reads several sessions by ID in one query, keyed by ID. An
+	// ID that is not the org's is absent.
+	//
+	// @decision(DL-101)
+	ByIDs(ctx context.Context, orgID string, ids []string) (map[string]Session, error)
 	// Lock holds the session's row, by ID, until the enclosing Tx ends, so
 	// a count of its mints and the insert of a new one are one step on
 	// every replica. Outside Tx it only checks that the session exists.
@@ -1238,6 +1243,11 @@ const (
 	JobKindPR JobKind = "pr"
 	// JobKindReport delivers Markdown reports read out of the sandbox.
 	JobKindReport JobKind = "report"
+	// JobKindSync delivers the repository's state, seeded from a local
+	// checkout and taken back into one.
+	//
+	// @decision(DL-100)
+	JobKindSync JobKind = "sync"
 )
 
 // Job is one piece of supervised work: a goal, the session running it,
@@ -1356,6 +1366,11 @@ type Job struct {
 	MaxDuration    time.Duration
 	ClockStartedAt *time.Time
 	ClockUsed      time.Duration
+	// SyncAppliedAt is when an apply released a held sync job's
+	// sandbox; nil otherwise. Only SetSyncApplied writes it.
+	//
+	// @decision(DL-101) @decision(DL-102)
+	SyncAppliedAt *time.Time
 }
 
 // ClockCounts reports whether a job in this state uses its wall clock.
@@ -1390,7 +1405,7 @@ func (j Job) Validate() error {
 		return fmt.Errorf("%w: a job with no goal has nothing to supervise", ErrInvalidJob)
 	}
 	switch j.Kind {
-	case JobKindPR, JobKindReport:
+	case JobKindPR, JobKindReport, JobKindSync:
 	default:
 		return fmt.Errorf("%w: unknown kind %q", ErrInvalidJob, j.Kind)
 	}
@@ -1568,6 +1583,32 @@ type JobStore interface {
 	JobFile(ctx context.Context, orgID, jobID, path string) (JobFile, error)
 	// JobFiles lists a job's collected files without their bodies.
 	JobFiles(ctx context.Context, orgID, jobID string) ([]JobFile, error)
+
+	// PutSeed stores a sync job's seed bundle, in the create's
+	// transaction. Seed reads it back, ErrNotFound when none is kept,
+	// and DeleteSeed drops it. Update drops it too, in its own write,
+	// when the job reaches a terminal state, so no seed outlives its
+	// job.
+	//
+	// @decision(DL-100)
+	PutSeed(ctx context.Context, orgID, jobID string, bundle []byte) error
+	Seed(ctx context.Context, orgID, jobID string) ([]byte, error)
+	DeleteSeed(ctx context.Context, orgID, jobID string) error
+	// SetSyncApplied records when an apply released a held sync job.
+	//
+	// @decision(DL-102)
+	SetSyncApplied(ctx context.Context, orgID, jobID string, at time.Time) error
+}
+
+// SyncHeld reports whether a sync job is held: finished, with its
+// session still live and holding a sandbox. It is derived, never
+// stored, and the job quota's count and the session quota's
+// exclusion use the same rule.
+//
+// @decision(DL-101)
+func SyncHeld(j Job, sess Session) bool {
+	return j.Kind == JobKindSync && (j.State == JobSucceeded || j.State == JobFailed) &&
+		sess.State.Live() && sess.SandboxID != ""
 }
 
 // DeliverableKind is what a member of a job's inventory is.
@@ -1578,7 +1619,15 @@ type DeliverableKind string
 const (
 	DeliverablePR     DeliverableKind = "pr"
 	DeliverableReport DeliverableKind = "report"
+	// DeliverableSync is a sync job's repository state, measured at
+	// delivery (DL-101).
+	DeliverableSync DeliverableKind = "sync"
 )
+
+// SyncDeliverableKey is a sync job's one member's key.
+//
+// @decision(DL-101)
+const SyncDeliverableKey = "sync"
 
 // DeliverableStatus is what spov found about one member.
 //
@@ -1641,6 +1690,14 @@ type Deliverable struct {
 	//
 	// @decision(DL-051)
 	ImagesLost bool
+	// HeadCommit, Commits and Files are a sync member's: the repository's
+	// HEAD, the commits since the base and the changed files. Size holds
+	// the export's bytes.
+	//
+	// @decision(DL-101)
+	HeadCommit string
+	Commits    int
+	Files      int
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }

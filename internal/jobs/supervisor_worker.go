@@ -87,6 +87,11 @@ type Supervisor struct {
 	//
 	// @decision(DL-045) @decision(DL-051)
 	OpenOut OpenOut
+	// InspectSync measures a sync job's repository at delivery. Nil
+	// leaves its deliverable unread.
+	//
+	// @decision(DL-101)
+	InspectSync InspectSync
 	// Evidence reads the plugin's own record of the run out of its
 	// sandbox, at job end. Nil collects none.
 	//
@@ -143,9 +148,10 @@ type Supervisor struct {
 	// @decision(DL-054)
 	Loop func(ctx context.Context, p auth.Principal, job store.Job, paused bool) error
 	// EndRun stops a job's loop for good and interrupts its turn, so
-	// what delivery collects is at rest. Used at the wall clock only.
+	// what delivery collects is at rest. Used at the wall clock, and
+	// before every sync job's repository is read.
 	//
-	// @decision(DL-049)
+	// @decision(DL-049) @decision(DL-101)
 	EndRun func(ctx context.Context, job store.Job) error
 	// Now is the supervisor's clock, for the wall clock; time.Now when
 	// nil.

@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -126,7 +127,26 @@ func stopAll(ctx context.Context, env *Env, c *client.Client) error {
 		}
 	}
 	sessions = liveOnly(sessions)
+	// A held sync job's sandbox holds work nothing else has, so --all
+	// leaves it and names the two ways to end it.
+	//
+	// @decision(DL-102)
+	var held []server.SessionView
+	sessions = slices.DeleteFunc(sessions, func(s server.SessionView) bool {
+		if s.Job != nil && s.Job.Held {
+			held = append(held, s)
+			return true
+		}
+		return false
+	})
+	for _, s := range held {
+		_, _ = fmt.Fprintf(env.Err, "spov: left %s: job %s's sandbox is held; `spov jobs apply %s` takes its work,"+
+			" `spov jobs release %s` discards it\n", displayName(s), s.Job.ID, s.Job.ID, s.Job.ID)
+	}
 	if len(sessions) == 0 {
+		if len(held) > 0 {
+			return nil
+		}
 		_, err := fmt.Fprintln(env.Out, "No running spov sessions.")
 		return err
 	}

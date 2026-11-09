@@ -2880,6 +2880,174 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("CountLive for an unknown owner = %d, %v", got, err)
 		}
 	},
+	// A held sync job keeps its job slot and its session leaves the
+	// session count, until the session ends.
+	//
+	// @decision(DL-101)
+	"jobs: a held sync job keeps its job slot until its session ends": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		finish := func(name string, sandbox string, state store.JobState) (store.Session, store.Job) {
+			t.Helper()
+			sess := session(store.NewID(t0), "org", "u1", name, store.StateRunning)
+			sess.SandboxID = sandbox
+			if err := s.Sessions().Create(ctx, sess); err != nil {
+				t.Fatal(err)
+			}
+			j := job(store.NewID(t0), "org", "u1", sess.ID, store.JobQueued)
+			j.Kind = store.JobKindSync
+			if err := s.Jobs().Create(ctx, j); err != nil {
+				t.Fatal(err)
+			}
+			for _, st := range pathToJobState(t, state) {
+				j.State = st
+				if err := s.Jobs().Update(ctx, j); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return sess, j
+		}
+		counts := func() (jobs, sessions int) {
+			t.Helper()
+			jobs, err := s.Jobs().CountLive(ctx, "org", "u1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sessions, err = s.Sessions().CountLive(ctx, "org", "u1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return jobs, sessions
+		}
+		held, _ := finish("held", "sb-held", store.JobSucceeded)
+		finish("failed", "sb-failed", store.JobFailed)
+		// A cancelled sync job is never held, and one with no sandbox
+		// has nothing to hold: both sessions count as sessions.
+		finish("cancelled", "sb-cancelled", store.JobCancelled)
+		finish("nosandbox", "", store.JobSucceeded)
+		if jobs, sessions := counts(); jobs != 2 || sessions != 2 {
+			t.Fatalf("counts = %d jobs, %d sessions; want 2 held jobs and 2 sessions", jobs, sessions)
+		}
+		if _, err := s.Sessions().MarkStopped(ctx, "org", held.ID, store.StateStopped, t0, ""); err != nil {
+			t.Fatal(err)
+		}
+		if jobs, sessions := counts(); jobs != 1 || sessions != 2 {
+			t.Errorf("counts after a release = %d jobs, %d sessions; want 1 and 2", jobs, sessions)
+		}
+	},
+	// @decision(DL-100)
+	"jobs: a sync job's seed is kept until it is deleted or the job ends": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sess := runningSession(t, s, "org", "u1", "s1")
+		j := job(store.NewID(t0), "org", "u1", sess.ID, store.JobQueued)
+		j.Kind = store.JobKindSync
+		if err := s.Jobs().Create(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Jobs().Seed(ctx, "org", j.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("Seed before any = %v, want ErrNotFound", err)
+		}
+		if err := s.Jobs().PutSeed(ctx, "other", j.ID, []byte("x")); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("PutSeed for another org = %v, want ErrNotFound", err)
+		}
+		// A rolled-back transaction keeps no seed.
+		_ = s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Jobs().PutSeed(ctx, "org", j.ID, []byte("rolled back")); err != nil {
+				t.Fatal(err)
+			}
+			return errors.New("roll back")
+		})
+		if _, err := s.Jobs().Seed(ctx, "org", j.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("Seed after a rollback = %v, want ErrNotFound", err)
+		}
+		bundle := []byte("a bundle\x00with bytes")
+		if err := s.Jobs().PutSeed(ctx, "org", j.ID, bundle); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Jobs().Seed(ctx, "org", j.ID)
+		if err != nil || string(got) != string(bundle) {
+			t.Fatalf("Seed = %q, %v", got, err)
+		}
+		if _, err := s.Jobs().Seed(ctx, "other", j.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Seed from another org = %v, want ErrNotFound", err)
+		}
+		// A move that is not terminal keeps it; a terminal one drops it.
+		j.State = store.JobProvisioning
+		if err := s.Jobs().Update(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Jobs().Seed(ctx, "org", j.ID); err != nil {
+			t.Fatalf("Seed after provisioning = %v", err)
+		}
+		j.State = store.JobCancelled
+		if err := s.Jobs().Update(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Jobs().Seed(ctx, "org", j.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Seed after the job ended = %v, want ErrNotFound", err)
+		}
+
+		other := runningSession(t, s, "org", "u1", "s2")
+		k := job(store.NewID(t0.Add(time.Second)), "org", "u1", other.ID, store.JobQueued)
+		k.Kind = store.JobKindSync
+		if err := s.Jobs().Create(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Jobs().PutSeed(ctx, "org", k.ID, bundle); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Jobs().DeleteSeed(ctx, "org", k.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Jobs().Seed(ctx, "org", k.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("Seed after DeleteSeed = %v, want ErrNotFound", err)
+		}
+	},
+	// @decision(DL-101) @decision(DL-102)
+	"jobs: a sync job's applied time and its deliverable round-trip": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sess := runningSession(t, s, "org", "u1", "s1")
+		j := job(store.NewID(t0), "org", "u1", sess.ID, store.JobQueued)
+		j.Kind = store.JobKindSync
+		if err := s.Jobs().Create(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		at := t0.Add(time.Hour)
+		if err := s.Jobs().SetSyncApplied(ctx, "org", j.ID, at); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Jobs().SetSyncApplied(ctx, "other", j.ID, at); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("SetSyncApplied for another org = %v, want ErrNotFound", err)
+		}
+		// An update built without it keeps it.
+		j.State = store.JobProvisioning
+		if err := s.Jobs().Update(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Jobs().Get(ctx, "org", j.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Kind != store.JobKindSync || got.SyncAppliedAt == nil || !got.SyncAppliedAt.Equal(at) {
+			t.Errorf("job = kind %s, applied %v; want sync, %v", got.Kind, got.SyncAppliedAt, at)
+		}
+		d := store.Deliverable{
+			JobID: j.ID, Key: store.SyncDeliverableKey, Kind: store.DeliverableSync,
+			Status: store.DeliverableVerified, Owner: "acme", Name: "app", Branch: "main",
+			HeadCommit: strings.Repeat("a", 40), Commits: 3, Files: 7, Size: 4096,
+		}
+		if _, err := s.Jobs().PutDeliverable(ctx, "org", d); err != nil {
+			t.Fatal(err)
+		}
+		all, err := s.Jobs().Deliverables(ctx, "org", []string{j.ID})
+		if err != nil || len(all[j.ID]) != 1 {
+			t.Fatalf("Deliverables = %v, %v", all, err)
+		}
+		back := all[j.ID][0]
+		if back.Kind != store.DeliverableSync || back.HeadCommit != d.HeadCommit ||
+			back.Commits != 3 || back.Files != 7 || back.Size != 4096 {
+			t.Errorf("a sync deliverable lost a field: %+v", back)
+		}
+	},
 	"jobs: the supervisor's cursor round-trips and survives an update": func(t *testing.T, s store.Store) {
 		ctx := context.Background()
 		sess := runningSession(t, s, "org", "u1", "s1")

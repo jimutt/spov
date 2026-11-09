@@ -66,6 +66,7 @@
     pullRequestName,
     pullRequests,
     reports,
+    syncState,
     sizeText,
     type Deliverable,
   } from '../lib/deliverables';
@@ -83,8 +84,10 @@
   } from '../lib/steer';
   import {
     CancelQuestion,
+    DiscardQuestion,
     EndQuestion,
     cancellable,
+    discardable,
     endable,
     ended,
   } from '../lib/jobcontrols';
@@ -545,6 +548,8 @@
   // @decision(DL-051)
   const jobPRs = $derived(pullRequests(job));
   const jobReports = $derived(reports(job));
+  // @decision(DL-101)
+  const jobSync = $derived(syncState(job));
   // @decision(DL-049)
   const jobClock = $derived(wallClock(job));
   // @decision(DL-057)
@@ -607,6 +612,20 @@
       void loadTranscript(ctl.signal);
     });
   });
+  // Discard held work ends a held sync job's sandbox without applying.
+  //
+  // @decision(DL-101) @decision(DL-102)
+  let discardFailure = $state<unknown>(undefined);
+  async function discardHeld(): Promise<void> {
+    discardFailure = undefined;
+    try {
+      await ended(() => api.POST('/api/v1/jobs/{id}/release', { params: { path: { id: job?.id ?? '' } } }));
+    } catch (err) {
+      discardFailure = err;
+    } finally {
+      await reread();
+    }
+  }
   async function endSession(): Promise<void> {
     endFailure = undefined;
     try {
@@ -1302,7 +1321,7 @@
         </h2>
         <StateMark mark={sessionMark(s.state)} word={stateWord(s.state)} />
         <!-- @decision(DL-057) -->
-        {#if endable(s.state, jobs.loaded, job?.state)}
+        {#if endable(s.state, jobs.loaded, job?.state, job?.sync?.held)}
           <div class="mt-3">
             <ConfirmAct
               label="End session"
@@ -1401,7 +1420,7 @@
         <section>
           <h2 class="m-0 mb-2 flex flex-wrap items-baseline justify-between gap-x-2 text-base font-semibold">
             <span>{kindName(job.kind)} job</span>
-            <StateMark class="text-md font-normal" mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial)} />
+            <StateMark class="text-md font-normal" mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial, job.sync?.held)} />
           </h2>
           <!-- @decision(DL-049) -->
           {#if jobClock?.endsAt}
@@ -1430,6 +1449,26 @@
             <button type="button" class="{textButton} mt-1" aria-expanded={goalOpen} onclick={() => (goalOpen = !goalOpen)}>
               {goalOpen ? 'Show less' : 'Show all'}
             </button>
+          {/if}
+
+          {#if job.sync?.held}
+            <!-- @decision(DL-101) -->
+            <p class="mt-2.5 mb-0 text-sm leading-snug" data-testid="job-held">
+              Held{job.sync.held_until ? ` until ${clock(job.sync.held_until)}` : ''} for its work to be taken:
+              run <code class="[overflow-wrap:anywhere]">spov jobs apply {job.id}</code> in its checkout.
+            </p>
+          {/if}
+
+          {#if jobSync}
+            <!-- What a sync job's repository measured at delivery. @decision(DL-101) -->
+            <h3 class="mt-4 mb-1.5 text-md font-semibold">Repository</h3>
+            <div class="grid grid-cols-[1fr_auto] gap-x-2" data-testid="job-sync">
+              <span class="font-medium [overflow-wrap:anywhere]">{jobSync.repository}{jobSync.branch ? ` on ${jobSync.branch}` : ''}</span>
+              <StateMark mark={deliverableMark(jobSync.status)} word={STATUS_WORDS[jobSync.status]} />
+              {#if jobSync.detail}
+                <span class="col-span-2 text-sm leading-snug text-soft [overflow-wrap:anywhere]">{jobSync.detail}</span>
+              {/if}
+            </div>
           {/if}
 
           {#if job.partial}
@@ -1561,6 +1600,21 @@
           {/if}
           {#if cancelFailure}
             <div class="mt-3"><Problem error={cancelFailure} what="cancelling the job" /></div>
+          {/if}
+          <!-- @decision(DL-101) -->
+          {#if discardable(job)}
+            <div class="mt-3">
+              <ConfirmAct
+                label="Discard held work"
+                question={DiscardQuestion}
+                yes="Yes, discard it"
+                run={discardHeld}
+                testid="discard-held"
+              />
+            </div>
+          {/if}
+          {#if discardFailure}
+            <div class="mt-3"><Problem error={discardFailure} what="discarding the held work" /></div>
           {/if}
         </section>
       {/if}

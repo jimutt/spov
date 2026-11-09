@@ -731,3 +731,50 @@ func TestReconcileEndsAStrayRunAndLeavesAnInFlightOne(t *testing.T) {
 		t.Errorf("%d sessions: a later run was adopted", len(all))
 	}
 }
+
+// A held sync job's session is live and records its sandbox, so the
+// reconciler leaves both alone; once the sandbox ends, the session is
+// stopped as any other, which is the release.
+//
+// @decision(DL-101)
+func TestReconcileLeavesAHeldSyncSandboxAlone(t *testing.T) {
+	r, fake, mem, _ := fixture(t)
+	ctx := context.Background()
+	job := store.Job{ID: store.NewID(t0), OrgID: "org", OwnerID: "u1",
+		Kind: store.JobKindSync, State: store.JobQueued, Goal: "do the thing"}
+	h := createForJob(t, fake, "sb-01HELD", job.ID)
+	info, err := h.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := store.Session{ID: store.NewID(t0), OrgID: "org", OwnerID: "u1",
+		Name: "job-held", State: store.StateRunning, SandboxID: info.ID}
+	if err := mem.Sessions().Create(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	job.SessionID = sess.ID
+	if err := mem.Jobs().Create(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range []store.JobState{store.JobProvisioning, store.JobRunning, store.JobDelivering, store.JobSucceeded} {
+		job.State = st
+		if err := mem.Jobs().Update(ctx, job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mem.Sessions().Get(ctx, "org", sess.ID); got.State != store.StateRunning || fake.Running() != 1 {
+		t.Fatalf("after a pass the held session is %s with %d sandboxes running", got.State, fake.Running())
+	}
+	if err := h.Terminate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := mem.Sessions().Get(ctx, "org", sess.ID); got.State.Live() {
+		t.Errorf("a held session whose sandbox ended is still %s", got.State)
+	}
+}

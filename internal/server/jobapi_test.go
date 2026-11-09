@@ -1367,7 +1367,7 @@ func TestTheSessionBadgeSaysASuccessWasPartial(t *testing.T) {
 		{"no verdict yet", store.JobRunning, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			v := sessionJobView(store.Job{ID: "j", Kind: store.JobKindReport, State: tc.state, Verdict: tc.verdict})
+			v := sessionJobView(store.Job{ID: "j", Kind: store.JobKindReport, State: tc.state, Verdict: tc.verdict}, store.Session{})
 			if v.Partial != tc.want {
 				t.Errorf("Partial = %v, want %v", v.Partial, tc.want)
 			}

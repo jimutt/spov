@@ -101,6 +101,10 @@ export function pullRequests(job: Job | undefined): Deliverable[] {
 export function reports(job: Job | undefined): Deliverable[] {
   return (job?.deliverables ?? []).filter((d) => d.kind === "report");
 }
+/** syncState is a sync job's one member, its measured repository. @decision(DL-101) */
+export function syncState(job: Job | undefined): Deliverable | undefined {
+  return (job?.deliverables ?? []).find((d) => d.kind === "sync");
+}
 
 /**
  * changeNoun is what a forge calls a change request: a merge request on
@@ -174,6 +178,8 @@ export function sizeText(bytes: number | undefined): string {
 export function deliveredSummary(job: Job): string {
   const verified = (job.deliverables ?? []).filter((d) => d.status === "verified");
   if (!verified.length) return "";
+  // @decision(DL-101)
+  if (job.kind === "sync") return job.partial ? "Repository changes, partly done" : "Repository changes";
   // @decision(DL-051)
   const noun = job.kind === "pr" ? changeNounOf(verified) : "report";
   const text = `${verified.length} ${noun}${verified.length === 1 ? "" : "s"}`;

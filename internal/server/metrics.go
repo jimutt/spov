@@ -113,6 +113,25 @@ func (s *Service) metricsSnapshot(ctx context.Context) (telemetry.Snapshot, erro
 			snap.OldestQueued = max(snap.OldestQueued, now.Sub(j.CreatedAt))
 		}
 	}
+	// A live session whose job has finished is still a job's: a held
+	// sync job's, or one whose terminate failed. Read once per org.
+	//
+	// @decision(DL-101) @decision(DL-011)
+	others := map[string][]string{}
+	for _, sess := range sessions {
+		if !jobSessions[sess.ID] {
+			others[sess.OrgID] = append(others[sess.OrgID], sess.ID)
+		}
+	}
+	for org, ids := range others {
+		finished, err := s.deps.Store.Jobs().BySessions(ctx, org, ids)
+		if err != nil {
+			return telemetry.Snapshot{}, err
+		}
+		for id := range finished {
+			jobSessions[id] = true
+		}
+	}
 	for _, sess := range sessions {
 		kind := telemetry.KindInteractive
 		if jobSessions[sess.ID] {

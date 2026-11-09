@@ -17,20 +17,25 @@ spov jobs create --repo acme/app --check './app/scripts/check.sh' \
   "Fix the flaky retry test in internal/queue and open a pull request"
 
 spov jobs create --kind report --repo acme/app --goal-file audit.md
+
+# inside a checkout, with nothing uncommitted: the work comes back here
+spov jobs create --kind sync --wait "Port the CLI tests to the new fixture"
+spov jobs apply <id>
 ```
 
 ## Creating one
 
 | Flag | Effect |
 |---|---|
-| `--kind pr\|report` | What the job delivers: pull requests (merge requests on GitLab; the default), recorded one by one in the repositories you selected, or Markdown reports, one file each in `/workspace/out/` |
-| `--check <command>` | A command that verifies the work, run at `/workspace`. Its exit status is one of the job's gates. |
+| `--kind pr\|report\|sync` | What the job delivers: pull requests (merge requests on GitLab; the default), recorded one by one in the repositories you selected; Markdown reports, one file each in `/workspace/out/`; or the repository's state, taken back into the checkout you created it in ([Sync jobs](#sync-jobs)) |
+| `--check <command>` | A command that verifies the work, run at `/workspace` (in the repository for a sync job). Its exit status is one of the job's gates. |
 | `--max-duration 45m` | How long the job may run unattended. When unset: `sandbox.job_max_duration` in your config, then your default from Settings, then 1 h. Never more than your limit. |
 | `--model provider/model` | Model to run on; your account's default when unset |
 | `--repo`, `--git-access`, `--env`, `--credentials`, `--no-credentials` | As for sessions. A job takes its git access from `sandbox.job_git_access` and your Settings, and its credentials from `sandbox.job_credentials`, never from the interactive defaults. |
 | `--landing <dir>` | Start in one repository's directory rather than `/workspace` |
 | `--goal-file <file>` | Read the goal from a file |
 | `--wait`, `--timeout <d>` | Wait for the job after creating it, as `spov jobs wait` does |
+| `--hold <d>` | A sync job's hold: how long its sandbox is kept after it finishes, for `spov jobs apply`. When unset: `sandbox.job_sync_hold`, then 30 m. |
 
 ## Following and steering it
 
@@ -44,6 +49,8 @@ spov jobs create --kind report --repo acme/app --goal-file audit.md
 | `spov jobs interrupt <id>` | Stop its current turn and take it over |
 | `spov jobs resume <id>` | Hand a steered or blocked job back to its loop |
 | `spov jobs cancel <id>` | End it |
+| `spov jobs apply <id>` | Land a sync job's work in this checkout ([Sync jobs](#sync-jobs)) |
+| `spov jobs release <id>` | Discard a held sync job's work and end its sandbox |
 
 ## From a script
 
@@ -121,6 +128,39 @@ is missing or what the agent left unfinished. The agent saying it is finished
 is never evidence. Something spov could not check is `unverified`, not
 `failed`.
 
+## Sync jobs
+
+A sync job works on the checkout you create it in, as a synced `spov fly`
+does, and hands back the repository rather than a pull request. Run
+`spov jobs create --kind sync` inside the checkout, on a branch, with nothing
+uncommitted. The sandbox starts from your branch, unpushed commits included;
+a checkout whose remote is on no configured platform, or that has none, is
+sent whole, and its sandbox cannot push. What is sent is at most 16 MiB, so
+push a long unpushed history first.
+
+The job lands in the repository's directory, so `--check ./scripts/check.sh`
+runs the repository's own script. When it ends, spov stops the agent and reads
+the repository: commits since your branch, or uncommitted changes, are the
+deliverable. Nothing changed is a failure, and so is a change over the 32 MiB
+a sync can bring back.
+
+The job then finishes, and its sandbox is **held** so you can take the work:
+
+```sh
+spov jobs apply <id>     # lands it here, then ends the sandbox (--keep to keep it)
+spov jobs release <id>   # discards it and ends the sandbox
+```
+
+`apply` lands the work in place when the checkout is still on the branch and
+commit the job started from, else on a branch named for the job. It also
+works on a job still running, steered or blocked, to take its work so far.
+A held job keeps its place in your job limit and bills until it is applied,
+released or its hold runs out; `spov jobs`, `spov ls` and the dashboard mark
+it `held`. Nobody can attach to it or stop it by accident: `spov stop` and
+`spov stop --all` leave it, and name the two commands. Over the API, a client
+reads the state with `POST /api/v1/jobs/{id}/sync-export` and ends the hold
+with `POST /api/v1/jobs/{id}/release`.
+
 ## What a job's agent may do
 
 A job's agent runs under a permission allowlist for its kind: a `report` job,
@@ -132,4 +172,5 @@ bounds a misbehaving agent is the credential it holds and the proxy's rules
 ## Limits
 
 Each user has a limit on concurrent jobs, separate from the one on sessions.
+A held sync job counts against it until it is applied or released.
 See [`deploy/README.md`](../deploy/README.md) for quotas.

@@ -46,14 +46,33 @@ export function endable(
   sessionState: string | undefined,
   jobKnown: boolean,
   jobState: string | undefined,
+  held = false,
 ): boolean {
   if (sessionState !== "starting" && sessionState !== "running") return false;
   if (!jobKnown) return false;
+  // A held sync job's sandbox is ended by Discard, never End session.
+  // @decision(DL-101)
+  if (held) return false;
   return (
     jobState === undefined ||
     ["succeeded", "failed", "cancelled"].includes(jobState)
   );
 }
+
+/**
+ * discardable reports whether Discard held work is offered: a sync job
+ * whose sandbox is held for its state to be taken.
+ *
+ * @decision(DL-101) @decision(DL-102)
+ */
+export function discardable(job: { kind: string; sync?: { held: boolean } } | undefined): boolean {
+  return job?.kind === "sync" && job.sync?.held === true;
+}
+
+/** The question Discard held work's second press answers. @decision(DL-101) */
+export const DiscardQuestion =
+  "Discard this job's held work? Its sandbox is terminated, and anything not taken with" +
+  " spov jobs apply is lost.";
 
 /** The questions the second press answers. @decision(DL-057) */
 export const CancelQuestion =

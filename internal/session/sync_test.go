@@ -252,6 +252,18 @@ func TestSyncSeedAndExportScriptsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportSync: %v", err)
 	}
+	// InspectSync measures the same state without carrying it.
+	//
+	// @decision(DL-101)
+	summary, err := InspectSync(ctx, LocalShellExec{}, relFromWorkspace, checkout.HeadCommit)
+	if err != nil {
+		t.Fatalf("InspectSync: %v", err)
+	}
+	if want := int64(len(exported.Bundle) + len(exported.WorktreeTar)); summary.Branch != "feat/e2e-sync" ||
+		summary.HeadCommit != exported.HeadCommit || summary.Commits != 1 || summary.Files != 4 ||
+		summary.Rewritten || summary.Bytes < want-64 || summary.Bytes > want+64 {
+		t.Errorf("InspectSync = %+v, want branch feat/e2e-sync, 1 commit, 4 files, about %d bytes", summary, want)
+	}
 	syncRes, err := git.ApplySync(ctx, localDir, "spov-e2e", checkout.Branch, exported)
 	if err != nil {
 		t.Fatalf("ApplySync: %v", err)
@@ -475,5 +487,44 @@ func TestAnExportWithoutItsBaseBundlesFromTheDefaultBranch(t *testing.T) {
 	header := state.Bundle[:bytes.Index(state.Bundle, []byte("\n\n"))]
 	if !bytes.Contains(header, []byte("\n-")) {
 		t.Errorf("the export bundled the whole history:\n%s", header)
+	}
+}
+
+// An unchanged repository measures nothing, and one whose history was
+// rewritten past the base says so.
+//
+// @decision(DL-101)
+func TestInspectSyncSeesAnUnchangedAndARewrittenRepository(t *testing.T) {
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	runSyncGit(t, filepath.Dir(repo), "init", "-b", "main", repo)
+	runSyncGit(t, repo, "config", "user.name", "Agent")
+	runSyncGit(t, repo, "config", "user.email", "agent@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runSyncGit(t, repo, "add", "a.txt")
+	runSyncGit(t, repo, "commit", "-m", "base")
+	base := strings.TrimSpace(runSyncGit(t, repo, "rev-parse", "HEAD"))
+	rel, err := filepath.Rel("/workspace", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := InspectSync(ctx, LocalShellExec{}, rel, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Commits != 0 || got.Files != 0 || got.Bytes != 0 || got.Rewritten || got.HeadCommit != base {
+		t.Errorf("unchanged = %+v", got)
+	}
+	runSyncGit(t, repo, "commit", "--amend", "-m", "rewritten")
+	if got, err = InspectSync(ctx, LocalShellExec{}, rel, base); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Rewritten || got.Commits != 0 || got.HeadCommit == base {
+		t.Errorf("rewritten = %+v", got)
+	}
+	if _, err := InspectSync(ctx, LocalShellExec{}, rel, "not-a-sha"); err == nil {
+		t.Error("an invalid base was accepted")
 	}
 }

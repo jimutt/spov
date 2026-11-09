@@ -55,6 +55,10 @@ type Memory struct {
 	// deliverables and jobFiles are keyed by job ID, then by key or path.
 	deliverables map[string]map[string]Deliverable
 	jobFiles     map[string]map[string]JobFile
+	// jobSeeds are sync jobs' seed bundles, by job ID.
+	//
+	// @decision(DL-100)
+	jobSeeds map[string][]byte
 	// eventPos is the last Pos handed out; it only ever grows, which is
 	// what makes Pos a cursor.
 	eventPos int64
@@ -101,6 +105,7 @@ func NewMemory() *Memory {
 		runs:            map[string][]Run{},
 		deliverables:    map[string]map[string]Deliverable{},
 		jobFiles:        map[string]map[string]JobFile{},
+		jobSeeds:        map[string][]byte{},
 	}
 }
 
@@ -197,7 +202,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	codes, creds := cloneMap(m.deviceCodes), cloneMap(m.credentials)
 	allowed := cloneMap(m.allowlist)
 	orgCreds, admin := cloneMap(m.orgCredentials), slices.Clone(m.adminEvents)
-	jobs := cloneMap(m.jobs)
+	jobs, seeds := cloneMap(m.jobs), cloneMap(m.jobSeeds)
 	runs := cloneRuns(m.runs)
 	var undo []func()
 	var pending []change
@@ -208,7 +213,8 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		orgCredentials: m.orgCredentials, adminEvents: m.adminEvents,
 		conversations: m.conversations, messages: m.messages, events: m.events,
 		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
-		jobs: m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending}
+		jobs: m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending,
+		jobSeeds: m.jobSeeds}
 	committed := false
 	defer func() {
 		view.done = true
@@ -231,7 +237,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		for i := len(undo) - 1; i >= 0; i-- {
 			undo[i]()
 		}
-		m.jobs = jobs
+		m.jobs, m.jobSeeds = jobs, seeds
 		m.runs = runs
 		m.eventPos = pos
 	}()
@@ -319,6 +325,18 @@ func (s memSessions) liveByName(orgID, name string) *Session {
 		}
 	}
 	return nil
+}
+
+// @decision(DL-101)
+func (s memSessions) ByIDs(_ context.Context, orgID string, ids []string) (map[string]Session, error) {
+	defer s.m.lock()()
+	out := make(map[string]Session, len(ids))
+	for _, id := range ids {
+		if sess, ok := s.m.sessions[id]; ok && sess.OrgID == orgID {
+			out[id] = copySession(sess)
+		}
+	}
+	return out, nil
 }
 
 func (s memSessions) Get(_ context.Context, orgID, ref string) (Session, error) {
@@ -505,7 +523,8 @@ func (s memSessions) CountLive(_ context.Context, orgID, ownerID string) (int, e
 	defer s.m.lock()()
 	jobSessions := make(map[string]bool, len(s.m.jobs))
 	for _, j := range s.m.jobs {
-		if j.OrgID == orgID && j.State.Counts() {
+		// @decision(DL-101)
+		if j.OrgID == orgID && (j.State.Counts() || SyncHeld(j, s.m.sessions[j.SessionID])) {
 			jobSessions[j.SessionID] = true
 		}
 	}
@@ -1568,9 +1587,17 @@ func (s memJobs) Update(_ context.Context, j Job) error {
 	//
 	// @decision(DL-049)
 	j.MaxDuration = cur.MaxDuration
+	// Only SetSyncApplied writes it.
+	//
+	// @decision(DL-102)
+	j.SyncAppliedAt = cur.SyncAppliedAt
 	j.UpdatedAt = now
 	StampJobTimes(&j, cur, now)
 	s.m.jobs[j.ID] = copyJob(j)
+	// @decision(DL-100)
+	if j.State.Terminal() {
+		delete(s.m.jobSeeds, j.ID)
+	}
 	return nil
 }
 
@@ -1615,7 +1642,8 @@ func (s memJobs) CountLive(_ context.Context, orgID, ownerID string) (int, error
 	defer s.m.lock()()
 	n := 0
 	for _, j := range s.m.jobs {
-		if j.OrgID == orgID && j.OwnerID == ownerID && j.State.Counts() {
+		// @decision(DL-101)
+		if j.OrgID == orgID && j.OwnerID == ownerID && (j.State.Counts() || SyncHeld(j, s.m.sessions[j.SessionID])) {
 			n++
 		}
 	}
@@ -1640,6 +1668,7 @@ func (s memJobs) ListLive(context.Context) ([]Job, error) {
 func copyJob(j Job) Job {
 	j.StartedAt, j.StoppedAt = copyTime(j.StartedAt), copyTime(j.StoppedAt)
 	j.ClockStartedAt = copyTime(j.ClockStartedAt)
+	j.SyncAppliedAt = copyTime(j.SyncAppliedAt)
 	return j
 }
 
@@ -1743,6 +1772,49 @@ func (s memJobs) JobFiles(_ context.Context, orgID, jobID string) ([]JobFile, er
 	}
 	slices.SortFunc(out, func(a, b JobFile) int { return strings.Compare(a.Path, b.Path) })
 	return out, nil
+}
+
+// @decision(DL-100)
+func (s memJobs) PutSeed(_ context.Context, orgID, jobID string, bundle []byte) error {
+	defer s.m.lock()()
+	if j, ok := s.m.jobs[jobID]; !ok || j.OrgID != orgID {
+		return ErrNotFound
+	}
+	s.m.jobSeeds[jobID] = copyBytes(bundle)
+	return nil
+}
+
+func (s memJobs) Seed(_ context.Context, orgID, jobID string) ([]byte, error) {
+	defer s.m.lock()()
+	if j, ok := s.m.jobs[jobID]; !ok || j.OrgID != orgID {
+		return nil, ErrNotFound
+	}
+	b, ok := s.m.jobSeeds[jobID]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return copyBytes(b), nil
+}
+
+func (s memJobs) DeleteSeed(_ context.Context, orgID, jobID string) error {
+	defer s.m.lock()()
+	if j, ok := s.m.jobs[jobID]; ok && j.OrgID == orgID {
+		delete(s.m.jobSeeds, jobID)
+	}
+	return nil
+}
+
+// @decision(DL-102)
+func (s memJobs) SetSyncApplied(_ context.Context, orgID, jobID string, at time.Time) error {
+	defer s.m.lock()()
+	j, ok := s.m.jobs[jobID]
+	if !ok || j.OrgID != orgID {
+		return ErrNotFound
+	}
+	j.SyncAppliedAt = &at
+	j.UpdatedAt = s.m.now()
+	s.m.jobs[jobID] = copyJob(j)
+	return nil
 }
 
 type memOrgCredentials struct{ m *Memory }

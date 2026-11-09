@@ -323,16 +323,28 @@ components:
       properties:
         branch:
           type: string
+        commits:
+          description: A sync's commits since its base
+          format: int64
+          type: integer
         detail:
           description: What was found about it, for a person
           type: string
+        files:
+          description: A sync's uncommitted changed files
+          format: int64
+          type: integer
         forge:
           description: "The platform's kind: github, forgejo, gitea or gitlab, where a pull request is a merge request"
+          type: string
+        head_commit:
+          description: A sync's HEAD commit
           type: string
         kind:
           enum:
             - pr
             - report
+            - sync
           type: string
         number:
           description: The pull request's number
@@ -348,7 +360,7 @@ components:
           description: A pull request's repository, as its whole path (owner/name, or a GitLab group path and name)
           type: string
         size:
-          description: A report's size in bytes
+          description: A report's size in bytes, or the size a sync's export would have
           format: int64
           type: integer
         status:
@@ -676,6 +688,12 @@ components:
           description: What the job should accomplish
           minLength: 1
           type: string
+        hold:
+          description: "For kind sync: how long the sandbox is held after the job finishes, as a duration such as 30m; 30m when empty"
+          type: string
+        hold_preferred:
+          description: "hold is the client's configured default: cut to fit rather than refused"
+          type: boolean
         image:
           type: string
         kind:
@@ -683,6 +701,7 @@ components:
           enum:
             - pr
             - report
+            - sync
           type: string
         landing:
           description: Workspace directory to start in; the workspace root when empty
@@ -716,10 +735,50 @@ components:
             - "null"
         sandbox:
           $ref: "#/components/schemas/SandboxConfigView"
+        sync:
+          $ref: "#/components/schemas/SessionSyncRequest"
+          description: Seed a sync job's repository from a local git branch and commit; required for kind sync
       required:
         - goal
         - kind
         - repos
+      type: object
+    JobSyncView:
+      additionalProperties: false
+      properties:
+        applied_at:
+          description: When an apply released the sandbox
+          format: date-time
+          type: string
+        branch:
+          type: string
+        bytes:
+          format: int64
+          type: integer
+        commits:
+          format: int64
+          type: integer
+        files:
+          format: int64
+          type: integer
+        head_commit:
+          type: string
+        held:
+          description: The sandbox is kept for the state to be taken with spov jobs apply
+          type: boolean
+        held_until:
+          description: About when the hold runs out; for display only
+          format: date-time
+          type: string
+        released_at:
+          description: When the sandbox ended
+          format: date-time
+          type: string
+      required:
+        - commits
+        - files
+        - bytes
+        - held
       type: object
     JobView:
       additionalProperties: false
@@ -769,6 +828,7 @@ components:
           enum:
             - pr
             - report
+            - sync
           type: string
         max_duration:
           description: How long the job may run unattended
@@ -801,6 +861,9 @@ components:
         stopped_at:
           format: date-time
           type: string
+        sync:
+          $ref: "#/components/schemas/JobSyncView"
+          description: A sync job's repository state and its hold
         unfinished:
           description: What the agent said it left unfinished
           type: string
@@ -1491,6 +1554,20 @@ components:
       required:
         - session
       type: object
+    ReleaseJobRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ReleaseJobRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        applied:
+          description: "The state was applied somewhere: recorded as applied_at"
+          type: boolean
+      type: object
     RepoRef:
       additionalProperties: false
       properties:
@@ -1785,6 +1862,8 @@ components:
     SessionJobView:
       additionalProperties: false
       properties:
+        held:
+          type: boolean
         id:
           description: ULID
           type: string
@@ -1792,6 +1871,7 @@ components:
           enum:
             - pr
             - report
+            - sync
           type: string
         partial:
           type: boolean
@@ -2838,6 +2918,64 @@ paths:
       summary: Read a file a job delivered
       tags:
         - jobs
+  /api/v1/jobs/{id}/release:
+    post:
+      operationId: release-job
+      parameters:
+        - description: Job ID
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Job ID
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReleaseJobRequest"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobView"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: End a held sync job's sandbox
+      tags:
+        - jobs
   /api/v1/jobs/{id}/resume:
     post:
       operationId: resume-job
@@ -2885,6 +3023,59 @@ paths:
       security:
         - bearer: []
       summary: Hand a suspended job back to its loop
+      tags:
+        - jobs
+  /api/v1/jobs/{id}/sync-export:
+    post:
+      operationId: export-job-sync
+      parameters:
+        - description: Job ID
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Job ID
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncExportView"
+          description: OK
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: Export a sync job's git commits and working-tree changes from its sandbox
       tags:
         - jobs
   /api/v1/me:

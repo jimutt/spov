@@ -76,6 +76,10 @@ func Validate(c Config) error {
 	if d := c.Sandbox.JobMaxDuration; d != 0 && d < time.Minute {
 		return fmt.Errorf("config: sandbox.job_max_duration %s is below the 1m minimum", d)
 	}
+	// @decision(DL-101)
+	if d := c.Sandbox.JobSyncHold; d != 0 && d < time.Minute {
+		return fmt.Errorf("config: sandbox.job_sync_hold %s is below the 1m minimum", d)
+	}
 	// @decision(DL-033)
 	if _, err := toolchain.Parse(c.Sandbox.Addons); err != nil {
 		return fmt.Errorf("config: sandbox.addons: %w", err)

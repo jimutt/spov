@@ -123,6 +123,10 @@ func writeSessionTable(env *Env, sessions []server.SessionView, now time.Time) e
 		if r := s.Resume; r != nil && r.Mode == server.ResumeSnapshot && r.Until != nil {
 			state += " (resumable until " + r.Until.Local().Format("Jan 2") + ")"
 		}
+		// @decision(DL-101)
+		if s.Job != nil && s.Job.Held {
+			state += " (held for spov jobs apply)"
+		}
 		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			name, s.ID, state, formatAge(now.Sub(s.CreatedAt)), repos); err != nil {
 			return err

@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -203,6 +204,24 @@ func TestPermissionsForAnUnknownKindDenyEverything(t *testing.T) {
 		if len(p.Allow) != 0 {
 			t.Errorf("kind %q allows %v; an unrecognised kind must permit nothing", kind, p.Allow)
 		}
+	}
+}
+
+// A sync job edits and runs git as a pr job does.
+//
+// @decision(DL-100)
+func TestPermissionsForEveryKind(t *testing.T) {
+	if got, want := PermissionsForKind("sync"), PermissionsForKind("pr"); !reflect.DeepEqual(got, want) {
+		t.Errorf("sync permissions = %+v, want pr's %+v", got, want)
+	}
+	for _, kind := range []string{"pr", "report", "sync"} {
+		if len(PermissionsForKind(kind).Allow) == 0 {
+			t.Errorf("kind %q permits nothing", kind)
+		}
+	}
+	note := Plugin{Kind: "sync"}.deliverableNote()
+	if !strings.Contains(note, "state when you finish") || strings.Contains(note, "open a pull request from") {
+		t.Errorf("sync deliverable note = %q", note)
 	}
 }
 

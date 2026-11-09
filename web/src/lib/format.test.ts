@@ -638,6 +638,17 @@ describe('a partial success', () => {
     expect(jobWord('failed', true)).toBe('Failed');
   });
 
+  // @decision(DL-101)
+  test('a held sync job says so beside its state, in the list too', () => {
+    expect(jobWord('succeeded', false, true)).toBe('Succeeded, held');
+    expect(jobWord('failed', false, true)).toBe('Failed, held');
+    const s = {
+      id: 's', state: 'running', created_at: '2026-10-17T17:00:00Z',
+      job: { id: 'j', kind: 'sync', state: 'succeeded', held: true },
+    } as unknown as Session;
+    expect(listState(s)).toMatchObject({ word: 'Succeeded, held', why: 'Held for spov jobs apply' });
+  });
+
   test("reaches the session list's state column", () => {
     const s = {
       id: 's', state: 'stopped', created_at: '2026-10-17T17:00:00Z',

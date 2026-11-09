@@ -180,6 +180,39 @@ func completeJobs(env *Env, unfinishedOnly bool) cobra.CompletionFunc {
 	})
 }
 
+// completeSyncJobs offers the sync jobs `jobs apply` and `jobs release`
+// take: held ones, and for apply also unfinished ones, from the newest
+// page of sync jobs.
+//
+// @decision(DL-102) @decision(DL-023)
+func completeSyncJobs(env *Env, unfinishedToo bool) cobra.CompletionFunc {
+	return completeWithin(env, func(ctx context.Context, prefix string) []cobra.Completion {
+		c, ok := env.existingClient(ctx)
+		if !ok {
+			return nil
+		}
+		page, err := c.ListJobs(ctx, client.Page{})
+		if err != nil {
+			return nil
+		}
+		var out []cobra.Completion
+		for _, j := range page.Jobs {
+			if j.Kind != store.JobKindSync || !strings.HasPrefix(j.ID, prefix) {
+				continue
+			}
+			held := j.Sync != nil && j.Sync.Held
+			if held || (unfinishedToo && !j.State.Terminal()) {
+				word := string(j.State)
+				if held {
+					word += ", held"
+				}
+				out = append(out, cobra.CompletionWithDesc(j.ID, word+": "+firstLine(j.Goal, 40)))
+			}
+		}
+		return out
+	})
+}
+
 // completeCredentials offers the names `credentials remove` takes, from
 // where `spov credentials` lists them: this machine's store with a
 // local server, the server's listing with a hosted one.

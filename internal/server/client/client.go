@@ -595,6 +595,28 @@ func (c *Client) CancelJob(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "jobs/"+url.PathEscape(id), nil, nil)
 }
 
+// ExportJobSync exports a sync job's state from its sandbox.
+//
+// @decision(DL-102)
+func (c *Client) ExportJobSync(ctx context.Context, id string) (server.SyncExportView, error) {
+	var out server.SyncExportView
+	err := c.do(ctx, http.MethodPost, "jobs/"+url.PathEscape(id)+"/sync-export", nil, &out)
+	return out, err
+}
+
+// ReleaseJob ends a held sync job's sandbox, recording an apply when
+// applied, and answers the job's view.
+//
+// @decision(DL-102)
+func (c *Client) ReleaseJob(ctx context.Context, id string, applied bool) (server.JobView, error) {
+	var out server.JobView
+	body := struct {
+		Applied bool `json:"applied,omitempty"`
+	}{applied}
+	err := c.do(ctx, http.MethodPost, "jobs/"+url.PathEscape(id)+"/release", body, &out)
+	return out, err
+}
+
 // ResumeJob hands a suspended job back to its loop.
 //
 // @decision(DL-054)

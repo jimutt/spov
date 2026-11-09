@@ -179,20 +179,26 @@ type SandboxCredentialView struct {
 // @decision(DL-060)
 type SessionJobView struct {
 	ID    string         `json:"id" doc:"ULID"`
-	Kind  store.JobKind  `json:"kind" enum:"pr,report"`
+	Kind  store.JobKind  `json:"kind" enum:"pr,report,sync"`
 	State store.JobState `json:"state" enum:"queued,provisioning,running,delivering,succeeded,failed,blocked,steered,cancelled"`
 	// Partial marks a success that delivered part of what was asked,
 	// as JobView.Partial does. A flag on succeeded, not a state.
 	//
 	// @decision(DL-060)
 	Partial bool `json:"partial,omitempty"`
+	// Held marks a finished sync job whose sandbox is kept for its
+	// state to be taken (store.SyncHeld).
+	//
+	// @decision(DL-101)
+	Held bool `json:"held,omitempty"`
 }
 
 // sessionJobView is the job badge the session list and page draw.
 //
-// @decision(DL-060)
-func sessionJobView(j store.Job) *SessionJobView {
-	return &SessionJobView{ID: j.ID, Kind: j.Kind, State: j.State, Partial: partialOf(j.State, jobs.ParseGatesNote(j.Verdict))}
+// @decision(DL-060) @decision(DL-101)
+func sessionJobView(j store.Job, sess store.Session) *SessionJobView {
+	return &SessionJobView{ID: j.ID, Kind: j.Kind, State: j.State,
+		Partial: partialOf(j.State, jobs.ParseGatesNote(j.Verdict)), Held: store.SyncHeld(j, sess)}
 }
 
 // RepoRef names a repository on a configured platform (or a local-only
@@ -435,7 +441,7 @@ func (s *Server) viewsOf(ctx context.Context, p auth.Principal, sessions []store
 	}
 	for i, sess := range sessions {
 		if j, ok := jobs[sess.ID]; ok {
-			out[i].Job = sessionJobView(j)
+			out[i].Job = sessionJobView(j, sess)
 		}
 	}
 	return out
@@ -500,7 +506,7 @@ func (s *Server) sessionJob(ctx context.Context, sess store.Session) *SessionJob
 	if !ok {
 		return nil
 	}
-	return sessionJobView(j)
+	return sessionJobView(j, sess)
 }
 
 // decorationStamp reports what the page's decorated columns hold, as
@@ -535,7 +541,7 @@ func (s *Server) decorationStamp(ctx context.Context, p auth.Principal, sessions
 	// skipped rather than contributing a constant line to every stamp.
 	empty := fnv.New64a().Sum64()
 	var b strings.Builder
-	for _, id := range ids {
+	for i, id := range ids {
 		h := fnv.New64a()
 		if m, ok := last[id]; ok {
 			// The row itself, not only its identity: a message is
@@ -550,8 +556,8 @@ func (s *Server) decorationStamp(ctx context.Context, p auth.Principal, sessions
 			// Only what the listing shows.
 			//
 			// @decision(DL-060)
-			v := sessionJobView(j)
-			_, _ = fmt.Fprintf(h, "\x00job\x00%s\x00%s\x00%s\x00%t", v.ID, v.Kind, v.State, v.Partial)
+			v := sessionJobView(j, sessions[i])
+			_, _ = fmt.Fprintf(h, "\x00job\x00%s\x00%s\x00%s\x00%t\x00%t", v.ID, v.Kind, v.State, v.Partial, v.Held)
 		}
 		// What the resume choice is read from.
 		//
@@ -767,6 +773,9 @@ func toHumaError(err error) error {
 		return huma.Error502BadGateway(redact.Error(err))
 	case errors.Is(err, ErrNameInUse):
 		return huma.Error409Conflict(err.Error())
+	// @decision(DL-101) @decision(DL-102)
+	case errors.Is(err, ErrSyncHeld), errors.Is(err, ErrJobFinished), errors.Is(err, ErrSyncUnavailable):
+		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, ErrInvalidRequest):
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, session.ErrStopped), errors.Is(err, ErrSessionNotRunning):
@@ -869,7 +878,8 @@ func (s *Server) registerSessions() {
 		Summary: "Mint connection credentials for a session", Tags: []string{"sessions"},
 		Errors: []int{http.StatusTooManyRequests},
 	}, func(ctx context.Context, in *refInput) (*connectOutput, error) {
-		conn, err := s.svc.Connect(ctx, principal(ctx), in.Ref)
+		// @decision(DL-101)
+		conn, err := s.svc.ConnectClient(ctx, principal(ctx), in.Ref)
 		if err != nil {
 			return nil, toHumaError(err)
 		}
@@ -885,6 +895,8 @@ func (s *Server) registerSessions() {
 
 	// @decision(DL-027)
 	s.registerSyncExport()
+	// @decision(DL-102)
+	s.registerSyncJobs()
 
 	registerSSE(s.api, huma.Operation{
 		OperationID: "session-events", Method: http.MethodGet, Path: "/api/v1/sessions/{ref}/events",

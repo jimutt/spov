@@ -12,7 +12,6 @@ import (
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/git"
-	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/session"
 	"github.com/jimutt/spov/internal/store"
 )
@@ -52,21 +51,7 @@ func (s *Server) registerSyncExport() {
 		if err != nil {
 			return nil, toHumaError(err)
 		}
-		out := &syncExportOutput{
-			Body: SyncExportView{
-				Branch:     state.Branch,
-				BaseCommit: state.BaseCommit,
-				HeadCommit: state.HeadCommit,
-				Deleted:    state.Deleted,
-			},
-		}
-		if len(state.Bundle) > 0 {
-			out.Body.Bundle = base64.StdEncoding.EncodeToString(state.Bundle)
-		}
-		if len(state.WorktreeTar) > 0 {
-			out.Body.WorktreeTar = base64.StdEncoding.EncodeToString(state.WorktreeTar)
-		}
-		return out, nil
+		return &syncExportOutput{Body: syncExportViewOf(state)}, nil
 	})
 }
 
@@ -95,17 +80,7 @@ func (s *Service) ExportSync(ctx context.Context, p auth.Principal, ref string) 
 	if err != nil {
 		return git.ExportedState{}, err
 	}
-	dir := git.SingleRepoDir(owner, name)
-	if sess.Request.Landing != "" {
-		dir = sess.Request.Landing
-	} else if rel := strings.TrimPrefix(sess.Landing, opencode.WorkspaceRoot+"/"); rel != "" && rel != sess.Landing {
-		dir = rel
-	}
-	var baseCommit string
-	if sess.Request.Sync != nil {
-		baseCommit = sess.Request.Sync.BaseCommit
-	}
-	return session.ExportSync(ctx, h, dir, baseCommit)
+	return session.ExportSync(ctx, h, syncDir(sess, owner, name), syncBase(sess))
 }
 
 func singleSessionRepo(sess store.Session) (owner, name string, ok bool) {

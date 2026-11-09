@@ -49,8 +49,9 @@ const (
 
 // Termination is why a session stopped: someone or something asked
 // (stopped), the sandbox ended on its own, at its idle timeout or its
-// lifetime (ended), the backstop terminated it (reaped), or it broke
-// (failed).
+// lifetime (ended), the backstop terminated it (reaped), it broke
+// (failed), or a held sync job's sandbox was applied or discarded
+// (released).
 type Termination string
 
 const (
@@ -58,6 +59,8 @@ const (
 	TerminationEnded   Termination = "ended"
 	TerminationReaped  Termination = "reaped"
 	TerminationFailed  Termination = "failed"
+	// @decision(DL-101)
+	TerminationReleased Termination = "released"
 )
 
 // LaunchStep is where a launch failed: one of the launcher's steps, or
@@ -83,12 +86,12 @@ const (
 
 var (
 	quotaLimits      = names(QuotaSessions, QuotaJobs, QuotaSize, QuotaDuration)
-	jobKinds         = []string{string(store.JobKindPR), string(store.JobKindReport)}
+	jobKinds         = []string{string(store.JobKindPR), string(store.JobKindReport), string(store.JobKindSync)}
 	jobOutcomes      = []string{string(store.JobSucceeded), string(store.JobFailed), string(store.JobCancelled)}
 	endedBys         = names(EndedDeclared, EndedWallClock, EndedStopped, EndedDenied, EndedNoCompletionTool, EndedContinueFailed, EndedTurnFailed, EndedAbandoned, EndedCancelled, EndedLaunchFailed)
 	gates            = []string{"check", "deliverable", "conduct"}
 	gateResults      = []string{"passed", "partial", "failed", "unverified"}
-	deliverableKinds = []string{string(store.DeliverablePR), string(store.DeliverableReport)}
+	deliverableKinds = []string{string(store.DeliverablePR), string(store.DeliverableReport), string(store.DeliverableSync)}
 	deliverableStats = func() []string {
 		out := make([]string, 0, len(store.DeliverableStatuses))
 		for _, st := range store.DeliverableStatuses {
@@ -98,7 +101,7 @@ var (
 	}()
 	sessionKindNames = names(KindInteractive, KindJob)
 	launchSteps      = names(StepSetup, StepTokens, StepSandbox, StepServer)
-	terminations     = names(TerminationStopped, TerminationEnded, TerminationReaped, TerminationFailed)
+	terminations     = names(TerminationStopped, TerminationEnded, TerminationReaped, TerminationFailed, TerminationReleased)
 	renewalOutcomes  = names(OutcomeRenewed, OutcomeSkipped, OutcomeFailed)
 	recoveryOutcomes = names(OutcomeRecreated, OutcomeFailed)
 

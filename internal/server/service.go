@@ -967,6 +967,13 @@ func (s *Service) StreamList(ctx context.Context, p auth.Principal, limit int) (
 //
 // @decision(DL-005)
 func (s *Service) Delete(ctx context.Context, p auth.Principal, ref string) error {
+	return s.deleteFor(ctx, p, ref, telemetry.TerminationStopped)
+}
+
+// deleteFor is Delete, recording the stop under the given reason.
+//
+// @decision(DL-005) @decision(DL-101)
+func (s *Service) deleteFor(ctx context.Context, p auth.Principal, ref string, reason telemetry.Termination) error {
 	sess, err := s.Get(ctx, p, ref)
 	if err != nil {
 		return err
@@ -1059,7 +1066,7 @@ func (s *Service) Delete(ctx context.Context, p auth.Principal, ref string) erro
 		return err
 	}
 	if took {
-		recordStop(ctx, s.deps.Metrics, s.deps.Store, sess, t, telemetry.TerminationStopped)
+		recordStop(ctx, s.deps.Metrics, s.deps.Store, sess, t, reason)
 	}
 	return nil
 }

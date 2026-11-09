@@ -233,6 +233,12 @@ type Sandbox struct {
 	//
 	// @decision(DL-049)
 	JobMaxDuration time.Duration `koanf:"job_max_duration"`
+	// JobSyncHold is how long a finished sync job's sandbox is held,
+	// when `spov jobs create --kind sync` names no --hold. The server
+	// cuts it to fit rather than refusing it.
+	//
+	// @decision(DL-101)
+	JobSyncHold time.Duration `koanf:"job_sync_hold"`
 	// Sync is how `spov fly` syncs when neither --sync nor --no-sync is
 	// given: nil syncs the checkout it runs in when that is the launch's
 	// repository, true always syncs, as --sync, and false never does, as

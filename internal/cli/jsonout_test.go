@@ -33,6 +33,8 @@ func TestTheReadAndCreateCommandsTakeJSON(t *testing.T) {
 	want := map[string]bool{}
 	for _, path := range []string{
 		"ls", "jobs", "jobs list", "jobs show", "jobs create", "jobs wait", "credentials", "credentials list", "whoami", "resume",
+		// @decision(DL-102)
+		"jobs apply", "jobs release",
 	} {
 		want["spov "+path] = true
 	}
