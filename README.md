@@ -189,7 +189,10 @@ the dashboard ([deploy/README.md](deploy/README.md)).
 Each sandbox has a general-purpose toolchain (Python, Node, Bun, Go, build
 tools) and takes add-ons such as Rust, Java or Postgres. What is installed,
 how credentials are kept out of it, network access and cost are in
-[The sandbox](docs/sandbox.md).
+[The sandbox](docs/sandbox.md). A
+[sandbox template](docs/sandbox.md#sandbox-templates) keeps a named set of
+those settings (network, registry credentials, variables, add-ons) to pick
+when you launch, from the dashboard or with `--template`.
 
 ## Configure it
 
@@ -220,7 +223,7 @@ them.
 - [Credentials](docs/credentials.md): GitHub, Forgejo, Gitea and GitLab, model
   providers, private registries
 - [The sandbox](docs/sandbox.md): toolchain, add-ons, environment variables,
-  security, network, cost
+  security, network, sandbox templates, cost
 - [The server and the dashboard](docs/server.md): local or hosted, signing in,
   the web dashboard
 - [Configuration reference](docs/configuration.md): every key

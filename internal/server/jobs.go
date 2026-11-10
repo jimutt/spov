@@ -63,9 +63,14 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	}
 	now := s.deps.Now()
 	jobID := store.NewID(now)
-	sreq, err := s.jobSessionRequest(req, jobID)
+	// @decision(DL-120)
+	tmpl, err := s.templateFor(ctx, p, req.Template)
 	if err != nil {
 		return store.Job{}, err
+	}
+	sreq, err := s.jobSessionRequest(req, jobID, tmpl)
+	if err != nil {
+		return store.Job{}, inTemplate(tmpl, err)
 	}
 	// One read of the profile answers both of the next two questions.
 	//
@@ -95,11 +100,11 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	}
 	// @decision(DL-075)
 	if err := s.refuseRoutedNames(ctx, p.OrgID, p.UserID, sreq.Routed); err != nil {
-		return store.Job{}, err
+		return store.Job{}, inTemplate(tmpl, err)
 	}
 	// @decision(DL-077)
 	if err := s.refuseRoutesWithoutProxy(ctx, p.OrgID, p.UserID, sreq.Routed); err != nil {
-		return store.Job{}, err
+		return store.Job{}, inTemplate(tmpl, err)
 	}
 	// The caller's own limits, checked before anything billable. The
 	// size limits refuse here; the concurrency limit is counted inside
@@ -240,7 +245,7 @@ func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, 
 // in. A job never joins a live session.
 //
 // @decision(DL-045)
-func (s *Service) jobSessionRequest(req JobRequest, jobID string) (store.SessionRequest, error) {
+func (s *Service) jobSessionRequest(req JobRequest, jobID string, tmpl *store.Template) (store.SessionRequest, error) {
 	goal := strings.TrimSpace(req.Goal)
 	var problems []string
 	if goal == "" {
@@ -337,6 +342,10 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string) (store.Session
 		Apt:    req.Apt,
 		// @decision(DL-096)
 		Env: req.Env,
+	}
+	// @decision(DL-120)
+	if tmpl != nil {
+		sreq = applyTemplate(sreq, *tmpl)
 	}
 	sreq = s.withDefaults(sreq)
 	if err := s.validateRequest(sreq); err != nil {
