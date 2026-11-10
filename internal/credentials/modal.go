@@ -16,6 +16,10 @@ type ModalCredentials struct {
 	Source string
 }
 
+// ErrNoModalCredentials means neither the environment nor Modal's file
+// holds any.
+var ErrNoModalCredentials = errors.New("no Modal credentials found")
+
 // ModalTokenFile is Modal's own credentials file.
 const ModalTokenFile = ".modal.toml"
 
@@ -34,14 +38,18 @@ func ResolveModal(getenv func(string) string, homeDir func() (string, error)) (M
 		return ModalCredentials{}, fmt.Errorf("credentials: MODAL_TOKEN_ID and MODAL_TOKEN_SECRET must be set together")
 	}
 
-	home, err := homeDir()
-	if err != nil {
-		return ModalCredentials{}, fmt.Errorf("credentials: no Modal credentials in the environment and no home directory to look in: %w", err)
+	// The file the Modal SDK reads: MODAL_CONFIG_PATH when it is set.
+	path := getenv("MODAL_CONFIG_PATH")
+	if path == "" {
+		home, err := homeDir()
+		if err != nil {
+			return ModalCredentials{}, fmt.Errorf("credentials: %w in the environment, and no home directory to look in: %w", ErrNoModalCredentials, err)
+		}
+		path = filepath.Join(home, ModalTokenFile)
 	}
-	path := filepath.Join(home, ModalTokenFile)
 	if _, err := os.Stat(path); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return ModalCredentials{}, fmt.Errorf("credentials: no Modal credentials found; run `modal setup` or set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET")
+			return ModalCredentials{}, fmt.Errorf("credentials: %w; run `modal setup` or set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET", ErrNoModalCredentials)
 		}
 		return ModalCredentials{}, fmt.Errorf("credentials: check %s: %w", path, err)
 	}

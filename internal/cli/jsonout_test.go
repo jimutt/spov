@@ -37,6 +37,8 @@ func TestTheReadAndCreateCommandsTakeJSON(t *testing.T) {
 		"jobs apply", "jobs release",
 		// @decision(DL-122)
 		"templates", "templates list", "templates show",
+		// Its own format, DL-023's one exception. @decision(DL-123)
+		"init",
 	} {
 		want["spov "+path] = true
 	}

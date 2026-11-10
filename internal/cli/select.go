@@ -277,8 +277,8 @@ func resolvePlatformName(cfg config.Config, name string) (string, error) {
 	case 1:
 		return cfg.Platforms[0].Name, nil
 	case 0:
-		return "", fmt.Errorf("no git platforms configured; qualify the repo as <platform>:owner/name or add a `platforms:` entry to %s",
-			config.ProjectFileName)
+		return "", errors.New("no git platforms configured; qualify the repo as <platform>:owner/name, add a `platforms:` entry" +
+			" to your user config file (docs/configuration.md), or run `spov init`, which sets up GitHub")
 	default:
 		return "", fmt.Errorf("several platforms are configured (%s); qualify the repo as <platform>:owner/name",
 			strings.Join(platformNames(cfg), ", "))
@@ -317,8 +317,7 @@ func (e *Env) selectionsFor(ctx context.Context, cfg config.Config, refs []serve
 		return nil, nil
 	}
 	if len(cfg.Platforms) == 0 {
-		return nil, fmt.Errorf("no git platforms configured; add a `platforms:` entry to %s or %s",
-			config.ProjectFileName, e.userConfigPathForMessage())
+		return nil, e.noPlatforms()
 	}
 	var (
 		order  []string
@@ -363,8 +362,7 @@ func (e *Env) selectionsFor(ctx context.Context, cfg config.Config, refs []serve
 // @decision(DL-028)
 func (e *Env) listAllRepos(ctx context.Context, cfg config.Config) ([]git.PlatformRepo, []string, error) {
 	if len(cfg.Platforms) == 0 {
-		return nil, nil, fmt.Errorf("no git platforms configured; add a `platforms:` entry to %s or %s",
-			config.ProjectFileName, e.userConfigPathForMessage())
+		return nil, nil, e.noPlatforms()
 	}
 	type result struct {
 		repos []git.PlatformRepo
@@ -567,6 +565,19 @@ func platformHost(p config.Platform) (string, error) {
 
 // userConfigPathForMessage names the user-level config file for error
 // messages, falling back to a readable placeholder.
+// noPlatforms is the error for a setup with no git platform. It names
+// the user file, the only one that may hold platforms, and `spov init`
+// where this is the CLI and not a server answering for its own config.
+//
+// @decision(DL-125) @decision(DL-026)
+func (e *Env) noPlatforms() error {
+	msg := "no git platforms configured; add a `platforms:` entry to " + e.userConfigPathForMessage()
+	if !e.ServerConfig {
+		msg += ", or run `spov init`, which sets up GitHub"
+	}
+	return errors.New(msg)
+}
+
 func (e *Env) userConfigPathForMessage() string {
 	if path, err := config.UserConfigPath(e.Environ); err == nil {
 		return path
