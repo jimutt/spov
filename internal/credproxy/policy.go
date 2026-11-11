@@ -215,7 +215,8 @@ func (p Platform) hasRepo(owner, name string) bool {
 }
 
 // cleanSegments splits the request's path, refusing one with
-// percent-encoding, a dot segment or an empty segment.
+// percent-encoding, a dot segment or an empty segment, with or without
+// path parameters.
 func cleanSegments(r *http.Request) ([]string, bool) {
 	// An absolute-form request line names its own target.
 	if r.RequestURI != "" && !strings.HasPrefix(r.RequestURI, "/") {
@@ -227,7 +228,10 @@ func cleanSegments(r *http.Request) ([]string, bool) {
 	}
 	segs := strings.Split(raw[1:], "/")
 	for _, s := range segs {
-		if s == "" || s == "." || s == ".." {
+		// A servlet container drops a segment's `;parameters` before it
+		// resolves dot segments, so `..;x` is `..` there.
+		name, _, _ := strings.Cut(s, ";")
+		if name == "" || name == "." || name == ".." {
 			return nil, false
 		}
 	}
