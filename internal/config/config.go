@@ -59,7 +59,8 @@ type Config struct {
 	// @decision(DL-086)
 	Snapshots Snapshots `koanf:"snapshots"`
 	// History is how long a local server keeps a stopped session's
-	// history. It means nothing to a hosted server or the CLI.
+	// history, and how much any server stores of one session. It means
+	// nothing to the CLI.
 	//
 	// @decision(DL-093)
 	History History `koanf:"history"`
@@ -137,6 +138,12 @@ type History struct {
 	// Retention is how long after it stopped a session's history is
 	// kept; 0 keeps it forever.
 	Retention time.Duration `koanf:"retention" json:"retention" yaml:"retention"`
+	// MaxSessionMiB is how much one session's events and messages may
+	// occupy, on a local server and a hosted one, before its recording
+	// stops. Zero or less is the built-in default.
+	//
+	// @decision(DL-131)
+	MaxSessionMiB int `koanf:"max_session_mib" json:"max_session_mib" yaml:"max_session_mib"`
 }
 
 // Server is where the CLI finds its spov server. Empty means none is

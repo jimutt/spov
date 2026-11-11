@@ -2,6 +2,8 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-131 | One session stores a bounded number of conversations and a bounded size of history, and the verdict holds a bounded size | accepted | server | recorder, storage, security, limits |
+| DL-130 | An exec reads a bounded amount of a sandbox program's output, and more is an error | accepted | sandbox | sandbox, exec, security, limits |
 | DL-117 | On a phone the composer is one container: the text over a toolbar holding the model chip and a small Send, folded to one row while idle | accepted | web | web, phone, composer |
 | DL-116 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
 | DL-115 | A session's last-message preview comes from its root conversations, never from a subagent | accepted | server | subagents |

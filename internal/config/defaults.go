@@ -38,7 +38,7 @@ func Defaults() Config {
 		// @decision(DL-086)
 		Snapshots: Snapshots{Enabled: true, Retention: 168 * time.Hour, MaxPerUser: 20},
 		// @decision(DL-093)
-		History: History{Retention: 720 * time.Hour},
+		History: History{Retention: 720 * time.Hour, MaxSessionMiB: 1024},
 		// Per-user limits for a hosted server. Three concurrent
 		// sessions and eight hours are generous for one person and
 		// still bound what any one user can spend.

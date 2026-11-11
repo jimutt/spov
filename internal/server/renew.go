@@ -200,7 +200,7 @@ func (s *Service) inUse(ctx context.Context, sess store.Session) (bool, error) {
 	}
 	s.mu.Unlock()
 	// @decision(DL-021)
-	ev, err := s.deps.Store.Conversations().LastEventExcept(ctx, sess.OrgID, sess.ID, []string{MarkerGap, MarkerStopped, MarkerRenewalFailed,
+	ev, err := s.deps.Store.Conversations().LastEventExcept(ctx, sess.OrgID, sess.ID, []string{MarkerGap, MarkerStopped, MarkerConversationLimit, MarkerRenewalFailed,
 		// @decision(DL-075)
 		MarkerRoutedLeftOut})
 	switch {

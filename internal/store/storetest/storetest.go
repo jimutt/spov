@@ -1772,6 +1772,41 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		if list[0].ParentOpenCodeID != "ses_0" {
 			t.Errorf("the listing lost the parent: %+v", list[0])
 		}
+		// The listing leaves the info out; it is read on its own, and
+		// only by the session's org. @decision(DL-131)
+		if len(list[0].Info) != 0 {
+			t.Errorf("the listing carries the info: %q", list[0].Info)
+		}
+		infos, err := cs.ConversationInfos(ctx, "org", sess.ID)
+		if err != nil || len(infos) != 1 || string(infos[first.ID]) != string(info) {
+			t.Errorf("the infos = %q, %v", infos, err)
+		}
+		if other, _ := cs.ConversationInfos(ctx, "org-2", sess.ID); len(other) != 0 {
+			t.Errorf("another org read the infos: %q", other)
+		}
+		// What the session has stored: one conversation and nothing in
+		// it yet, then one event and one message. @decision(DL-131)
+		if size, err := cs.StoredSize(ctx, "org", sess.ID); err != nil || size != (store.StoredSize{Conversations: 1}) {
+			t.Errorf("the size of an empty recording = %+v, %v", size, err)
+		}
+		if _, err := cs.PutEvents(ctx, []store.Event{{
+			ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, ConversationID: first.ID,
+			Source: store.SourceOpenCode, Seq: 1, Name: "sized.event", Text: "abc", At: t0, Raw: []byte("12345"),
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cs.PutMessages(ctx, []store.Message{{
+			ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, ConversationID: first.ID,
+			OpenCodeID: "msg_sized", Role: "user", Text: "de", Raw: []byte("6789"),
+		}}); err != nil {
+			t.Fatal(err)
+		}
+		if size, err := cs.StoredSize(ctx, "org", sess.ID); err != nil || size != (store.StoredSize{Conversations: 1, Rows: 2, Bytes: 14}) {
+			t.Errorf("the size = %+v, %v, want 1 conversation, 2 rows, 14 bytes", size, err)
+		}
+		if size, _ := cs.StoredSize(ctx, "org-2", sess.ID); size != (store.StoredSize{}) {
+			t.Errorf("another org measured the session: %+v", size)
+		}
 		if other, _ := cs.ListConversations(ctx, "org-2", sess.ID); len(other) != 0 {
 			t.Error("another org saw the conversation")
 		}

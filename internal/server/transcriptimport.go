@@ -41,6 +41,14 @@ func (s *Service) importConversations(ctx context.Context, sess store.Session, l
 		s.deps.Warn(fmt.Sprintf("resume %s: list conversations: %s", sess.ID, redact.Error(err)))
 		return
 	}
+	// The listing carries no Info.
+	//
+	// @decision(DL-131)
+	infos, err := s.deps.Store.Conversations().ConversationInfos(ctx, sess.OrgID, sess.ID)
+	if err != nil {
+		s.deps.Warn(fmt.Sprintf("resume %s: read the conversations' info: %s", sess.ID, redact.Error(err)))
+		return
+	}
 	msgs, err := s.deps.Store.Conversations().ListMessages(ctx, sess.OrgID, sess.ID)
 	if err != nil {
 		s.deps.Warn(fmt.Sprintf("resume %s: list messages: %s", sess.ID, redact.Error(err)))
@@ -57,7 +65,7 @@ func (s *Service) importConversations(ctx context.Context, sess store.Session, l
 		if len(raws) == 0 {
 			continue
 		}
-		info := conv.Info
+		info := infos[conv.ID]
 		if len(info) == 0 {
 			info = builtInfo(conv, sess.Landing)
 		}

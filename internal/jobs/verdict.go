@@ -913,12 +913,16 @@ func (s *Supervisor) jobEvents(ctx context.Context, job store.Job) ([]store.Even
 	var out []store.Event
 	var after int64
 	var dropped int
+	var held int64
 	for {
 		batch, err := s.Store.Conversations().ListEvents(ctx, job.OrgID, job.SessionID, after, FollowBatch)
 		if err != nil {
 			return nil, fmt.Errorf("supervisor: job %s: reading events for the verdict: %w", job.ID, err)
 		}
 		out = append(out, batch...)
+		for _, e := range batch {
+			held += eventBytes(e)
+		}
 		// Past the bound drop the head, never the tail: gate 1's
 		// evidence marker is the last event a job has. Trim before the
 		// short-batch return, since every run ends on a short batch.
@@ -926,14 +930,33 @@ func (s *Supervisor) jobEvents(ctx context.Context, job store.Job) ([]store.Even
 		// @decision(DL-050)
 		if max := s.maxVerdictEvents(); len(out) > max {
 			n := len(out) - max
+			for _, e := range out[:n] {
+				held -= eventBytes(e)
+			}
 			out = out[n:]
+			dropped += n
+		}
+		// The same trim by size: a count bounds nothing when the
+		// sandbox chooses how large a frame is. The newest event is
+		// always kept.
+		//
+		// @decision(DL-131)
+		if max := s.maxVerdictBytes(); held > max {
+			n := 0
+			for n < len(out)-1 && held > max {
+				held -= eventBytes(out[n])
+				n++
+			}
+			// A copy, so the dropped head is not kept alive by the
+			// slice's backing array.
+			out = append([]store.Event(nil), out[n:]...)
 			dropped += n
 		}
 		if len(batch) < FollowBatch {
 			if dropped > 0 {
-				s.warn("supervisor: job %s: the run was longer than %d events; judging on the last %d, "+
+				s.warn("supervisor: job %s: the run was longer than %d events or %d MiB; judging on the last %d, "+
 					"so anything in the first %d is not seen",
-					job.ID, s.maxVerdictEvents(), s.maxVerdictEvents(), dropped)
+					job.ID, s.maxVerdictEvents(), s.maxVerdictBytes()>>20, len(out), dropped)
 			}
 			return out, nil
 		}
@@ -964,6 +987,25 @@ func (s *Supervisor) maxVerdictEvents() int {
 	}
 	return MaxVerdictEvents
 }
+
+// MaxVerdictBytes bounds the size of the events the verdict holds at
+// once, by their text and raw frames. Past it the head of the run is
+// dropped, as at MaxVerdictEvents.
+//
+// @decision(DL-131)
+const MaxVerdictBytes = 256 << 20
+
+// maxVerdictBytes is the bound in force, which a test lowers.
+//
+// @decision(DL-131)
+func (s *Supervisor) maxVerdictBytes() int64 {
+	if s.MaxVerdictBytes > 0 {
+		return s.MaxVerdictBytes
+	}
+	return MaxVerdictBytes
+}
+
+func eventBytes(e store.Event) int64 { return int64(len(e.Text) + len(e.Raw)) }
 
 // jobMessages reads the conversation the run produced.
 //

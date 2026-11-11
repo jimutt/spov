@@ -49,9 +49,43 @@ func (p pgConversations) ListConversations(ctx context.Context, orgID, sessionID
 	}
 	out := make([]store.Conversation, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, conversationFromRow(r))
+		out = append(out, conversationFromRow(sqlcgen.Conversation{
+			ID: r.ID, OrgID: r.OrgID, SessionID: r.SessionID, OpencodeID: r.OpencodeID, Title: r.Title,
+			CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ParentOpencodeID: r.ParentOpencodeID,
+			SeqBase: r.SeqBase, SeqAfter: r.SeqAfter,
+		}))
 	}
 	return out, nil
+}
+
+// ConversationInfos implements store.ConversationStore.
+//
+// @decision(DL-131)
+func (p pgConversations) ConversationInfos(ctx context.Context, orgID, sessionID string) (map[string][]byte, error) {
+	rows, err := p.s.q.ConversationInfos(ctx, sqlcgen.ConversationInfosParams{OrgID: orgID, SessionID: sessionID})
+	if err != nil {
+		return nil, mapErr("conversation infos", err)
+	}
+	out := make(map[string][]byte, len(rows))
+	for _, r := range rows {
+		out[r.ID] = r.Info
+	}
+	return out, nil
+}
+
+// StoredSize implements store.ConversationStore.
+//
+// @decision(DL-131)
+func (p pgConversations) StoredSize(ctx context.Context, orgID, sessionID string) (store.StoredSize, error) {
+	r, err := p.s.q.StoredSize(ctx, sqlcgen.StoredSizeParams{OrgID: orgID, SessionID: sessionID})
+	if err != nil {
+		return store.StoredSize{}, mapErr("stored size", err)
+	}
+	return store.StoredSize{
+		Conversations: int(r.Conversations),
+		Rows:          r.EventRows + r.MessageRows,
+		Bytes:         r.EventBytes + r.MessageBytes,
+	}, nil
 }
 
 // PutMessages writes the batch in one transaction. The composite
