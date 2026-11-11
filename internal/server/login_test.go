@@ -124,6 +124,7 @@ func newLoginFixtureWith(t *testing.T, allowlist string, adjust func(*Deps, *Log
 
 	sessions := scs.New()
 	sessions.Store = memstore.New()
+	sessions.HashTokenInStore = true
 	sessions.Lifetime = 7 * 24 * time.Hour
 	sessions.Cookie.Name = "spov_session"
 	sessions.Cookie.HttpOnly = true

@@ -228,6 +228,9 @@ func TestSessionCookiePolicy(t *testing.T) {
 	if !s.Cookie.HttpOnly {
 		t.Error("the cookie is not HttpOnly, so script can read it")
 	}
+	if !s.HashTokenInStore {
+		t.Error("the store would hold the cookie's value, so a database read is a login")
+	}
 	if s.Cookie.SameSite != http.SameSiteLaxMode {
 		t.Errorf("SameSite = %v, want Lax", s.Cookie.SameSite)
 	}
