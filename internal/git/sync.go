@@ -529,6 +529,24 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 	commits := countCommitsBetween(ctx, root, state.BaseCommit, state.HeadCommit)
 	inPlace, reason := canApplyInPlace(ctx, root, startBranch, state.BaseCommit, state.HeadCommit)
 	if inPlace {
+		// Checked while the checkout is still the user's own: the
+		// ignore rules and the hooks directory are read before the
+		// reset below can change either.
+		//
+		// @decision(DL-126)
+		packed, err := archivePaths(state.WorktreeTar)
+		if err != nil {
+			return SyncResult{}, err
+		}
+		if err := refuseUnseenPaths(ctx, root, state.HeadCommit, packed, state.Deleted); err != nil {
+			return SyncResult{}, err
+		}
+		if hooks := touchedHooksDir(ctx, root, state.HeadCommit, packed, state.Deleted); hooks != "" {
+			inPlace = false
+			reason = fmt.Sprintf("the session changed files under %s, which git runs as hooks in this checkout; read them before you check the branch out", hooks)
+		}
+	}
+	if inPlace {
 		curHead, _ := gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
 		if strings.ToLower(curHead) != state.HeadCommit {
 			if _, err := gitOutput(ctx, root, "reset", "--hard", state.HeadCommit); err != nil {
@@ -884,7 +902,7 @@ func cleanRepoRelPath(p string) (string, error) {
 	if s == "" || s == "." {
 		return "", errors.New("empty path")
 	}
-	if strings.HasPrefix(s, "/") || strings.Contains(s, "\x00") {
+	if strings.HasPrefix(s, "/") || strings.ContainsAny(s, "\x00\\") {
 		return "", errors.New("path must be relative to the repository root")
 	}
 	clean := path.Clean(s)
@@ -892,11 +910,169 @@ func cleanRepoRelPath(p string) (string, error) {
 		return "", errors.New("path escapes the repository root")
 	}
 	for _, seg := range strings.Split(clean, "/") {
-		if seg == "" || seg == "." || seg == ".." || strings.EqualFold(seg, ".git") {
+		if seg == "" || seg == "." || seg == ".." || namesGitDir(seg) {
 			return "", fmt.Errorf("disallowed path segment %q", seg)
 		}
 	}
 	return clean, nil
+}
+
+// ntfsShortGit is the 8.3 name NTFS gives `.git`.
+var ntfsShortGit = regexp.MustCompile(`^(?i)git~[0-9]+$`)
+
+// namesGitDir reports whether a path segment is `.git` on some
+// filesystem a checkout may be on: in any case, with the trailing dots
+// and spaces or the stream suffix NTFS drops, as NTFS's short name, or
+// with the code points HFS+ ignores. git refuses the same names
+// (core.protectNTFS, core.protectHFS).
+//
+// @decision(DL-126)
+func namesGitDir(seg string) bool {
+	seg = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 0x200c && r <= 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x206a && r <= 0x206f, r == 0xfeff:
+			return -1
+		}
+		return r
+	}, seg)
+	if i := strings.IndexByte(seg, ':'); i >= 0 {
+		seg = seg[:i]
+	}
+	seg = strings.TrimRight(seg, ". ")
+	return strings.EqualFold(seg, ".git") || ntfsShortGit.MatchString(seg)
+}
+
+// archivePaths lists the cleaned paths a worktree archive would write.
+func archivePaths(archive []byte) ([]string, error) {
+	if len(archive) == 0 {
+		return nil, nil
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return nil, fmt.Errorf("git: read worktree archive: %w", err)
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(io.LimitReader(gz, MaxSyncExportBytes+(4<<20)))
+	var paths []string
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return paths, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("git: unpack worktree archive: %w", err)
+		}
+		if hdr.Typeflag == tar.TypeXGlobalHeader || hdr.Typeflag == tar.TypeXHeader || hdr.Typeflag == tar.TypeDir {
+			continue
+		}
+		clean, err := cleanRepoRelPath(hdr.Name)
+		if err != nil {
+			return nil, fmt.Errorf("git: archive entry %q: %w", hdr.Name, err)
+		}
+		paths = append(paths, clean)
+	}
+}
+
+// refuseUnseenPaths refuses an in-place apply that would touch a file
+// `git status` never shows: an archive entry the checkout ignores, or a
+// deletion of a path the sandbox's commit does not track. An honest
+// export holds neither, since it is built from `git status`.
+//
+// @decision(DL-126)
+func refuseUnseenPaths(ctx context.Context, root, headCommit string, packed, deleted []string) error {
+	if len(packed) == 0 && len(deleted) == 0 {
+		return nil
+	}
+	listing, err := gitOutputRaw(ctx, root, "ls-tree", "-r", "-z", "--name-only", headCommit)
+	if err != nil {
+		return fmt.Errorf("git: list %s: %w", headCommit[:12], err)
+	}
+	tracked := map[string]bool{}
+	for _, p := range strings.Split(listing, "\x00") {
+		tracked[p] = true
+	}
+	for _, d := range deleted {
+		clean, err := cleanRepoRelPath(d)
+		if err != nil {
+			return fmt.Errorf("git: deleted path %q: %w", d, err)
+		}
+		if !tracked[clean] {
+			return fmt.Errorf("git: the sandbox's export deletes %q, which its commit does not track; nothing was applied", clean)
+		}
+	}
+	var untracked []string
+	for _, p := range packed {
+		if !tracked[p] {
+			untracked = append(untracked, p)
+		}
+	}
+	if len(untracked) == 0 {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "check-ignore", "--no-index", "-z", "--stdin")
+	cmd.Dir = root
+	cmd.Stdin = strings.NewReader(strings.Join(untracked, "\x00") + "\x00")
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	switch {
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		return nil // nothing is ignored
+	case err != nil:
+		return fmt.Errorf("git: check the export against this checkout's ignore rules: %w", err)
+	}
+	ignored := strings.Split(strings.TrimRight(string(out), "\x00"), "\x00")
+	shown := ignored
+	if len(shown) > 5 {
+		shown = shown[:5]
+	}
+	return fmt.Errorf("git: the sandbox's export writes %d path(s) this checkout ignores (%s); nothing was applied",
+		len(ignored), strings.Join(shown, ", "))
+}
+
+// touchedHooksDir names the checkout's hooks directory, relative to
+// root, when it lies in the working tree and the sandbox's commits or
+// uncommitted state change a file under it. Empty otherwise.
+//
+// @decision(DL-126)
+func touchedHooksDir(ctx context.Context, root, headCommit string, packed, deleted []string) string {
+	hooks, err := gitOutput(ctx, root, "rev-parse", "--git-path", "hooks")
+	if err != nil || hooks == "" {
+		return ""
+	}
+	if !filepath.IsAbs(hooks) {
+		hooks = filepath.Join(root, hooks)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(hooks); err == nil {
+		hooks = real
+	}
+	rel, err := filepath.Rel(realRoot, hooks)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	prefix := strings.ToLower(filepath.ToSlash(rel))
+	if prefix == ".git" || strings.HasPrefix(prefix, ".git/") {
+		return ""
+	}
+	touched := append(slices.Clone(packed), deleted...)
+	if cur, err := gitOutput(ctx, root, "rev-parse", "--verify", "HEAD"); err == nil && !strings.EqualFold(cur, headCommit) {
+		if diff, err := gitOutputRaw(ctx, root, "diff", "--name-only", "-z", cur, headCommit); err == nil {
+			touched = append(touched, strings.Split(diff, "\x00")...)
+		}
+	}
+	for _, p := range touched {
+		p = strings.ToLower(strings.TrimPrefix(filepath.ToSlash(p), "./"))
+		if p == "" {
+			continue
+		}
+		if prefix == "." || p == prefix || strings.HasPrefix(p, prefix+"/") {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return ""
 }
 
 // ensureCanonicalRelParent checks that no directory component along
