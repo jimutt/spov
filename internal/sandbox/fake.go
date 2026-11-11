@@ -564,6 +564,14 @@ func (h *FakeHandle) ExecInputs() [][]byte {
 }
 
 func (h *FakeHandle) ExecInput(ctx context.Context, command []string, stdin []byte) (ExecResult, error) {
+	return h.ExecBounded(ctx, command, stdin, MaxExecOutput)
+}
+
+// ExecBounded answers a canned result over maxOutput as a real sandbox
+// does.
+//
+// @decision(DL-130)
+func (h *FakeHandle) ExecBounded(ctx context.Context, command []string, stdin []byte, maxOutput int) (ExecResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ExecResult{}, err
 	}
@@ -578,7 +586,7 @@ func (h *FakeHandle) ExecInput(ctx context.Context, command []string, stdin []by
 		return ExecResult{}, h.provider.ExecErr
 	}
 	if res, ok := h.provider.ExecResults[strings.Join(command, " ")]; ok {
-		return res, nil
+		return BoundOutput(res, maxOutput)
 	}
 	return ExecResult{}, nil
 }
