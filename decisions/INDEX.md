@@ -2,6 +2,8 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-129 | Administrators manage the allowlist on the Settings page | proposed | web | allowlist, settings, admin, access |
+| DL-128 | An allowlist entry names an e-mail address or a GitHub account, and a user is the GitHub account, not the address | proposed | server | auth, login, allowlist, access |
 | DL-117 | On a phone the composer is one container: the text over a toolbar holding the model chip and a small Send, folded to one row while idle | accepted | web | web, phone, composer |
 | DL-116 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
 | DL-115 | A session's last-message preview comes from its root conversations, never from a subagent | accepted | server | subagents |
