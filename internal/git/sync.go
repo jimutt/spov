@@ -113,6 +113,23 @@ type SyncResult struct {
 	// DirtyCommitted is true when uncommitted sandbox edits were captured
 	// as a WIP commit on FallbackBranch.
 	DirtyCommitted bool
+	// RangeFrom and RangeTo are the short commit names bounding the
+	// commits brought back; empty when there are none.
+	RangeFrom, RangeTo string
+	// Changes lists every path the sync changed, added or deleted
+	// relative to what the checkout held before, sorted by path.
+	//
+	// @decision(DL-136)
+	Changes []PathChange
+}
+
+// PathChange is one path a sync changed: Status is 'A' (added), 'M'
+// (modified) or 'D' (deleted).
+//
+// @decision(DL-136)
+type PathChange struct {
+	Status byte
+	Path   string
 }
 
 var hexCommitRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -484,8 +501,7 @@ func bundleAhead(ctx context.Context, root, remote, branch, head, tip string) ([
 }
 
 func isAncestor(ctx context.Context, dir, ancestor, descendant string) bool {
-	cmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", ancestor, descendant)
-	cmd.Dir = dir
+	cmd := Command(ctx, dir, nil, "merge-base", "--is-ancestor", ancestor, descendant)
 	return cmd.Run() == nil
 }
 
@@ -548,7 +564,9 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 	}
 	if inPlace {
 		curHead, _ := gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
-		if strings.ToLower(curHead) != state.HeadCommit {
+		curHead = strings.ToLower(curHead)
+		before := trackedAt(ctx, root, curHead)
+		if curHead != state.HeadCommit {
 			if _, err := gitOutput(ctx, root, "reset", "--hard", state.HeadCommit); err != nil {
 				return SyncResult{}, fmt.Errorf("git: advance %s to %s: %w", startBranch, state.HeadCommit[:12], err)
 			}
@@ -557,12 +575,19 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 		if err != nil {
 			return SyncResult{}, err
 		}
+		from := state.BaseCommit
+		if !commitExists(ctx, root, from) {
+			from = curHead
+		}
 		return SyncResult{
 			InPlace:      true,
 			Branch:       startBranch,
 			HeadCommit:   state.HeadCommit,
 			Commits:      commits,
 			FilesChanged: changed,
+			RangeFrom:    shortRange(commits, from),
+			RangeTo:      shortRange(commits, state.HeadCommit),
+			Changes:      inPlaceChanges(ctx, root, curHead, state.HeadCommit, before, state.WorktreeTar, state.Deleted),
 		}, nil
 	}
 
@@ -590,6 +615,9 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 		Commits:        commits,
 		FilesChanged:   filesChanged,
 		DirtyCommitted: dirtyCommitted,
+		RangeFrom:      shortRange(commits, state.BaseCommit),
+		RangeTo:        shortRange(commits, state.HeadCommit),
+		Changes:        commitChanges(ctx, root, state.BaseCommit, targetCommit),
 	}, nil
 }
 
@@ -1009,8 +1037,7 @@ func refuseUnseenPaths(ctx context.Context, root, headCommit string, packed, del
 	if len(untracked) == 0 {
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, "git", "check-ignore", "--no-index", "-z", "--stdin")
-	cmd.Dir = root
+	cmd := Command(ctx, root, nil, "check-ignore", "--no-index", "-z", "--stdin")
 	cmd.Stdin = strings.NewReader(strings.Join(untracked, "\x00") + "\x00")
 	out, err := cmd.Output()
 	var exit *exec.ExitError
@@ -1035,7 +1062,8 @@ func refuseUnseenPaths(ctx context.Context, root, headCommit string, packed, del
 //
 // @decision(DL-126)
 func touchedHooksDir(ctx context.Context, root, headCommit string, packed, deleted []string) string {
-	hooks, err := gitOutput(ctx, root, "rev-parse", "--git-path", "hooks")
+	hooks, err := outputOf(commandReadingHooksPath(ctx, root, "rev-parse", "--git-path", "hooks"))
+	hooks = strings.TrimSpace(hooks)
 	if err != nil || hooks == "" {
 		return ""
 	}
@@ -1137,11 +1165,11 @@ func gitOutputRaw(ctx context.Context, dir string, args ...string) (string, erro
 }
 
 func gitOutputEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	if env != nil {
-		cmd.Env = env
-	}
+	return outputOf(Command(ctx, dir, env, args...))
+}
+
+// outputOf runs cmd and returns its stdout, or its stderr as the error.
+func outputOf(cmd *exec.Cmd) (string, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -1153,4 +1181,98 @@ func gitOutputEnv(ctx context.Context, dir string, env []string, args ...string)
 		return "", fmt.Errorf("%s", RedactAll(msg))
 	}
 	return string(out), nil
+}
+
+// shortRange is a commit's short name, or empty when no commits were
+// brought back.
+func shortRange(commits int, sha string) string {
+	if commits <= 0 || sha == "" {
+		return ""
+	}
+	return sha[:min(12, len(sha))]
+}
+
+// trackedAt is the set of paths commit tracks; nil when it cannot be
+// read.
+//
+// @decision(DL-136)
+func trackedAt(ctx context.Context, root, commit string) map[string]bool {
+	listing, err := gitOutputRaw(ctx, root, "ls-tree", "-r", "-z", "--name-only", commit)
+	if err != nil {
+		return nil
+	}
+	tracked := map[string]bool{}
+	for _, p := range strings.Split(listing, "\x00") {
+		if p != "" {
+			tracked[p] = true
+		}
+	}
+	return tracked
+}
+
+// commitChanges is `git diff --name-status` between two commits, as
+// path changes. Renames are reported as a delete and an add. An
+// unreadable range lists nothing.
+//
+// @decision(DL-136)
+func commitChanges(ctx context.Context, root, from, to string) []PathChange {
+	if from == "" || !commitExists(ctx, root, from) {
+		return nil
+	}
+	out, err := gitOutputRaw(ctx, root, "diff", "--name-status", "-z", "--no-renames", from, to)
+	if err != nil {
+		return nil
+	}
+	fields := strings.Split(out, "\x00")
+	var changes []PathChange
+	for i := 0; i+1 < len(fields); i += 2 {
+		if fields[i] == "" {
+			break
+		}
+		switch st := fields[i][0]; st {
+		case 'A', 'M', 'D':
+			changes = append(changes, PathChange{Status: st, Path: fields[i+1]})
+		default:
+			changes = append(changes, PathChange{Status: 'M', Path: fields[i+1]})
+		}
+	}
+	return changes
+}
+
+// inPlaceChanges lists what an in-place apply changed: the committed
+// difference from the checkout's old head, then the sandbox's
+// uncommitted files and deletions on top. A path the old head did not
+// track and no commit added is an added file.
+//
+// @decision(DL-136)
+func inPlaceChanges(ctx context.Context, root, oldHead, newHead string, before map[string]bool, worktreeTar []byte, deleted []string) []PathChange {
+	byPath := map[string]byte{}
+	if oldHead != newHead {
+		for _, c := range commitChanges(ctx, root, oldHead, newHead) {
+			byPath[c.Path] = c.Status
+		}
+	}
+	packed, _ := archivePaths(worktreeTar)
+	for _, p := range packed {
+		switch st, seen := byPath[p]; {
+		case seen && st == 'D':
+			byPath[p] = 'M'
+		case seen:
+		case before[p]:
+			byPath[p] = 'M'
+		default:
+			byPath[p] = 'A'
+		}
+	}
+	for _, d := range deleted {
+		if clean, err := cleanRepoRelPath(d); err == nil {
+			byPath[clean] = 'D'
+		}
+	}
+	changes := make([]PathChange, 0, len(byPath))
+	for p, st := range byPath {
+		changes = append(changes, PathChange{Status: st, Path: p})
+	}
+	slices.SortFunc(changes, func(a, b PathChange) int { return strings.Compare(a.Path, b.Path) })
+	return changes
 }

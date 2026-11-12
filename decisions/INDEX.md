@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-136 | The CLI runs git without the checkout hooks, lists what a sync-back changed, prints agent text safely, and the installer validates versions | accepted | cli | cli, sync, security, installer |
 | DL-127 | The session store holds a hash of a browser session token, never the token | accepted | server | auth, login, security |
 | DL-126 | Sync-back writes only what git status would show, and never lands in place over a hooks directory | accepted | cli | sync, security, cli |
 | DL-117 | On a phone the composer is one container: the text over a toolbar holding the model chip and a small Send, folded to one row while idle | accepted | web | web, phone, composer |
