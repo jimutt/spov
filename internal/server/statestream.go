@@ -246,8 +246,16 @@ type sseSender interface {
 func problemOf(err error) ProblemView {
 	status := http.StatusInternalServerError
 	var se huma.StatusError
-	if errors.As(toHumaError(err), &se) {
+	mapped := toHumaError(err)
+	if errors.As(mapped, &se) {
 		status = se.GetStatus()
+	}
+	// An unexpected store error is answered with the fixed message the
+	// API gives, never its text.
+	//
+	// @decision(DL-135)
+	if status == http.StatusInternalServerError && unexpectedStoreError(err) {
+		return ProblemView{Title: http.StatusText(status), Status: status, Detail: mapped.Error()}
 	}
 	return ProblemView{Title: http.StatusText(status), Status: status, Detail: redact.Error(err)}
 }
