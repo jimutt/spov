@@ -60,8 +60,8 @@ func TestEveryExistingComponentMustBeListedUnderItsExactName(t *testing.T) {
 	}
 }
 
-// windowsProbeRoot is where the NTFS test works, on this machine's
-// Windows drive. It is removed only when empty.
+// windowsProbeRoot is where the NTFS test works: a Windows drive
+// mounted under WSL. It is removed only when empty.
 const windowsProbeRoot = "/mnt/c/Users/Public/spov-fix-probe"
 
 // TestSyncBackOnAWindowsDriveNeverWritesThroughAShortName runs a real
