@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/jimutt/spov/internal/credentials"
 	"github.com/jimutt/spov/internal/server/client"
 	"github.com/jimutt/spov/internal/version"
 )
@@ -225,6 +227,18 @@ func loopbackURL(raw string) bool {
 //
 // @decision(DL-002)
 func (e *Env) spawnLocal(ctx context.Context, path string) (*client.Client, error) {
+	// A local server cannot start without Modal, and its failure would
+	// surface here only as a timeout that names a log file.
+	//
+	// @decision(DL-125)
+	if e.Spawn == nil && e.Provider == nil && e.NewProvider == nil {
+		// Only when there are none at all: anything else is the Modal
+		// SDK's to judge, which merges the environment and its file.
+		if _, err := credentials.ResolveModal(e.Environ.Getenv, e.Environ.UserHomeDir); errors.Is(err, credentials.ErrNoModalCredentials) {
+			return nil, fmt.Errorf("%s; `spov init` walks you through the whole setup",
+				strings.TrimPrefix(err.Error(), "credentials: "))
+		}
+	}
 	if err := e.spawn(ctx); err != nil {
 		return nil, fmt.Errorf("starting the local spov server: %w", err)
 	}

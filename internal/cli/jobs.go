@@ -44,6 +44,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		access   string
 		asJSON   bool
 		routed   routedFlags
+		template templateFlags
 		envVars  []string
 		wait     bool
 		timeout  time.Duration
@@ -72,7 +73,8 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 			return createJob(cmd.Context(), env, createOptions{
 				Goal: goal, Kind: kind, Repos: repos, Landing: landing, Check: check,
 				Model: model, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
-				Env: envVars, Wait: wait, Timeout: timeout, Hold: hold,
+				Template: template,
+				Env:      envVars, Wait: wait, Timeout: timeout, Hold: hold,
 			})
 		},
 	}
@@ -108,6 +110,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		"how far the sandbox's git credentials reach: repos (the job's) or all (every repository they can);"+
 			" sandbox.job_git_access, then your account's job default, then repos, when unset")
 	addRoutedFlags(cmd, &routed, "sandbox.job_credentials")
+	addTemplateFlags(env, cmd, &template, "sandbox.job_template")
 	addEnvFlag(cmd, &envVars)
 	// @decision(DL-103)
 	cmd.Flags().BoolVar(&wait, "wait", false,
@@ -120,6 +123,8 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 type createOptions struct {
 	// @decision(DL-075)
 	Routed routedFlags
+	// @decision(DL-122)
+	Template templateFlags
 	// Env are --env KEY=VALUE.
 	//
 	// @decision(DL-096)
@@ -191,6 +196,13 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		return err
 	}
 	cfg := res.Config
+	// A job never takes sandbox.template.
+	//
+	// @decision(DL-122)
+	template, templateKey, templateConfigured := templateFor(cfg, opts.Template, true)
+	if template != "" {
+		underTemplate(env, &cfg, template, true)
+	}
 	// @decision(DL-096)
 	vars, err := launchEnv(cfg.Sandbox.Env, opts.Env, cfg.Sandbox.Addons)
 	if err != nil {
@@ -199,6 +211,11 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 	c, err := env.client(ctx)
 	if err != nil {
 		return err
+	}
+	if templateConfigured {
+		if err := checkConfiguredTemplate(ctx, c, template, templateKey); err != nil {
+			return err
+		}
 	}
 	// A sync job is seeded from the checkout it is created in, as a
 	// synced `spov fly`, and checked before the server is asked.
@@ -211,6 +228,11 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 			return errors.New("a sync job works in one repository, the checkout's; drop the extra --repo flags")
 		}
 		ref, req, checkout, err := env.resolveSyncLaunch(ctx, c, cfg, opts.Repos)
+		var mismatch repoMismatchError
+		if errors.As(err, &mismatch) {
+			return fmt.Errorf("a sync job starts from the checkout it is created in (%s), which does not match --repo %s; drop --repo",
+				mismatch.checkout, mismatch.flag)
+		}
 		if err != nil {
 			return fmt.Errorf("a sync job starts from the checkout it is created in: %w", err)
 		}
@@ -250,8 +272,10 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		Addons: sb.Addons,
 		Apt:    sb.Apt,
 		// @decision(DL-096)
-		Env:    vars,
-		Egress: sb.Egress,
+		Env: vars,
+		// @decision(DL-122)
+		Template: template,
+		Egress:   sb.Egress,
 		// @decision(DL-068)
 		EgressExtraDomains: sb.EgressExtraDomains,
 		// No timeout and no idle timeout: the server derives both from
