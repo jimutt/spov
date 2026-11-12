@@ -16,6 +16,7 @@ import (
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/store"
 	"github.com/jimutt/spov/internal/telemetry"
 )
@@ -240,9 +241,13 @@ func (r *Recorder) Sync(ctx context.Context) error {
 func (r *Recorder) startCaptureLocked(ctx context.Context, sess store.Session) {
 	cctx, cancel := context.WithCancel(ctx)
 	r.captures[sess.ID] = cancel
+	// A panic ends this capture and is logged; the next poll starts it
+	// again.
+	//
+	// @decision(DL-135)
 	r.wg.Go(func() {
 		defer r.forgetCapture(sess.ID, cancel)
-		r.record(cctx, sess)
+		safego.Do("recorder capture of session "+sess.ID, r.warn, func() { r.record(cctx, sess) })
 	})
 }
 
@@ -507,17 +512,25 @@ func (r *Recorder) spanOver(ctx context.Context, sess store.Session, conn Connec
 	var reader sync.WaitGroup
 	reader.Go(func() {
 		defer func() { _ = body.Close() }()
-		err := readSSEFrames(sctx, body, func(raw string) bool {
-			if !queue.push(raw) {
-				queue.close(fmt.Errorf("the sandbox outran the recorder by more than %d bytes", RecorderBufferBytes))
-				return false
+		// It parses what the sandbox sends; a panic ends the span with
+		// an error instead of the process.
+		//
+		// @decision(DL-135)
+		if safego.Do("recorder frame reader", r.warn, func() {
+			err := readSSEFrames(sctx, body, func(raw string) bool {
+				if !queue.push(raw) {
+					queue.close(fmt.Errorf("the sandbox outran the recorder by more than %d bytes", RecorderBufferBytes))
+					return false
+				}
+				return true
+			})
+			if err == nil {
+				err = io.EOF
 			}
-			return true
-		})
-		if err == nil {
-			err = io.EOF
+			queue.close(err)
+		}) {
+			queue.close(errors.New("the frame reader panicked"))
 		}
-		queue.close(err)
 	})
 	defer func() {
 		stop()

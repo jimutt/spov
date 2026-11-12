@@ -12,6 +12,7 @@ import (
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -114,7 +115,10 @@ func (f pollFeed) Subscribe(ctx context.Context, p auth.Principal, limit int) (<
 	// races the consumer's own teardown, and an unbuffered channel would
 	// block a feed nobody is reading until its context is cancelled.
 	out := make(chan []store.Session, 1)
-	go func() {
+	// A panic in a feed closes its stream and is logged; the process goes on.
+	//
+	// @decision(DL-135)
+	go safego.Do("session feed", f.warn, func() {
 		defer close(out)
 		out <- first
 		prev := fingerprint(first) + f.mark(ctx, p, first)
@@ -148,7 +152,7 @@ func (f pollFeed) Subscribe(ctx context.Context, p auth.Principal, limit int) (<
 				return
 			}
 		}
-	}()
+	})
 	return out, nil
 }
 
@@ -309,7 +313,8 @@ func (f pollEvents) Subscribe(ctx context.Context, orgID, sessionID string, afte
 		return nil, err
 	}
 	out := make(chan eventBatch, 1)
-	go func() {
+	// @decision(DL-135)
+	go safego.Do("session log feed", f.warn, func() {
 		defer close(out)
 		cursor, batch := after, first
 		for {
@@ -332,7 +337,7 @@ func (f pollEvents) Subscribe(ctx context.Context, orgID, sessionID string, afte
 				return
 			}
 		}
-	}()
+	})
 	return out, nil
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/jimutt/spov/internal/credproxy"
 	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -397,12 +398,13 @@ func (s *Service) freshConsoleToken(ctx context.Context, orgID, userID string, n
 	}
 	if refreshed {
 		s.pushes.Add(1)
-		go func() {
+		// @decision(DL-135)
+		go safego.Do("opencode grant push", s.deps.Warn, func() {
 			defer s.pushes.Done()
 			s.pushOpenCodeGrants(context.WithoutCancel(ctx), func(sess store.Session) bool {
 				return sess.OrgID == orgID && sess.OwnerID == userID
 			})
-		}()
+		})
 	}
 	return g.Access, g.Generation, "", nil
 }

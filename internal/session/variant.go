@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/toolchain"
 )
@@ -120,7 +121,19 @@ func (v *VariantBuilder) start(ctx context.Context, spec sandbox.ImageSpec, rebu
 	}
 	b := &variantBuild{done: make(chan struct{})}
 	v.running[name] = b
-	go v.build(context.WithoutCancel(ctx), spec, rebuild, b)
+	// A panic in a build is logged and fails the build, so a launch
+	// waiting on it is released rather than the process ended.
+	//
+	// @decision(DL-135)
+	go func() {
+		if safego.Do("image build "+name, v.Warn, func() { v.build(context.WithoutCancel(ctx), spec, rebuild, b) }) {
+			b.err = errors.New("the image build panicked")
+			v.mu.Lock()
+			delete(v.running, name)
+			v.mu.Unlock()
+			close(b.done)
+		}
+	}()
 	return b, nil
 }
 
