@@ -168,6 +168,17 @@ func newTenantWorld(t *testing.T) *tenantWorld {
 		d.OrgApps = &OrgApps{Store: d.Store, Sealer: sealer}
 		d.OrgGitHub = &fakeOrgGitHub{}
 		d.OrgRoutedCredentials = &SealedOrgRoutedCredentials{Store: d.Store, Sealer: sealer}
+		// The sweep sends every route as each user in quick succession;
+		// the request limits (DL-133) are not what it tests, so they are
+		// set far above what it sends, and a 429 would hide the answer
+		// it checks.
+		limits := DefaultLimits()
+		limits.Requests = Rate{PerMinute: 1_000_000, Burst: 1_000_000}
+		limits.Creates = Rate{PerMinute: 1_000_000, Burst: 1_000_000}
+		limits.SignIns = Rate{PerMinute: 1_000_000, Burst: 1_000_000}
+		limits.DevicePolls = Rate{PerMinute: 1_000_000, Burst: 1_000_000}
+		limits.Streams, limits.InFlight = 1_000, 1_000
+		d.Limits = &limits
 		// A login makes the browser-session routes exist; the cookie
 		// flow itself is not used, the principal is static.
 		w.login = &Login{Sessions: sessions, Users: d.Store.Users(), OrgID: auth.LocalID}
