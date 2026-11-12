@@ -585,7 +585,7 @@ type hintStripper struct{ http.ResponseWriter }
 
 func (h *hintStripper) WriteHeader(code int) {
 	if isHint(code) {
-		hdr := h.ResponseWriter.Header()
+		hdr := h.Header()
 		for k := range hdr {
 			delete(hdr, k)
 		}

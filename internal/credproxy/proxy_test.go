@@ -538,7 +538,7 @@ func TestAnEchoedCredentialInAnotherFormNeverReachesTheClient(t *testing.T) {
 				_, _ = io.WriteString(w, "done")
 			}
 		})
-	get := func(path string, trace *httptrace.ClientTrace) (*http.Response, string) {
+	get := func(path string, trace *httptrace.ClientTrace) (int, string) {
 		t.Helper()
 		req, _ := http.NewRequest(http.MethodGet, "https://forge.example.com"+path, nil)
 		if trace != nil {
@@ -548,9 +548,9 @@ func TestAnEchoedCredentialInAnotherFormNeverReachesTheClient(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		return resp, string(body)
+		return resp.StatusCode, string(body)
 	}
 
 	if _, body := get("/escaped", nil); strings.Contains(body, "real-token") || !strings.Contains(body, scrubbed) {
@@ -559,22 +559,22 @@ func TestAnEchoedCredentialInAnotherFormNeverReachesTheClient(t *testing.T) {
 	if _, body := get("/urlencoded", nil); strings.Contains(body, "real-token") {
 		t.Errorf("a URL-encoded echo reached the client: %s", body)
 	}
-	if resp, body := get("/range", nil); resp.StatusCode == http.StatusPartialContent || strings.Contains(body, "real-token") {
-		t.Errorf("a partial response was passed on: %d %s", resp.StatusCode, body)
+	if status, body := get("/range", nil); status == http.StatusPartialContent || strings.Contains(body, "real-token") {
+		t.Errorf("a partial response was passed on: %d %s", status, body)
 	}
-	if resp, body := get("/pack-range", nil); resp.StatusCode != http.StatusPartialContent || body != "bytes" {
-		t.Errorf("a partial binary response was refused: %d %s", resp.StatusCode, body)
+	if status, body := get("/pack-range", nil); status != http.StatusPartialContent || body != "bytes" {
+		t.Errorf("a partial binary response was refused: %d %s", status, body)
 	}
 	var hinted http.Header
-	resp, body := get("/hints", &httptrace.ClientTrace{Got1xxResponse: func(_ int, h textproto.MIMEHeader) error {
+	status, body := get("/hints", &httptrace.ClientTrace{Got1xxResponse: func(_ int, h textproto.MIMEHeader) error {
 		hinted = http.Header(h)
 		return nil
 	}})
 	if len(hinted) != 0 {
 		t.Errorf("early hint headers reached the client: %v", hinted)
 	}
-	if resp.StatusCode != http.StatusOK || body != "done" {
-		t.Errorf("the final response after a hint = %d %q", resp.StatusCode, body)
+	if status != http.StatusOK || body != "done" {
+		t.Errorf("the final response after a hint = %d %q", status, body)
 	}
 	got := r.audits(5)
 	if len(got) < 5 {
