@@ -69,8 +69,12 @@ for everyone together.
 
 The repository listing (`GET /api/v1/repos`) is kept for 60 seconds for each
 user and credential tier, also in memory per replica, so one user cannot spend
-the organisation's GitHub App rate limit by listing repeatedly. Storing or
-removing a credential, or the organisation's App, drops the affected entries.
+the organisation's GitHub App rate limit by listing repeatedly, and listings that
+miss at the same time share one read. Storing or removing a user's credential
+drops that user's own listings, never the organisation tier's, and removing the
+organisation's App drops the organisation's. A change shows at once on the
+replica that served it and within 60 seconds on the others. A local server does
+not cache the listing.
 
 ## Browser login
 

@@ -271,6 +271,12 @@ type Deps struct {
 	//
 	// @decision(DL-043)
 	GitAllowAll bool
+	// Local is a local server: one user, whose credentials the CLI
+	// writes to the keyring without telling the server. Its repository
+	// listing is read afresh every time rather than cached.
+	//
+	// @decision(DL-134)
+	Local bool
 	// Quotas are the org's per-user limits. The zero value means the
 	// built-in defaults; a user's stored quota overrides any subset.
 	//

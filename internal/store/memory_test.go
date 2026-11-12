@@ -110,8 +110,8 @@ func TestMemoryIndexesFollowARolledBackTransaction(t *testing.T) {
 	if stored, err := m.Conversations().PutEvents(ctx, []store.Event{event(2)}); err != nil || len(stored) != 1 {
 		t.Fatalf("the rolled-back sequence was not written again: %v, %d stored", err, len(stored))
 	}
-	if n, err := m.Conversations().PutMessages(ctx, []store.Message{{ID: store.NewID(time.Now()), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "msg_1", Role: "user", Text: "hi", At: now}}); err != nil || n != 1 {
-		t.Fatalf("the rolled-back message was not written again: %v, %d changed", err, n)
+	if n, err := m.Conversations().PutMessages(ctx, []store.Message{{ID: store.NewID(time.Now()), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "msg_1", Role: "user", Text: "hi", At: now}}); err != nil || n.Changed != 1 {
+		t.Fatalf("the rolled-back message was not written again: %v, %+v", err, n)
 	}
 	evs, err := m.Conversations().ListEvents(ctx, "org", sess.ID, 0, 0)
 	if err != nil || len(evs) != 2 || evs[0].Seq != 1 || evs[1].Seq != 2 {
@@ -136,6 +136,13 @@ func TestMemoryIndexesFollowARolledBackTransaction(t *testing.T) {
 	}
 	if convs, _ := m.Conversations().ListConversations(ctx, "org", sess.ID); len(convs) != 1 {
 		t.Errorf("%d conversations after the rollback", len(convs))
+	}
+	// The session's message index follows the rollback too (DL-131).
+	if size, _ := m.Conversations().StoredSize(ctx, "org", sess.ID); size.Rows != 4 || size.Bytes != int64(len("before")+len("hi")) {
+		t.Errorf("stored size after the rollback: %+v", size)
+	}
+	if recent, more, _ := m.Conversations().RecentMessages(ctx, "org", sess.ID, "", 10, 0); len(recent) != 2 || more {
+		t.Errorf("recent messages after the rollback: %+v, more %v", recent, more)
 	}
 }
 

@@ -252,6 +252,9 @@ Do each of these before a server is reachable by people you do not know.
    and TLS, restrict who can read it and its backups, and size its disk. One
    session stores at most `history.max_session_mib` (1024 MiB by default) of
    events and messages, after which its recording stops and its sandbox runs on.
+   A message sent to a job after that still reaches its supervisor: a handover
+   takes the job over at once. A transcript request returns at most the newest
+   20,000 messages or 64 MiB of a session, and says when it left older ones out.
    Hosted mode keeps sessions, events, messages and job files until you delete
    them by hand, and has no retention setting yet. (`history.retention` applies to
    a local server only.)

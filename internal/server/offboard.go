@@ -150,6 +150,24 @@ func (s *Service) Offboard(ctx context.Context, p auth.Principal, email string, 
 	}
 	failedCreds := 0
 	var lastCredErr error
+	// The OpenCode sign-in goes inside its own lock, which a refresh
+	// holds from its read to its write, so one in flight cannot store
+	// the grant again once this has deleted it. Its rows in the listing
+	// are then gone, which the loop below counts as deleted.
+	//
+	// @decision(DL-132) @decision(DL-015)
+	if s.deps.ConsoleGrants != nil {
+		err := s.deps.ConsoleGrants.Locked(ctx, user.OrgID, user.ID, func(cs ConsoleStore) error {
+			if err := cs.Delete(ctx, user.OrgID, user.ID, ConsoleSlotAttempt); err != nil {
+				return err
+			}
+			return cs.Delete(ctx, user.OrgID, user.ID, ConsoleSlotGrant)
+		})
+		if err != nil {
+			failedCreds++
+			lastCredErr = err
+		}
+	}
 	for _, c := range creds {
 		err := s.deps.Store.Credentials().Delete(ctx, c.OrgID, c.UserID, c.Platform)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
