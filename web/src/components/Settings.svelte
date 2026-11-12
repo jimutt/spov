@@ -36,6 +36,7 @@
   import ModelPicker from './ModelPicker.svelte';
   import OpenCodeConnect from './OpenCodeConnect.svelte';
   import OrgSettings from './OrgSettings.svelte';
+  import Allowlist from './Allowlist.svelte';
   import Done from './Done.svelte';
   import Problem from './Problem.svelte';
   import { field, help, label as fieldLabel, more, moreSummary, pageTitle, primary, sectionTitle } from './ui';
@@ -317,11 +318,15 @@
      out. @decision(DL-121) -->
 <Templates />
 
-<!-- Admin only; a server that keeps no App draws nothing.
-     @decision(DL-062) -->
+<!-- Admin only; a server that keeps no App, or no allowlist, draws
+     nothing, and a non-admin's page asks for neither.
+     @decision(DL-062) @decision(DL-129) -->
 {#if me.data?.admin}
   <section class="mb-12">
     <OrgSettings />
+  </section>
+  <section class="mb-12">
+    <Allowlist />
   </section>
 {/if}
 

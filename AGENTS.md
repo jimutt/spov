@@ -181,6 +181,7 @@ In a one-organisation deployment every user shares `org_id`, so the store's org 
 - The seeding logic for all three fields is `seedField` in `web/src/lib/settings.ts`. It must return its argument unchanged when nothing changed, or the `$effect` loops until `effect_update_depth_exceeded` (DL-062; `settings.svelte.test.ts`).
 - An empty value is sent, never omitted. This is the opposite of the job form's rule, and it is how a setting gets cleared (DL-062).
 - One `pending` flag disables both profile Save buttons and is checked in both handlers (DL-062; `components/settings.svelte.test.ts`).
+- The People section (`Allowlist.svelte`, logic in `web/src/lib/allowlist.ts`) manages the allowlist through its three routes and no other. Settings mounts it only for `/me`'s `admin`, and a 501 (local) draws nothing, as `OrgSettings.svelte` does. `entryRef` reads the field (`@` after the first character is an address) and `refProblem` keeps a malformed value out of the path; `canRemove` and `canDemote` mirror `guardLastAdmin` and `losesOwnAdmin`, and every act re-reads the list. The removal question (`removalQuestion`) must stay true to what `Service.Offboard` ends, and says nothing is ended when `also_covered_by` names another entry; a 500 offers Retry, the same delete. One `pending` flag covers every act, and there is no `$effect` (DL-129; `allowlist.test.ts`, `components/allowlist.svelte.test.ts`, "is absent for a non-admin" in `components/settings.svelte.test.ts`).
 
 ### Rendering Markdown an agent wrote
 
