@@ -34,6 +34,9 @@ type deviceServer struct {
 	name string
 	// polls counts token requests.
 	polls int
+	// refuse, when set, is the description a 429 to the next code
+	// request carries.
+	refuse string
 }
 
 func newDeviceServer(t *testing.T) *deviceServer {
@@ -44,8 +47,15 @@ func newDeviceServer(t *testing.T) *deviceServer {
 		_ = r.ParseForm()
 		s.mu.Lock()
 		s.name = r.Form.Get("name")
+		refuse := s.refuse
 		s.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if refuse != "" {
+			w.Header().Set("Retry-After", "2")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "slow_down", "error_description": refuse})
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"device_code": "the-device-code", "user_code": "BCDF-GHJK",
 			"verification_uri":          s.URL + "/device",
@@ -235,6 +245,25 @@ func TestServerLoginReportsADenial(t *testing.T) {
 	key, _ := credentials.ServerKey(srv.URL)
 	if _, err := creds.Get(key); !errors.Is(err, credentials.ErrNotFound) {
 		t.Error("a denied login stored a token")
+	}
+}
+
+// A server that refuses to start a sign-in, because too many were
+// started from this address, is quoted rather than dumped as an
+// oauth2 error.
+//
+// @decision(DL-133)
+func TestServerLoginPrintsTheServersRefusalToStart(t *testing.T) {
+	srv := newDeviceServer(t)
+	env, _ := loginEnv(t, srv)
+	const refusal = "Too many sign-ins were started from your address. Try again in 2 seconds."
+	srv.mu.Lock()
+	srv.refuse = refusal
+	srv.mu.Unlock()
+
+	err := runServerLogin(context.Background(), env, serverLoginOptions{NoBrowser: true})
+	if err == nil || err.Error() != "starting the login: "+refusal {
+		t.Fatalf("err = %v, want the server's own words", err)
 	}
 }
 

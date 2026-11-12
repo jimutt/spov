@@ -67,7 +67,8 @@ func LoadUser(env Env) (Result, error) {
 
 // userOnly are the top-level sections a project file may not set,
 // because they decide where a credential is sent, and where each
-// belongs instead. server holds only url.
+// belongs instead. server is named by url, the key that redirects
+// credentials; its trusted_proxies is read only by spov serve.
 //
 // @decision(DL-026)
 var userOnly = []userOnlyKey{

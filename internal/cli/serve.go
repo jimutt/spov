@@ -717,7 +717,15 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 		closeStore()
 		return server.Deps{}, nil, err
 	}
+	// @decision(DL-133)
+	trusted, err := config.TrustedProxyPrefixes(cfg.Server.TrustedProxies)
+	if err != nil {
+		closeStore()
+		return server.Deps{}, nil, err
+	}
 	return server.Deps{
+		// @decision(DL-133)
+		TrustedProxies: trusted,
 		// @decision(DL-084) @decision(DL-086)
 		Snapshots: snapshots,
 		// @decision(DL-087) @decision(DL-091)
