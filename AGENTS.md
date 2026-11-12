@@ -226,7 +226,7 @@ One record, DL-135, holds a group of small fixes; each has a guard test.
 - A hosted server refuses a `SPOV_SERVER_TOKEN` under 32 characters; a test or CI that starts one needs a long token (DL-135; `TestAHostedServerRefusesAWeakSharedToken`, `testServerToken`).
 - A new `git.Platform.FindPullRequest` passes the forge's URL through `git.OwnURL`, and a job view serves only an http or https link (`linkOnly`). A collected file's name passes `jobs.SafeEntryName` before it is stored or zipped (DL-135; `TestAPullRequestURLIsKeptOnlyOnItsOwnForge`, `TestAReportBundleRefusesANameAnExtractorCouldReadAsAPath`).
 - A goroutine the server starts runs under `safego.Do`, and a loop under `safego.Loop`, so a panic is logged and survived. Do not add a bare `go func()` for server work (DL-135; `TestAPanicInALaunchIsLoggedAndTheServerGoesOn`).
-- Every `Exec`, `ExecInput` and `SidecarExecInput` runs under a deadline its caller sets, and `sandbox.Fake` fails one without (`ErrExecNoDeadline`). A new caller sets its own bound; the Modal handle's `DefaultExecTimeout` is only a net (DL-135; `TestTheFakeRefusesAnExecWithNoDeadline`, `TestEverySandboxExecThisPackageMakesIsBounded`).
+- Every `Exec`, `ExecInput`, `ExecBounded` and `SidecarExecInput` runs under a deadline its caller sets, and `sandbox.Fake` fails one without (`ErrExecNoDeadline`). A new caller sets its own bound; the Modal handle's `DefaultExecTimeout` is only a net (DL-135; `TestTheFakeRefusesAnExecWithNoDeadline`, `TestEverySandboxExecThisPackageMakesIsBounded`).
 
 ## Reading a sandbox without paying for it
 

@@ -44,6 +44,12 @@ credentials, health checks and the published image, is covered in
 [`deploy/README.md`](../deploy/README.md). That page also covers the limits on
 image builds and the 60-second cache of the repository listing.
 
+> **Before you share a server with others,** read
+> [Running a shared server safely](security.md). Model keys in the server's
+> environment are given to every user's sessions
+> ([Shared model keys](security.md#shared-model-keys)), and spend is limited per
+> user as a rate, with no total cap ([Cost](security.md#cost)).
+
 ## The web dashboard
 
 A server with a database also serves a dashboard, signed in to with GitHub.
