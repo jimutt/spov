@@ -365,6 +365,29 @@ func TestEntrypointWritesThePluginForAJob(t *testing.T) {
 	}
 }
 
+// A job's pull request policy reaches both the plugin's goal and the
+// generated guide the entrypoint writes.
+//
+// @decision(DL-137)
+func TestTheEntrypointCarriesThePullRequestPolicyToTheGoalAndTheGuide(t *testing.T) {
+	e := jobEntrypoint()
+	e.Workspace = []WorkspaceRepo{{Slug: "acme/r", Dir: "r", Platform: "gh", Host: "github.com", CLI: CLIGh}}
+	e.Job.Workspace = e.Workspace
+	e.Job.PRPolicy = PRPolicyGoal
+	script, err := e.Script()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## This job's pull request", "The goal says which branch to work on"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script does not contain %q", want)
+		}
+	}
+	if strings.Contains(script, "gh pr create") || strings.Contains(script, "NEW BRANCH") {
+		t.Error("the script still carries spov's own pull request instructions")
+	}
+}
+
 func TestEntrypointWritesNoPluginForAnInteractiveSession(t *testing.T) {
 	e := jobEntrypoint()
 	e.Job = nil

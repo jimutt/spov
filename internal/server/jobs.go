@@ -171,6 +171,12 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 		Model: sreq.Model,
 		// @decision(DL-049)
 		MaxDuration: clock,
+		// Stored empty for spov's own policy.
+		//
+		// @decision(DL-137)
+		PRPolicy: storedPRPolicy(req.PRPolicy),
+		// @decision(DL-138)
+		SkipPrep: req.SkipPrep,
 	}
 	if err := job.Validate(); err != nil {
 		return store.Job{}, errors.Join(ErrInvalidRequest, err)
@@ -203,6 +209,16 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 				" cancel it with `spov jobs cancel %s`: %w", job.ID, job.ID, err)
 	}
 	return job, nil
+}
+
+// storedPRPolicy is the policy as a job row holds it: empty for spov's.
+//
+// @decision(DL-137)
+func storedPRPolicy(p store.PRPolicy) store.PRPolicy {
+	if p == store.PRPolicySpov {
+		return ""
+	}
+	return p
 }
 
 // createJobWithinQuota counts the owner's unfinished jobs and inserts
@@ -293,6 +309,15 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string, tmpl *store.Te
 		if strings.TrimSpace(req.Hold) != "" {
 			problems = append(problems, "only a sync job takes a hold")
 		}
+	}
+	// @decision(DL-137)
+	switch req.PRPolicy {
+	case "", store.PRPolicySpov, store.PRPolicyGoal:
+		if req.PRPolicy != "" && req.Kind != store.JobKindPR {
+			problems = append(problems, "only a pr job takes a pr_policy")
+		}
+	default:
+		problems = append(problems, fmt.Sprintf("unknown pr_policy %q; it is goal or spov", req.PRPolicy))
 	}
 	if len(problems) > 0 {
 		return store.SessionRequest{}, fmt.Errorf("%w: %s", ErrInvalidRequest, strings.Join(problems, "; "))

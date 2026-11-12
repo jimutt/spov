@@ -394,6 +394,9 @@ func jobFromRow(r sqlcgen.Job) store.Job {
 		ClockUsed: time.Duration(r.ClockUsedSeconds) * time.Second,
 		// @decision(DL-102)
 		SyncAppliedAt: goTimePtr(r.SyncAppliedAt),
+		// @decision(DL-137) @decision(DL-138)
+		PRPolicy: store.PRPolicy(r.PrPolicy),
+		SkipPrep: r.SkipPrep,
 	}
 }
 

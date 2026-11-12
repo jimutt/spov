@@ -1831,6 +1831,10 @@ func (s memJobs) Update(_ context.Context, j Job) error {
 	//
 	// @decision(DL-049)
 	j.MaxDuration = cur.MaxDuration
+	// Fixed at create, and not written by UpdateJob.
+	//
+	// @decision(DL-137) @decision(DL-138)
+	j.PRPolicy, j.SkipPrep = cur.PRPolicy, cur.SkipPrep
 	// Only SetSyncApplied writes it.
 	//
 	// @decision(DL-102)

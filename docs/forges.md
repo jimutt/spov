@@ -128,6 +128,12 @@ whatever it was created to reach, and a GitLab one whatever its account can,
 merging included. GitHub's search names none either, and reads across whatever
 the token reaches. The session page says so for those tokens.
 
+A GitHub App's token is narrowed by GitHub, so the proxy adds it on any path of
+its hosts, except the REST merge of a pull request, which gets no credential for
+an App token as for a stored one (DL-139). GraphQL can still merge, so see
+[github-access.md](github-access.md#4-a-sandboxs-git-access) for what holds a
+merge.
+
 Under the `install` and `agent` egress presets, a session can reach its own
 forges' hosts (DL-031), unless a forge is addressed by an IP or a single-label
 name, which only the `open` preset reaches. A forge on a private network cannot

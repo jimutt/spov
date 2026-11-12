@@ -1179,8 +1179,15 @@ export interface components {
             needs?: string[] | null;
             /** @description Attach no routed credential */
             no_credentials?: boolean;
+            /**
+             * @description For kind pr: whose instructions say how the branch is made and the pull request opened, spov's or the goal's; empty is spov's
+             * @enum {string}
+             */
+            pr_policy?: "spov" | "goal";
             repos: components["schemas"]["RepoRef"][] | null;
             sandbox?: components["schemas"]["SandboxConfigView"];
+            /** @description Skip the preparation pass: no model reads the goal before the job starts, and no check is proposed */
+            skip_prep?: boolean;
             /** @description Seed a sync job's repository from a local git branch and commit; required for kind sync */
             sync?: components["schemas"]["SessionSyncRequest"];
             /** @description One of the caller's sandbox templates: its settings apply where the request sets none */
@@ -1248,7 +1255,14 @@ export interface components {
             owner_id: string;
             /** @description The job succeeded with part of its deliverables, or with unfinished work */
             partial?: boolean;
+            /**
+             * @description A pr job's pull request policy; absent is spov's
+             * @enum {string}
+             */
+            pr_policy?: "spov" | "goal";
             session_id: string;
+            /** @description The job skipped the preparation pass */
+            skip_prep?: boolean;
             /** Format: date-time */
             started_at?: string;
             /** @enum {string} */

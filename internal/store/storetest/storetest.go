@@ -3563,6 +3563,10 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		j.Verdict = "check: passed"
 		j.Assessment = "spov's reading of the goal"
 		j.Model = "anthropic/claude-sonnet-5"
+		// @decision(DL-137) @decision(DL-138)
+		j.Kind = store.JobKindPR
+		j.PRPolicy = store.PRPolicyGoal
+		j.SkipPrep = true
 		if err := s.Jobs().Create(ctx, j); err != nil {
 			t.Fatal(err)
 		}
@@ -3584,6 +3588,8 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			{"Verdict", got.Verdict, j.Verdict},
 			{"Assessment", got.Assessment, j.Assessment},
 			{"Model", got.Model, j.Model},
+			{"PRPolicy", got.PRPolicy, j.PRPolicy},
+			{"SkipPrep", got.SkipPrep, j.SkipPrep},
 		} {
 			if f.got != f.want {
 				t.Errorf("a created job lost %s: got %v, want %v", f.name, f.got, f.want)
@@ -3617,6 +3623,10 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		// the model along and would pass either way.
 		blanked := back
 		blanked.Model = ""
+		// The job's options are fixed at create the same way.
+		//
+		// @decision(DL-137) @decision(DL-138)
+		blanked.PRPolicy, blanked.SkipPrep = "", false
 		if err := s.Jobs().Update(ctx, blanked); err != nil {
 			t.Fatal(err)
 		}
@@ -3626,6 +3636,9 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if back.Model != j.Model {
 			t.Errorf("an update blanked the model: got %q, want %q", back.Model, j.Model)
+		}
+		if back.PRPolicy != store.PRPolicyGoal || !back.SkipPrep {
+			t.Errorf("an update changed the job's options: pr policy %q, skip prep %v", back.PRPolicy, back.SkipPrep)
 		}
 	},
 	"jobs: a job needs a session of its own org": func(t *testing.T, s store.Store) {

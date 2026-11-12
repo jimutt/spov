@@ -120,6 +120,11 @@ func (s *Service) launchJob(ctx context.Context, sess store.Session, job store.J
 			//
 			// @decision(DL-050)
 			CheckCommand: job.CheckCommand,
+			// Read from the row, so the plugin's goal and the guide carry
+			// the same policy for the life of the job.
+			//
+			// @decision(DL-137)
+			PRPolicy: string(job.PRPolicy),
 		}
 	})
 }

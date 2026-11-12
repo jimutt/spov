@@ -199,6 +199,47 @@ func TestTheGuideNamesGlabForGitLab(t *testing.T) {
 	}
 }
 
+// Under the goal policy a pr job's guide says the goal names how its
+// pull request is opened, lists the forge CLIs present with no create
+// command, and keeps the refusal and scratchpad sections. Another kind,
+// or no policy, gets the guide as before.
+//
+// @decision(DL-137)
+func TestAGoalFlowGuideNamesTheCLIsAndNoCreateCommand(t *testing.T) {
+	repos := []WorkspaceRepo{
+		{Slug: "acme/api", Dir: "api", Platform: "gh", Host: "github.com", CLI: CLIGh},
+		{Slug: "o/r", Dir: "r", Platform: "cf", Host: "codefloe.com", CLI: CLITea},
+		{Slug: "g/s/r", Dir: "gl", Platform: "gl", Host: "gitlab.com", CLI: CLIGlab},
+	}
+	md := agentsMarkdown(repos, "pr", PRPolicyGoal)
+	for _, want := range []string{
+		"## This job's pull request", "goal says which branch to work on",
+		"**`gh`**", "**`tea`**", "**`glab`**", "merge request",
+		"## When a forge command is refused", "## Scratchpad",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("goal-flow guide lacks %q:\n%s", want, md)
+		}
+	}
+	for _, gone := range []string{"## Opening pull requests", "pr create", "mr create"} {
+		if strings.Contains(md, gone) {
+			t.Errorf("goal-flow guide still says %q:\n%s", gone, md)
+		}
+	}
+	refused := strings.Index(md, "## When a forge command is refused")
+	if refused < strings.Index(md, "## This job's pull request") || refused > strings.Index(md, "## Scratchpad") {
+		t.Error("the refusal section is not between the pull request section and the scratchpad")
+	}
+	for _, kind := range []string{"", "report"} {
+		if agentsMarkdown(repos, kind, PRPolicyGoal) != AgentsMarkdown(repos, kind) {
+			t.Errorf("kind %q took the policy", kind)
+		}
+	}
+	if agentsMarkdown(repos, "pr", "spov") != AgentsMarkdown(repos, "pr") || !strings.Contains(AgentsMarkdown(repos, "pr"), "gh pr create") {
+		t.Error("spov's policy changed the guide")
+	}
+}
+
 // A sync job's guide says where its work goes instead of how to open a
 // pull request, and a repository seeded from a bundle alone says it has
 // no origin.

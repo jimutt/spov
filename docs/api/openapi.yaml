@@ -761,6 +761,12 @@ components:
         no_credentials:
           description: Attach no routed credential
           type: boolean
+        pr_policy:
+          description: "For kind pr: whose instructions say how the branch is made and the pull request opened, spov's or the goal's; empty is spov's"
+          enum:
+            - spov
+            - goal
+          type: string
         repos:
           items:
             $ref: "#/components/schemas/RepoRef"
@@ -770,6 +776,9 @@ components:
             - "null"
         sandbox:
           $ref: "#/components/schemas/SandboxConfigView"
+        skip_prep:
+          description: "Skip the preparation pass: no model reads the goal before the job starts, and no check is proposed"
+          type: boolean
         sync:
           $ref: "#/components/schemas/SessionSyncRequest"
           description: Seed a sync job's repository from a local git branch and commit; required for kind sync
@@ -880,8 +889,17 @@ components:
         partial:
           description: The job succeeded with part of its deliverables, or with unfinished work
           type: boolean
+        pr_policy:
+          description: A pr job's pull request policy; absent is spov's
+          enum:
+            - spov
+            - goal
+          type: string
         session_id:
           type: string
+        skip_prep:
+          description: The job skipped the preparation pass
+          type: boolean
         started_at:
           format: date-time
           type: string

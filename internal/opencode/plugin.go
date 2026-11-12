@@ -149,7 +149,25 @@ type Plugin struct {
 	//
 	// @decision(DL-037)
 	Dir string
+	// PRPolicy is a pr job's pull request policy: PRPolicyGoal leaves
+	// the branch and the pull request to the goal, anything else is
+	// spov's own instructions.
+	//
+	// @decision(DL-137)
+	PRPolicy string
 }
+
+// PRPolicyGoal is the pull request policy that leaves the branch and
+// the pull request to the goal, as store.PRPolicyGoal spells it.
+//
+// @decision(DL-137)
+const PRPolicyGoal = "goal"
+
+// goalFlow reports whether this is a pr job whose goal says how its
+// pull request is opened.
+//
+// @decision(DL-137)
+func (p Plugin) goalFlow() bool { return p.Kind == "pr" && p.PRPolicy == PRPolicyGoal }
 
 // dir is the session's directory, defaulted.
 //
@@ -187,6 +205,11 @@ func (p Plugin) workspaceNote() string {
 		b.WriteString("\n\nWork in that directory. " + AgentsFile + " has the rest.")
 		return b.String()
 	}
+	// @decision(DL-137)
+	if p.goalFlow() {
+		b.WriteString("\n\nWork in those directories. " + AgentsFile + " has the rest.")
+		return b.String()
+	}
 	b.WriteString("\n\nWork in those directories. " + AgentsFile +
 		" has the rest, including how to open a pull request.")
 	return b.String()
@@ -203,11 +226,15 @@ func (p Plugin) deliverableNote() string {
 		// @decision(DL-100)
 		return syncEpilogue
 	case "pr":
-		// @decision(DL-051)
-		if usesCLI(p.Workspace, CLIGlab) {
-			return branchEpilogue + mergeRequestNote
+		// @decision(DL-051) @decision(DL-137)
+		epilogue := branchEpilogue
+		if p.goalFlow() {
+			epilogue = goalFlowEpilogue
 		}
-		return branchEpilogue
+		if usesCLI(p.Workspace, CLIGlab) {
+			return epilogue + mergeRequestNote
+		}
+		return epilogue
 	default:
 		return ""
 	}
@@ -329,6 +356,18 @@ const branchEpilogue = "\n\nWork on a NEW BRANCH and open a pull request from it
 	"request, call the " + PullRequestTool + " tool with its repository and branch: " +
 	"a pull request you do not record is not part of this job's result. Change only " +
 	"the repositories listed above."
+
+// goalFlowEpilogue takes branchEpilogue's place on a pr job whose goal
+// says which branch to work on and how the pull request is opened. It
+// keeps the guardrails, and is guidance as branchEpilogue is.
+//
+// @decision(DL-137) @decision(DL-039) @decision(DL-040)
+const goalFlowEpilogue = "\n\nNever commit or push to the default branch. The goal says which " +
+	"branch to work on and how the pull request is opened: follow it, and when it names a " +
+	"branch that already exists, add to that branch. Right after the pull request is opened " +
+	"or updated, call the " + PullRequestTool + " tool with its repository and branch: a pull " +
+	"request you do not record is not part of this job's result. Change only the " +
+	"repositories listed above."
 
 // mergeRequestNote is added to branchEpilogue when a GitLab repository is
 // selected, where a pull request is a merge request.

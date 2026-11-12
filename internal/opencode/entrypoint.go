@@ -361,12 +361,13 @@ func (e Entrypoint) writeWorkspaceGuide(b *strings.Builder) {
 	if len(e.Workspace) == 0 {
 		return
 	}
-	kind := ""
+	kind, policy := "", ""
 	if e.Job != nil {
-		kind = e.Job.Kind
+		kind, policy = e.Job.Kind, e.Job.PRPolicy
 	}
 	fmt.Fprintf(b, "cat > %s <<'SPOV_AGENTS_EOF'\n", AgentsFile)
-	b.WriteString(AgentsMarkdown(e.Workspace, kind))
+	// @decision(DL-137)
+	b.WriteString(agentsMarkdown(e.Workspace, kind, policy))
 	// @decision(DL-089)
 	if e.Resume == ResumeTranscript {
 		b.WriteString("\n" + TranscriptResumeNote)

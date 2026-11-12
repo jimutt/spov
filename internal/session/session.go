@@ -203,6 +203,11 @@ type JobOptions struct {
 	//
 	// @decision(DL-050)
 	CheckCommand string
+	// PRPolicy is a pr job's pull request policy: empty or "spov" for
+	// spov's instructions, "goal" for the goal's.
+	//
+	// @decision(DL-137)
+	PRPolicy string
 }
 
 // Session is a launched, healthy sandbox running an OpenCode server.
@@ -1014,8 +1019,10 @@ func jobPlugin(j *JobOptions, workspace []opencode.WorkspaceRepo, dir string) *o
 		Kind:         j.Kind,
 		Goal:         j.Goal,
 		CheckCommand: j.CheckCommand,
-		Permissions:  opencode.PermissionsForKind(j.Kind),
-		Workspace:    workspace,
+		// @decision(DL-137)
+		PRPolicy:    j.PRPolicy,
+		Permissions: opencode.PermissionsForKind(j.Kind),
+		Workspace:   workspace,
 		// The SAME directory the entrypoint cd's to, so the check's cwd
 		// cannot disagree with where the server actually starts.
 		//

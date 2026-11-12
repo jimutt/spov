@@ -255,6 +255,42 @@ func TestAGitHubAppTokenIsAddedOnAnyPath(t *testing.T) {
 	})
 }
 
+// A GitHub App token gets no credential on the REST merge of a pull
+// request, however the path is spelled, on github.com's API host and
+// under a GitHub Enterprise host's api/v3. Reading the merge status, the
+// pull request's other paths and GraphQL keep the token.
+//
+// @decision(DL-139)
+func TestAGitHubAppTokenIsNotUsedToMerge(t *testing.T) {
+	const api = "https://api.github.com/repos/acme/app/pulls/3"
+	checkPolicy(t, github, []policyCase{
+		{http.MethodPut, api + "/merge", false},
+		{http.MethodPost, api + "/merge", false},
+		{http.MethodPatch, api + "/Merge", false},
+		{http.MethodPut, api + "/MERGE;x=1", false},
+		{http.MethodPut, api + "/merge/", false},
+		{http.MethodPut, api + "/%6Derge", false},
+		{http.MethodPut, "https://api.github.com/repos/acme/app//pulls/3/merge", false},
+		{http.MethodPut, "https://api.github.com/repos/acme/app/x/../pulls/3/merge", false},
+		{http.MethodPut, "https://api.github.com/Repos/anyone/anything/Pulls/9/merge", false},
+		{http.MethodGet, api + "/merge", true},
+		{http.MethodHead, api + "/merge", true},
+		{http.MethodPost, "https://api.github.com/repos/acme/app/pulls", true},
+		{http.MethodPatch, api, true},
+		{http.MethodPost, api + "/reviews", true},
+		{http.MethodPost, "https://api.github.com/repos/acme/app/merges", true},
+		{http.MethodPost, "https://api.github.com/graphql", true},
+		{http.MethodPost, "https://github.com/acme/app.git/git-receive-pack", true},
+	})
+	checkPolicy(t, ghe, []policyCase{
+		{http.MethodPut, "https://git.example.com/api/v3/repos/o/r/pulls/1/merge", false},
+		{http.MethodPut, "https://git.example.com/API/V3/repos/o/r/pulls/1/merge", false},
+		{http.MethodGet, "https://git.example.com/api/v3/repos/o/r/pulls/1/merge", true},
+		{http.MethodPost, "https://git.example.com/api/v3/repos/o/r/pulls", true},
+		{http.MethodPost, "https://git.example.com/api/graphql", true},
+	})
+}
+
 // A request line in absolute form never gets a credential, even inside a
 // decrypted tunnel.
 //

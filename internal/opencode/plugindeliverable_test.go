@@ -189,8 +189,69 @@ func TestThePullRequestToolMatchesThePlugin(t *testing.T) {
 	if strings.Contains(pluginSource, `"`+PullRequestTool+`"`) || strings.Contains(pluginSource, `"`+DeliverableEvent+`"`) {
 		t.Error("the plugin spells a name as a literal instead of reading CONFIG")
 	}
-	if !strings.Contains(branchEpilogue, PullRequestTool) {
-		t.Error("a pr job's goal does not name the tool it records pull requests with")
+	// Both flows name the tool.
+	//
+	// @decision(DL-137)
+	for name, epilogue := range map[string]string{"spov": branchEpilogue, "goal": goalFlowEpilogue} {
+		if !strings.Contains(epilogue, PullRequestTool) {
+			t.Errorf("a pr job's goal under the %s policy does not name the tool it records pull requests with", name)
+		}
+	}
+	goal, err := (&Plugin{Kind: "pr", Goal: "g", PRPolicy: PRPolicyGoal}).Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decodeRenderedConfig(t, goal); got.PullRequestTool != PullRequestTool || got.DeliverableEvent != DeliverableEvent {
+		t.Errorf("under the goal policy rendered %q/%q", got.PullRequestTool, got.DeliverableEvent)
+	}
+}
+
+// Under the goal policy a pr job's re-asserted goal carries
+// goalFlowEpilogue in place of branchEpilogue: the guardrails stay, the
+// instruction to make a new branch and open the pull request goes, and the
+// tool, the repositories it matches and the permission allowlist are the
+// same as under spov's policy. Another kind ignores the policy.
+//
+// @decision(DL-137)
+func TestAGoalFlowJobFollowsTheGoalsBranchAndKeepsTheGuardrails(t *testing.T) {
+	ws := []WorkspaceRepo{{Slug: "acme/app", Dir: "app", Platform: "gh", Host: "github.com", CLI: CLIGh}}
+	spov, err := (&Plugin{Kind: "pr", Goal: "g", Workspace: ws}).Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	goal, err := (&Plugin{Kind: "pr", Goal: "g", Workspace: ws, PRPolicy: PRPolicyGoal}).Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, g := decodeRenderedConfig(t, spov), decodeRenderedConfig(t, goal)
+	if !strings.Contains(g.GoalText, goalFlowEpilogue) || strings.Contains(g.GoalText, branchEpilogue) {
+		t.Errorf("goal text under the goal policy:\n%s", g.GoalText)
+	}
+	for _, want := range []string{
+		"Never commit or push to the default branch", "add to that branch",
+		"Change only the repositories listed above",
+	} {
+		if !strings.Contains(g.GoalText, want) {
+			t.Errorf("goal text lacks %q", want)
+		}
+	}
+	for _, gone := range []string{"NEW BRANCH", "including how to open a pull request"} {
+		if strings.Contains(g.GoalText, gone) {
+			t.Errorf("goal text under the goal policy still says %q", gone)
+		}
+	}
+	if strings.Join(s.Allow, ",") != strings.Join(g.Allow, ",") || strings.Join(s.Deny, ",") != strings.Join(g.Deny, ",") {
+		t.Errorf("the policy changed the allowlist: %v / %v", s.Allow, g.Allow)
+	}
+	if len(s.Repos) != len(g.Repos) || g.PullRequestTool != s.PullRequestTool {
+		t.Errorf("the policy changed the pull request tool: %+v / %+v", s.Repos, g.Repos)
+	}
+	gl := Plugin{Kind: "pr", PRPolicy: PRPolicyGoal, Workspace: []WorkspaceRepo{{Slug: "g/s/r", Dir: "r", Host: "gitlab.com", CLI: CLIGlab}}}
+	if note := gl.deliverableNote(); !strings.HasPrefix(note, goalFlowEpilogue) || !strings.HasSuffix(note, mergeRequestNote) {
+		t.Errorf("a GitLab goal-flow note = %q", note)
+	}
+	if got := (Plugin{Kind: "report", PRPolicy: PRPolicyGoal}).deliverableNote(); got != reportEpilogue() {
+		t.Errorf("a report job took the policy: %q", got)
 	}
 }
 

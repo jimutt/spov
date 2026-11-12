@@ -483,9 +483,10 @@ order by pos desc limit 1;
 insert into jobs (id, org_id, owner_id, session_id, kind, state, goal, unfinished, error,
                   attempt, created_at, updated_at, started_at, stopped_at, check_command,
                   check_proposed, cursor, verdict, assessment, model,
-                  max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at)
+                  max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at,
+                  pr_policy, skip_prep)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24);
+        $19, $20, $21, $22, $23, $24, $25, $26);
 
 -- name: GetJob :one
 select * from jobs where org_id = $1 and id = $2;

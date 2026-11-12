@@ -115,6 +115,17 @@ func TestJobValidate(t *testing.T) {
 		"blank goal":    {ID: "j", OrgID: "o", SessionID: "s", Kind: JobKindPR, State: JobQueued, Goal: " \n\t"},
 		"unknown kind":  {ID: "j", OrgID: "o", SessionID: "s", Kind: "sculpture", State: JobQueued, Goal: "g"},
 		"unknown state": {ID: "j", OrgID: "o", SessionID: "s", Kind: JobKindPR, State: "loitering", Goal: "g"},
+		// @decision(DL-137)
+		"unknown pr policy":  {ID: "j", OrgID: "o", SessionID: "s", Kind: JobKindPR, State: JobQueued, Goal: "g", PRPolicy: "theirs"},
+		"report pr policy":   {ID: "j", OrgID: "o", SessionID: "s", Kind: JobKindReport, State: JobQueued, Goal: "g", PRPolicy: PRPolicyGoal},
+		"sync job pr policy": {ID: "j", OrgID: "o", SessionID: "s", Kind: JobKindSync, State: JobQueued, Goal: "g", PRPolicy: PRPolicyGoal},
+	}
+	for _, p := range []PRPolicy{"", PRPolicySpov, PRPolicyGoal} {
+		withPolicy := ok
+		withPolicy.PRPolicy = p
+		if err := withPolicy.Validate(); err != nil {
+			t.Errorf("a pr job with policy %q = %v", p, err)
+		}
 	}
 	for name, j := range bad {
 		t.Run(name, func(t *testing.T) {

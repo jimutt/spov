@@ -300,9 +300,10 @@ const createJob = `-- name: CreateJob :exec
 insert into jobs (id, org_id, owner_id, session_id, kind, state, goal, unfinished, error,
                   attempt, created_at, updated_at, started_at, stopped_at, check_command,
                   check_proposed, cursor, verdict, assessment, model,
-                  max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at)
+                  max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at,
+                  pr_policy, skip_prep)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24)
+        $19, $20, $21, $22, $23, $24, $25, $26)
 `
 
 type CreateJobParams struct {
@@ -330,6 +331,8 @@ type CreateJobParams struct {
 	ClockStartedAt     pgtype.Timestamptz
 	ClockUsedSeconds   int64
 	SyncAppliedAt      pgtype.Timestamptz
+	PrPolicy           string
+	SkipPrep           bool
 }
 
 // EVERY column the row carries, not only the ones a job happens to be
@@ -363,6 +366,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) error {
 		arg.ClockStartedAt,
 		arg.ClockUsedSeconds,
 		arg.SyncAppliedAt,
+		arg.PrPolicy,
+		arg.SkipPrep,
 	)
 	return err
 }
@@ -978,7 +983,7 @@ func (q *Queries) GetImagePrune(ctx context.Context) (pgtype.Timestamptz, error)
 }
 
 const getJob = `-- name: GetJob :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs where org_id = $1 and id = $2
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs where org_id = $1 and id = $2
 `
 
 type GetJobParams struct {
@@ -1014,12 +1019,14 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (Job, error) {
 		&i.ClockUsedSeconds,
 		&i.Unfinished,
 		&i.SyncAppliedAt,
+		&i.PrPolicy,
+		&i.SkipPrep,
 	)
 	return i, err
 }
 
 const getJobBySession = `-- name: GetJobBySession :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs where org_id = $1 and session_id = $2
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs where org_id = $1 and session_id = $2
 `
 
 type GetJobBySessionParams struct {
@@ -1055,6 +1062,8 @@ func (q *Queries) GetJobBySession(ctx context.Context, arg GetJobBySessionParams
 		&i.ClockUsedSeconds,
 		&i.Unfinished,
 		&i.SyncAppliedAt,
+		&i.PrPolicy,
+		&i.SkipPrep,
 	)
 	return i, err
 }
@@ -1085,7 +1094,7 @@ func (q *Queries) GetJobFile(ctx context.Context, arg GetJobFileParams) (JobFile
 }
 
 const getJobForUpdate = `-- name: GetJobForUpdate :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs where org_id = $1 and id = $2 for update
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs where org_id = $1 and id = $2 for update
 `
 
 type GetJobForUpdateParams struct {
@@ -1125,6 +1134,8 @@ func (q *Queries) GetJobForUpdate(ctx context.Context, arg GetJobForUpdateParams
 		&i.ClockUsedSeconds,
 		&i.Unfinished,
 		&i.SyncAppliedAt,
+		&i.PrPolicy,
+		&i.SkipPrep,
 	)
 	return i, err
 }
@@ -1594,7 +1605,7 @@ func (q *Queries) JobExists(ctx context.Context, arg JobExistsParams) (bool, err
 }
 
 const jobsBySessions = `-- name: JobsBySessions :many
-select distinct on (session_id) id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs
+select distinct on (session_id) id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs
 where org_id = $1 and session_id = any($2::text[])
 order by session_id, id desc
 `
@@ -1645,6 +1656,8 @@ func (q *Queries) JobsBySessions(ctx context.Context, arg JobsBySessionsParams) 
 			&i.ClockUsedSeconds,
 			&i.Unfinished,
 			&i.SyncAppliedAt,
+			&i.PrPolicy,
+			&i.SkipPrep,
 		); err != nil {
 			return nil, err
 		}
@@ -2153,7 +2166,7 @@ func (q *Queries) ListJobFiles(ctx context.Context, arg ListJobFilesParams) ([]L
 }
 
 const listJobs = `-- name: ListJobs :many
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs
 where org_id = $1
   and ($2::text is null or session_id = $2::text)
   and ($3::text is null or owner_id = $3::text)
@@ -2215,6 +2228,8 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.ClockUsedSeconds,
 			&i.Unfinished,
 			&i.SyncAppliedAt,
+			&i.PrPolicy,
+			&i.SkipPrep,
 		); err != nil {
 			return nil, err
 		}
@@ -2227,7 +2242,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 }
 
 const listLiveJobs = `-- name: ListLiveJobs :many
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at from jobs
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs
 where state not in ('succeeded', 'failed', 'cancelled')
 order by id desc
 `
@@ -2268,6 +2283,8 @@ func (q *Queries) ListLiveJobs(ctx context.Context) ([]Job, error) {
 			&i.ClockUsedSeconds,
 			&i.Unfinished,
 			&i.SyncAppliedAt,
+			&i.PrPolicy,
+			&i.SkipPrep,
 		); err != nil {
 			return nil, err
 		}

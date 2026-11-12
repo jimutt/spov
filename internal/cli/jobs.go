@@ -49,6 +49,8 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		wait     bool
 		timeout  time.Duration
 		hold     string
+		prPolicy string
+		noPrep   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "create [goal]",
@@ -75,6 +77,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 				Model: model, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
 				Template: template,
 				Env:      envVars, Wait: wait, Timeout: timeout, Hold: hold,
+				PRPolicy: prPolicy, NoPrep: noPrep,
 			})
 		},
 	}
@@ -98,6 +101,13 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 	cmd.Flags().StringVar(&hold, "hold", "",
 		"for --kind sync: how long the sandbox is kept after the job finishes, for `spov jobs apply`, e.g. 1h;"+
 			" sandbox.job_sync_hold, then 30m, when unset")
+	// @decision(DL-137)
+	cmd.Flags().StringVar(&prPolicy, "pr-policy", "",
+		"for --kind pr: whose instructions say how the branch is made and the pull request opened,"+
+			" spov (the default) or goal (the goal's own)")
+	// @decision(DL-138)
+	cmd.Flags().BoolVar(&noPrep, "no-prep", false,
+		"skip the preparation pass: no model reads the goal before the job starts, and no check is proposed")
 	// @decision(DL-014)
 	cmd.Flags().StringVar(&model, "model", "",
 		"model to run on as provider/model, e.g. anthropic/claude-sonnet-5; your account default when unset")
@@ -160,6 +170,14 @@ type createOptions struct {
 	//
 	// @decision(DL-101)
 	Hold string
+	// PRPolicy is --pr-policy.
+	//
+	// @decision(DL-137)
+	PRPolicy string
+	// NoPrep is --no-prep.
+	//
+	// @decision(DL-138)
+	NoPrep bool
 }
 
 // readGoal takes the goal from the argument or from a file. A goal is
@@ -190,6 +208,17 @@ func readGoal(args []string, file string) (string, error) {
 func createJob(ctx context.Context, env *Env, opts createOptions) error {
 	if opts.Goal == "" {
 		return errors.New("a job needs a goal")
+	}
+	// Checked before the server is asked, as the server checks again.
+	//
+	// @decision(DL-137)
+	switch store.PRPolicy(opts.PRPolicy) {
+	case "", store.PRPolicySpov, store.PRPolicyGoal:
+		if opts.PRPolicy != "" && store.JobKind(opts.Kind) != store.JobKindPR {
+			return errors.New("--pr-policy is for --kind pr")
+		}
+	default:
+		return fmt.Errorf("--pr-policy takes goal or spov, not %q", opts.PRPolicy)
 	}
 	res, err := env.config()
 	if err != nil {
@@ -301,6 +330,10 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		Sync:          seed,
 		Hold:          syncHold(opts, sb.JobSyncHold),
 		HoldPreferred: seed != nil && opts.Hold == "" && sb.JobSyncHold > 0,
+		// @decision(DL-137)
+		PRPolicy: store.PRPolicy(opts.PRPolicy),
+		// @decision(DL-138)
+		SkipPrep: opts.NoPrep,
 	})
 	if err != nil {
 		return jobError(err)
@@ -624,6 +657,14 @@ func writeJobDetail(env *Env, j server.JobView) error {
 		case j.State == store.JobSteered:
 			_, _ = fmt.Fprintf(w, "Left\t%s, paused while steered\n", max(d-used, 0).Round(time.Second))
 		}
+	}
+	// @decision(DL-137)
+	if j.PRPolicy == store.PRPolicyGoal {
+		_, _ = fmt.Fprintf(w, "Pull requests\tas the goal says\n")
+	}
+	// @decision(DL-138)
+	if j.SkipPrep {
+		_, _ = fmt.Fprintf(w, "Preparation\tskipped\n")
 	}
 	if j.Attempt > 0 {
 		_, _ = fmt.Fprintf(w, "Attempt\t%d\n", j.Attempt)

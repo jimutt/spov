@@ -181,6 +181,46 @@ func TestARedeliveredJobDoesNotPayForASecondPass(t *testing.T) {
 	}
 }
 
+// A job created with skip_prep asks no model, opens on its goal alone and
+// gets no proposed check, on every attempt, and the supervisor writes
+// neither the failed-call warning nor anything to the row. A caller's
+// check stays.
+//
+// @decision(DL-138)
+func TestAJobThatSkipsPrepIsNeverPrepared(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	job := jobstest.SeedJobWith(t, st, store.JobQueued, func(j *store.Job) {
+		j.SkipPrep = true
+		j.CheckCommand = "./check.sh"
+	})
+	sup, calls, warnings := prepSup(st, prep.Assessment{Summary: "S", Check: "go test ./..."}, errors.New("unreachable"))
+
+	for attempt := range 2 {
+		stored, err := st.Jobs().Get(ctx, job.OrgID, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := sup.prepare(ctx, stored)
+		if got.Assessment != "" || got.CheckProposed || got.CheckCommand != "./check.sh" {
+			t.Errorf("attempt %d: a job that skips prep was changed: %+v", attempt, got)
+		}
+	}
+	if *calls != 0 {
+		t.Errorf("made %d model calls for a job that skips prep", *calls)
+	}
+	if len(*warnings) != 0 {
+		t.Errorf("a job that skips prep warned: %v", *warnings)
+	}
+	after, err := st.Jobs().Get(ctx, job.OrgID, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Assessment != "" || after.CheckProposed || after.CheckCommand != "./check.sh" || !after.SkipPrep {
+		t.Errorf("the row changed: %+v", after)
+	}
+}
+
 // A pass that had nothing to say costs no write.
 //
 // @decision(DL-047)
