@@ -148,3 +148,42 @@ func TestWithoutOnDemandBuildsTheBuildLimitIsNotAsked(t *testing.T) {
 		t.Errorf("refuseBuildOverLimit = %v", err)
 	}
 }
+
+// TestATemplatesAddonsCountAgainstTheSameBuildLimit: a template's add-ons
+// become the request's before the limit is asked, so a launch from one
+// builds its variant as its owner and is refused past their window, as
+// a launch that names the add-ons itself is.
+//
+// @decision(DL-134) @decision(DL-120)
+func TestATemplatesAddonsCountAgainstTheSameBuildLimit(t *testing.T) {
+	ctx := context.Background()
+	rf := newRegistryFixture(t, true, newImageFake())
+	templates := &store.FileTemplates{}
+	rf.srv.Service().deps.Templates = templates
+	for name, settings := range map[string]store.TemplateSettings{
+		"node": {Addons: []string{"node@22"}},
+		"apt":  {Apt: []string{"libfoo-dev"}},
+	} {
+		if err := templates.Put(ctx, store.Template{OrgID: auth.LocalID, UserID: auth.LocalID, Name: name,
+			TemplateSettings: settings}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := repoReq("from-node")
+	req.Template = "node"
+	id := rf.create(req)
+	rf.events(id)
+	if o := rf.launched(); len(o) != 1 || o[0].Variant == nil || !o[0].BuildVariant || o[0].User != auth.LocalID {
+		t.Fatalf("the template's launch is not a build of its variant under its owner: %+v", o)
+	}
+
+	spendBuild(t, rf)
+	req = repoReq("from-apt")
+	req.Template = "apt"
+	if res, body := rf.do(http.MethodPost, "/api/v1/sessions", req); res.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("create from a template past the limit = %d %s", res.StatusCode, body)
+	}
+	if n := len(rf.launched()); n != 1 {
+		t.Errorf("%d launches started, want only the first", n)
+	}
+}
