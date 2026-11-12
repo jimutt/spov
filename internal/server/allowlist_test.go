@@ -32,6 +32,12 @@ func allowlistFixtureWith(t *testing.T, admin bool, entries map[string]bool, adj
 		if adjust != nil {
 			adjust(d)
 		}
+		// A fake, so no test asks the real GitHub.
+		//
+		// @decision(DL-128)
+		if d.GitHubAccounts == nil {
+			d.GitHubAccounts = newFakeGitHubAccounts().lookup
+		}
 		ctx := context.Background()
 		for email, isAdmin := range entries {
 			if err := d.Store.Allowlist().Put(ctx, store.AllowlistEntry{
@@ -52,7 +58,7 @@ func allowlistFixtureWith(t *testing.T, admin bool, entries map[string]bool, adj
 		sessions.Store = memstore.New()
 		sessions.HashTokenInStore = true
 		d.Login = &Login{
-			Sessions: sessions, Allowlist: list, Users: d.Store.Users(), OrgID: auth.LocalID,
+			Sessions: sessions, Allowlist: list, Users: d.Store.Users(), Entries: d.Store.Allowlist(), OrgID: auth.LocalID,
 		}
 	})
 	f.auth.inner = auth.StaticAuthenticator{
@@ -264,7 +270,7 @@ func TestAStaleAdminCannotWrite(t *testing.T) {
 	if err := f.store.Allowlist().Delete(ctx, auth.LocalID, "me@example.com"); err != nil {
 		t.Fatal(err)
 	}
-	if admin, ok := f.srv.deps.Login.Allowlist.Lookup("me@example.com"); !ok || !admin {
+	if admin, ok := f.srv.deps.Login.Allowlist.Lookup(0, "me@example.com"); !ok || !admin {
 		t.Fatal("the cache already caught up, so this proves nothing")
 	}
 
@@ -295,23 +301,39 @@ func TestAStaleAdminCannotWrite(t *testing.T) {
 // TestGuardLastAdmin calls the guard directly: requireLiveAdmin and the
 // self rule mean no request can present it with a count of one.
 //
-// @decision(DL-007)
+// @decision(DL-007) @decision(DL-128)
 func TestGuardLastAdmin(t *testing.T) {
-	me := auth.Principal{OrgID: auth.LocalID, Email: "me@example.com", Admin: true}
+	addr := func(email string, admin bool) store.AllowlistEntry {
+		return store.AllowlistEntry{OrgID: auth.LocalID, Email: email, Admin: admin}
+	}
+	acct := func(id int64, admin bool) store.AllowlistEntry {
+		return store.AllowlistEntry{OrgID: auth.LocalID, GithubID: id, Admin: admin}
+	}
+	onlyMe := []store.AllowlistEntry{addr("me@example.com", true)}
 	for _, tc := range []struct {
 		name   string
-		email  string
+		target store.AllowlistEntry
+		mine   []store.AllowlistEntry
 		admins int
 		refuse string
 	}{
-		{"the last administrator", "last@example.com", 1, "last administrator"},
-		{"no administrator at all", "last@example.com", 0, "last administrator"},
-		{"oneself, even with others", "me@example.com", 5, "ask another admin"},
-		{"oneself in another case", "Me@Example.COM", 5, "ask another admin"},
-		{"somebody else, with others", "them@example.com", 2, ""},
+		{"the last administrator", addr("last@example.com", true), onlyMe, 1, "last administrator"},
+		{"no administrator at all", addr("last@example.com", true), onlyMe, 0, "last administrator"},
+		{"oneself, even with others", addr("me@example.com", true), onlyMe, 5, "ask another admin"},
+		{"oneself in another case", addr("Me@Example.COM", true), onlyMe, 5, "ask another admin"},
+		{"somebody else, with others", addr("them@example.com", true), onlyMe, 2, ""},
+		// Covered by two admin entries, one of them may go.
+		{"one of two of one's own admin entries", acct(7, true),
+			[]store.AllowlistEntry{addr("me@example.com", true), acct(7, true)}, 2, ""},
+		// A plain entry beside it does not keep one an admin.
+		{"one's admin entry beside a plain one", addr("me@example.com", true),
+			[]store.AllowlistEntry{addr("me@example.com", true), acct(7, false)}, 3, "ask another admin"},
+		{"one's own account entry, alone", acct(7, true), []store.AllowlistEntry{acct(7, true)}, 4, "ask another admin"},
+		{"somebody else's account entry", acct(8, true), []store.AllowlistEntry{acct(7, true)}, 2, ""},
+		{"an account entry is not an address entry", acct(7, true), onlyMe, 2, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := guardLastAdmin(me, tc.email, tc.admins, "remove yourself")
+			err := guardLastAdmin(losesOwnAdmin(tc.target, tc.mine), tc.admins, "remove yourself")
 			if tc.refuse == "" {
 				if err != nil {
 					t.Fatalf("refused a safe change: %v", err)
@@ -370,20 +392,20 @@ func TestACredentialFromAnotherOrgCannotEditTheAllowlist(t *testing.T) {
 func TestAChangeIsVisibleToThisReplicaImmediately(t *testing.T) {
 	f := allowlistFixture(t, true, map[string]bool{"me@example.com": true})
 	list := f.srv.deps.Login.Allowlist
-	if _, ok := list.Lookup("new@example.com"); ok {
+	if _, ok := list.Lookup(0, "new@example.com"); ok {
 		t.Fatal("the cache already had the address")
 	}
 	if resp, out := f.do(http.MethodPut, "/api/v1/allowlist/new@example.com",
 		map[string]any{"admin": false}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("PUT = %d: %s", resp.StatusCode, out)
 	}
-	if _, ok := list.Lookup("new@example.com"); !ok {
+	if _, ok := list.Lookup(0, "new@example.com"); !ok {
 		t.Error("the cache was not refreshed after a change")
 	}
 	if resp, _ := f.do(http.MethodDelete, "/api/v1/allowlist/new@example.com", nil); resp.StatusCode != http.StatusNoContent {
 		t.Fatal("DELETE failed")
 	}
-	if _, ok := list.Lookup("new@example.com"); ok {
+	if _, ok := list.Lookup(0, "new@example.com"); ok {
 		t.Error("the cache still allows a deleted address")
 	}
 }
@@ -402,11 +424,13 @@ func TestDeletingAnEntryEndsThatPersonsSessions(t *testing.T) {
 	}
 	revoked := make(chan string, 4)
 	real := f.srv.revokeSessions
-	f.srv.revokeSessions = func(ctx context.Context, orgID, email string) error {
-		revoked <- email
+	f.srv.revokeSessions = func(ctx context.Context, users []store.User) error {
+		for _, u := range users {
+			revoked <- u.Email
+		}
 		// Still the real one, so this test also proves the wiring
 		// survives a Login whose session manager is absent.
-		return real(ctx, orgID, email)
+		return real(ctx, users)
 	}
 
 	if resp, out := f.do(http.MethodDelete, "/api/v1/allowlist/them@example.com", nil); resp.StatusCode != http.StatusNoContent {
@@ -429,7 +453,13 @@ func TestDeletingAnEntryEndsThatPersonsSessions(t *testing.T) {
 // @decision(DL-007)
 func TestAFailedRevocationWarnsRatherThanFailingTheDelete(t *testing.T) {
 	f := allowlistFixture(t, true, map[string]bool{"me@example.com": true, "them@example.com": false})
-	f.srv.revokeSessions = func(context.Context, string, string) error {
+	// Sessions are ended for a person who signed in, so there is a row.
+	if err := f.store.Users().Create(context.Background(), store.User{
+		ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV", OrgID: auth.LocalID, Email: "them@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.srv.revokeSessions = func(context.Context, []store.User) error {
 		return errors.New("the session store is unreachable")
 	}
 	var warnings []string
@@ -485,6 +515,16 @@ func (o orderedAllowlist) Get(ctx context.Context, orgID, email string) (store.A
 	return o.AllowlistStore.Get(ctx, orgID, email)
 }
 
+func (o orderedAllowlist) GetAccount(ctx context.Context, orgID string, id int64) (store.AllowlistEntry, error) {
+	o.record("Get")
+	return o.AllowlistStore.GetAccount(ctx, orgID, id)
+}
+
+func (o orderedAllowlist) ByLogin(ctx context.Context, orgID, login string) ([]store.AllowlistEntry, error) {
+	o.record("Get")
+	return o.AllowlistStore.ByLogin(ctx, orgID, login)
+}
+
 func (o orderedAllowlist) CountAdmins(ctx context.Context, orgID string) (int, error) {
 	o.record("CountAdmins")
 	return o.AllowlistStore.CountAdmins(ctx, orgID)
@@ -495,15 +535,22 @@ type orderedStore struct {
 	store.Store
 	mu    *sync.Mutex
 	calls *[]string
+	// inTx is the view a transaction hands out. Only reads made inside
+	// one are recorded: an account entry is resolved before the
+	// transaction, which takes no lock and decides nothing.
+	inTx bool
 }
 
 func (o orderedStore) Allowlist() store.AllowlistStore {
+	if !o.inTx {
+		return o.Store.Allowlist()
+	}
 	return orderedAllowlist{AllowlistStore: o.Store.Allowlist(), mu: o.mu, calls: o.calls}
 }
 
 func (o orderedStore) Tx(ctx context.Context, fn func(store.Store) error) error {
 	return o.Store.Tx(ctx, func(tx store.Store) error {
-		return fn(orderedStore{Store: tx, mu: o.mu, calls: o.calls})
+		return fn(orderedStore{Store: tx, mu: o.mu, calls: o.calls, inTx: true})
 	})
 }
 
@@ -512,7 +559,7 @@ func (o orderedStore) Tx(ctx context.Context, fn func(store.Store) error) error 
 // reads the entry. The memory store serialises on a mutex and cannot
 // show the race, so the order is asserted.
 //
-// @decision(DL-007)
+// @decision(DL-007) @decision(DL-128)
 func TestTheAdminCountIsTakenBeforeTheEntryIsRead(t *testing.T) {
 	for _, tc := range []struct {
 		name, method, path string
@@ -520,9 +567,16 @@ func TestTheAdminCountIsTakenBeforeTheEntryIsRead(t *testing.T) {
 	}{
 		{"put", http.MethodPut, "/api/v1/allowlist/them@example.com", map[string]any{"admin": true}},
 		{"delete", http.MethodDelete, "/api/v1/allowlist/them@example.com", nil},
+		{"put an account", http.MethodPut, "/api/v1/allowlist/@octo", map[string]any{"admin": true}},
+		{"delete an account", http.MethodDelete, "/api/v1/allowlist/@octo", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := allowlistFixture(t, true, map[string]bool{"me@example.com": true, "them@example.com": false})
+			if err := f.store.Allowlist().Put(context.Background(), store.AllowlistEntry{
+				OrgID: auth.LocalID, GithubID: 77, GithubLogin: "octo",
+			}); err != nil {
+				t.Fatal(err)
+			}
 			var mu sync.Mutex
 			var calls []string
 			f.srv.deps.Store = orderedStore{Store: f.srv.deps.Store, mu: &mu, calls: &calls}

@@ -152,10 +152,10 @@ func TestTheUserListingReportsTheEnforcedAdminFlag(t *testing.T) {
 	f := adminFixture(t, true)
 	ctx := context.Background()
 	list, err := auth.NewAllowlist(ctx,
-		func(context.Context) (map[string]bool, error) {
+		func(context.Context) (auth.AllowlistSet, error) {
 			// The allowlist says the opposite of every stored row:
 			// the caller is not an admin, the other user is.
-			return map[string]bool{"me@example.com": false, "them@example.com": true}, nil
+			return auth.AllowlistSet{Emails: map[string]bool{"me@example.com": false, "them@example.com": true}}, nil
 		}, auth.AllowlistRefresh, nil)
 	if err != nil {
 		t.Fatal(err)

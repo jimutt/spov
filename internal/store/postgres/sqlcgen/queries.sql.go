@@ -37,6 +37,34 @@ func (q *Queries) AppendAdminEvent(ctx context.Context, arg AppendAdminEventPara
 	return err
 }
 
+const bindUserGithub = `-- name: BindUserGithub :execrows
+update users set github_id = $3, updated_at = $4
+where id = $1 and org_id = $2 and github_id is null
+`
+
+type BindUserGithubParams struct {
+	ID        string
+	OrgID     string
+	GithubID  *int64
+	UpdatedAt pgtype.Timestamptz
+}
+
+// Binds a row to its account once. A row already bound is never moved:
+// the update touches only a row with no account yet.
+// @decision(DL-128)
+func (q *Queries) BindUserGithub(ctx context.Context, arg BindUserGithubParams) (int64, error) {
+	result, err := q.db.Exec(ctx, bindUserGithub,
+		arg.ID,
+		arg.OrgID,
+		arg.GithubID,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const conversationInfos = `-- name: ConversationInfos :many
 select id, info from conversations
 where org_id = $1 and session_id = $2 and info is not null and octet_length(info) > 0
@@ -418,8 +446,9 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 const createUser = `-- name: CreateUser :exec
 insert into users (id, org_id, email, name, github_login, admin, git_name, git_email,
                    default_model, quota, last_login_at, created_at, updated_at,
-                   default_git_access, default_job_git_access, default_job_duration_seconds)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                   default_git_access, default_job_git_access, default_job_duration_seconds,
+                   github_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 `
 
 type CreateUserParams struct {
@@ -439,6 +468,7 @@ type CreateUserParams struct {
 	DefaultGitAccess          string
 	DefaultJobGitAccess       string
 	DefaultJobDurationSeconds int64
+	GithubID                  *int64
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
@@ -459,6 +489,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 		arg.DefaultGitAccess,
 		arg.DefaultJobGitAccess,
 		arg.DefaultJobDurationSeconds,
+		arg.GithubID,
 	)
 	return err
 }
@@ -497,8 +528,26 @@ func (q *Queries) CurrentRun(ctx context.Context, arg CurrentRunParams) (Session
 	return i, err
 }
 
+const deleteAllowlistAccount = `-- name: DeleteAllowlistAccount :execrows
+delete from allowlist_entries where org_id = $1 and github_id = $2
+`
+
+type DeleteAllowlistAccountParams struct {
+	OrgID    string
+	GithubID *int64
+}
+
+// @decision(DL-128)
+func (q *Queries) DeleteAllowlistAccount(ctx context.Context, arg DeleteAllowlistAccountParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAllowlistAccount, arg.OrgID, arg.GithubID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteAllowlistEntry = `-- name: DeleteAllowlistEntry :execrows
-delete from allowlist_entries where org_id = $1 and email = $2
+delete from allowlist_entries where org_id = $1 and email = $2 and github_id is null
 `
 
 type DeleteAllowlistEntryParams struct {
@@ -800,8 +849,33 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, tokenHash []byte) (ApiT
 	return i, err
 }
 
+const getAllowlistAccount = `-- name: GetAllowlistAccount :one
+select org_id, email, admin, created_at, github_id, github_login, github_name from allowlist_entries where org_id = $1 and github_id = $2
+`
+
+type GetAllowlistAccountParams struct {
+	OrgID    string
+	GithubID *int64
+}
+
+// @decision(DL-128)
+func (q *Queries) GetAllowlistAccount(ctx context.Context, arg GetAllowlistAccountParams) (AllowlistEntry, error) {
+	row := q.db.QueryRow(ctx, getAllowlistAccount, arg.OrgID, arg.GithubID)
+	var i AllowlistEntry
+	err := row.Scan(
+		&i.OrgID,
+		&i.Email,
+		&i.Admin,
+		&i.CreatedAt,
+		&i.GithubID,
+		&i.GithubLogin,
+		&i.GithubName,
+	)
+	return i, err
+}
+
 const getAllowlistEntry = `-- name: GetAllowlistEntry :one
-select org_id, email, admin, created_at from allowlist_entries where org_id = $1 and email = $2
+select org_id, email, admin, created_at, github_id, github_login, github_name from allowlist_entries where org_id = $1 and email = $2 and github_id is null
 `
 
 type GetAllowlistEntryParams struct {
@@ -817,6 +891,9 @@ func (q *Queries) GetAllowlistEntry(ctx context.Context, arg GetAllowlistEntryPa
 		&i.Email,
 		&i.Admin,
 		&i.CreatedAt,
+		&i.GithubID,
+		&i.GithubLogin,
+		&i.GithubName,
 	)
 	return i, err
 }
@@ -1253,7 +1330,7 @@ func (q *Queries) GetSessionProxyCA(ctx context.Context, arg GetSessionProxyCAPa
 }
 
 const getUser = `-- name: GetUser :one
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds from users where id = $1 and org_id = $2
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where id = $1 and org_id = $2
 `
 
 type GetUserParams struct {
@@ -1281,12 +1358,13 @@ func (q *Queries) GetUser(ctx context.Context, arg GetUserParams) (User, error) 
 		&i.DefaultGitAccess,
 		&i.DefaultJobGitAccess,
 		&i.DefaultJobDurationSeconds,
+		&i.GithubID,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds from users where org_id = $1 and lower(email) = lower($2)
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where org_id = $1 and lower(email) = lower($2)
 `
 
 type GetUserByEmailParams struct {
@@ -1314,6 +1392,41 @@ func (q *Queries) GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) 
 		&i.DefaultGitAccess,
 		&i.DefaultJobGitAccess,
 		&i.DefaultJobDurationSeconds,
+		&i.GithubID,
+	)
+	return i, err
+}
+
+const getUserByGithubID = `-- name: GetUserByGithubID :one
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where org_id = $1 and github_id = $2
+`
+
+type GetUserByGithubIDParams struct {
+	OrgID    string
+	GithubID *int64
+}
+
+func (q *Queries) GetUserByGithubID(ctx context.Context, arg GetUserByGithubIDParams) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByGithubID, arg.OrgID, arg.GithubID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Email,
+		&i.Name,
+		&i.GithubLogin,
+		&i.Admin,
+		&i.GitName,
+		&i.GitEmail,
+		&i.LastLoginAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Quota,
+		&i.DefaultModel,
+		&i.DefaultGitAccess,
+		&i.DefaultJobGitAccess,
+		&i.DefaultJobDurationSeconds,
+		&i.GithubID,
 	)
 	return i, err
 }
@@ -1769,13 +1882,14 @@ func (q *Queries) ListAdminEvents(ctx context.Context, arg ListAdminEventsParams
 }
 
 const listAllowlist = `-- name: ListAllowlist :many
-select org_id, email, admin, created_at from allowlist_entries where org_id = $1 order by email collate "C"
+select org_id, email, admin, created_at, github_id, github_login, github_name from allowlist_entries where org_id = $1 order by email collate "C", github_id
 `
 
 // collate "C" so the order is the same bytewise order the memory store
 // sorts by: under a locale collation the database ignores punctuation
 // on the first pass, and the two stores would disagree on addresses
-// like a-b@x.com and ab@x.com.
+// like a-b@x.com and ab@x.com. Account entries have no address and
+// come first, by ID.
 func (q *Queries) ListAllowlist(ctx context.Context, orgID string) ([]AllowlistEntry, error) {
 	rows, err := q.db.Query(ctx, listAllowlist, orgID)
 	if err != nil {
@@ -1790,6 +1904,51 @@ func (q *Queries) ListAllowlist(ctx context.Context, orgID string) ([]AllowlistE
 			&i.Email,
 			&i.Admin,
 			&i.CreatedAt,
+			&i.GithubID,
+			&i.GithubLogin,
+			&i.GithubName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllowlistByLogin = `-- name: ListAllowlistByLogin :many
+select org_id, email, admin, created_at, github_id, github_login, github_name from allowlist_entries
+where org_id = $1 and github_id is not null and lower(github_login) = lower($2::text)
+order by github_id
+`
+
+type ListAllowlistByLoginParams struct {
+	OrgID string
+	Login string
+}
+
+// The login is a label, refreshed at sign-in; more than one row can
+// carry a stale one.
+// @decision(DL-128)
+func (q *Queries) ListAllowlistByLogin(ctx context.Context, arg ListAllowlistByLoginParams) ([]AllowlistEntry, error) {
+	rows, err := q.db.Query(ctx, listAllowlistByLogin, arg.OrgID, arg.Login)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AllowlistEntry
+	for rows.Next() {
+		var i AllowlistEntry
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.Email,
+			&i.Admin,
+			&i.CreatedAt,
+			&i.GithubID,
+			&i.GithubLogin,
+			&i.GithubName,
 		); err != nil {
 			return nil, err
 		}
@@ -2406,7 +2565,7 @@ func (q *Queries) ListUserCredentials(ctx context.Context, arg ListUserCredentia
 }
 
 const listUsers = `-- name: ListUsers :many
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds from users where org_id = $1 order by id
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where org_id = $1 order by id
 `
 
 func (q *Queries) ListUsers(ctx context.Context, orgID string) ([]User, error) {
@@ -2435,6 +2594,58 @@ func (q *Queries) ListUsers(ctx context.Context, orgID string) ([]User, error) {
 			&i.DefaultGitAccess,
 			&i.DefaultJobGitAccess,
 			&i.DefaultJobDurationSeconds,
+			&i.GithubID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUsersByGithubLogin = `-- name: ListUsersByGithubLogin :many
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users
+where org_id = $1 and github_id is not null and lower(github_login) = lower($2::text)
+order by id
+`
+
+type ListUsersByGithubLoginParams struct {
+	OrgID string
+	Login string
+}
+
+// Only rows bound to an account: a login is a label of one.
+// @decision(DL-128)
+func (q *Queries) ListUsersByGithubLogin(ctx context.Context, arg ListUsersByGithubLoginParams) ([]User, error) {
+	rows, err := q.db.Query(ctx, listUsersByGithubLogin, arg.OrgID, arg.Login)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Email,
+			&i.Name,
+			&i.GithubLogin,
+			&i.Admin,
+			&i.GitName,
+			&i.GitEmail,
+			&i.LastLoginAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Quota,
+			&i.DefaultModel,
+			&i.DefaultGitAccess,
+			&i.DefaultJobGitAccess,
+			&i.DefaultJobDurationSeconds,
+			&i.GithubID,
 		); err != nil {
 			return nil, err
 		}
@@ -2609,10 +2820,39 @@ func (q *Queries) NewestImage(ctx context.Context, requestKey string) (Image, er
 	return i, err
 }
 
+const putAllowlistAccount = `-- name: PutAllowlistAccount :exec
+insert into allowlist_entries (org_id, github_id, github_login, github_name, admin, created_at)
+values ($1, $2, $3, $4, $5, $6)
+on conflict (org_id, github_id) where github_id is not null do update
+set admin = excluded.admin, github_login = excluded.github_login, github_name = excluded.github_name
+`
+
+type PutAllowlistAccountParams struct {
+	OrgID       string
+	GithubID    *int64
+	GithubLogin string
+	GithubName  string
+	Admin       bool
+	CreatedAt   pgtype.Timestamptz
+}
+
+// @decision(DL-128)
+func (q *Queries) PutAllowlistAccount(ctx context.Context, arg PutAllowlistAccountParams) error {
+	_, err := q.db.Exec(ctx, putAllowlistAccount,
+		arg.OrgID,
+		arg.GithubID,
+		arg.GithubLogin,
+		arg.GithubName,
+		arg.Admin,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const putAllowlistEntry = `-- name: PutAllowlistEntry :exec
 insert into allowlist_entries (org_id, email, admin, created_at)
 values ($1, $2, $3, $4)
-on conflict (org_id, email) do update set admin = excluded.admin
+on conflict (org_id, email) where github_id is null do update set admin = excluded.admin
 `
 
 type PutAllowlistEntryParams struct {
@@ -3175,6 +3415,29 @@ func (q *Queries) RecordImage(ctx context.Context, arg RecordImageParams) error 
 		arg.Versions,
 		arg.PublishedAt,
 		arg.LastUsedAt,
+	)
+	return err
+}
+
+const relabelAllowlistAccount = `-- name: RelabelAllowlistAccount :exec
+update allowlist_entries set github_login = $3, github_name = $4
+where org_id = $1 and github_id = $2
+`
+
+type RelabelAllowlistAccountParams struct {
+	OrgID       string
+	GithubID    *int64
+	GithubLogin string
+	GithubName  string
+}
+
+// @decision(DL-128)
+func (q *Queries) RelabelAllowlistAccount(ctx context.Context, arg RelabelAllowlistAccountParams) error {
+	_, err := q.db.Exec(ctx, relabelAllowlistAccount,
+		arg.OrgID,
+		arg.GithubID,
+		arg.GithubLogin,
+		arg.GithubName,
 	)
 	return err
 }

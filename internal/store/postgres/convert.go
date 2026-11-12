@@ -206,6 +206,10 @@ func userFromRow(r sqlcgen.User) store.User {
 	if len(r.Quota) > 0 {
 		_ = json.Unmarshal(r.Quota, &u.Quota)
 	}
+	// @decision(DL-128)
+	if r.GithubID != nil {
+		u.GithubID = *r.GithubID
+	}
 	return u
 }
 

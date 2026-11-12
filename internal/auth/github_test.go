@@ -67,7 +67,7 @@ func newGitHubStub(t *testing.T) *githubStub {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"login": s.login, "name": s.name})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 583231, "login": s.login, "name": s.name})
 	})
 	mux.HandleFunc("GET /user/emails", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(s.emails)
@@ -243,7 +243,7 @@ func TestExchangeReportsAFailedEmailRead(t *testing.T) {
 	stub := newGitHubStub(t)
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/user" {
-			_ = json.NewEncoder(w).Encode(map[string]any{"login": "octocat"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 583231, "login": "octocat"})
 			return
 		}
 		// Malformed JSON for /user/emails: a proxy or an outage can

@@ -50,7 +50,7 @@ the organisation's credential for that platform.
 
 ## 3. Being allowed onto spov
 
-The allowlist (an admin's, in the API) decides who may sign in. **Everyone on
+The allowlist (an admin's, on the Settings page or in the API) decides who may sign in. **Everyone on
 it may use every repository the organisation's App reaches.** There are no
 per-repository grants. The App's installation scope and the allowlist together
 are the boundary.

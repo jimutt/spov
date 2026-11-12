@@ -31,7 +31,7 @@ func seed(t *testing.T, content string) (*store.Memory, *Allowlist, error) {
 func seedPath(t *testing.T, path string) (*store.Memory, *Allowlist, error) {
 	t.Helper()
 	st := store.NewMemory()
-	if _, err := SeedAllowlist(context.Background(), st, "org", path, nil); err != nil {
+	if _, err := SeedAllowlist(context.Background(), st, "org", path, nil, nil); err != nil {
 		return st, nil, err
 	}
 	list, err := NewAllowlist(context.Background(), StoreAllowlist(st.Allowlist(), "org"), AllowlistRefresh, nil)
@@ -66,7 +66,7 @@ dave@example.com ADMIN
 		// "admin" is matched regardless of case.
 		{"dave@example.com", true},
 	} {
-		admin, ok := list.Lookup(tc.email)
+		admin, ok := list.Lookup(0, tc.email)
 		if !ok {
 			t.Errorf("%s is not allowed", tc.email)
 			continue
@@ -75,10 +75,10 @@ dave@example.com ADMIN
 			t.Errorf("%s admin = %v, want %v", tc.email, admin, tc.admin)
 		}
 	}
-	if _, ok := list.Lookup("mallory@example.com"); ok {
+	if _, ok := list.Lookup(0, "mallory@example.com"); ok {
 		t.Error("an address that is not in the file was allowed")
 	}
-	if _, ok := list.Lookup(""); ok {
+	if _, ok := list.Lookup(0, ""); ok {
 		t.Error("the empty address was allowed")
 	}
 }
@@ -92,8 +92,8 @@ func TestTheSeedRefusesAMalformedLine(t *testing.T) {
 		name, content, wants string
 	}{
 		{"not an email", "alice\n", "not an e-mail"},
-		{"bare at", "@\n", "not an e-mail"},
-		{"no local part", "@example.com\n", "not an e-mail"},
+		{"bare at", "@\n", "not a GitHub username"},
+		{"no local part", "@example.com\n", "not a GitHub username"},
 		{"no domain", "alice@\n", "not an e-mail"},
 		{"two ats", "a@b@c\n", "not an e-mail"},
 		{"unknown flag", "alice@example.com owner\n", `not "admin"`},
@@ -182,7 +182,7 @@ func TestTheSeedKeepsTheWidestPrivilegeForARepeatedAddress(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if admin, ok := list.Lookup("alice@example.com"); !ok || !admin {
+		if admin, ok := list.Lookup(0, "alice@example.com"); !ok || !admin {
 			t.Errorf("%q gave admin=%v ok=%v", content, admin, ok)
 		}
 	}
@@ -197,7 +197,7 @@ func TestTheSeedRunsOnceAndThenTheStoreIsTheTruth(t *testing.T) {
 	path := writeAllowlist(t, "alice@example.com admin\nbob@example.com\n")
 	st := store.NewMemory()
 
-	seeded, err := SeedAllowlist(ctx, st, "org", path, nil)
+	seeded, err := SeedAllowlist(ctx, st, "org", path, nil, nil)
 	if err != nil || !seeded {
 		t.Fatalf("first seed: %v, %v", seeded, err)
 	}
@@ -211,7 +211,7 @@ func TestTheSeedRunsOnceAndThenTheStoreIsTheTruth(t *testing.T) {
 	}
 
 	var warnings []string
-	seeded, err = SeedAllowlist(ctx, st, "org", path, func(m string) { warnings = append(warnings, m) })
+	seeded, err = SeedAllowlist(ctx, st, "org", path, nil, func(m string) { warnings = append(warnings, m) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestTheSeedReturnsWhenTheOrgHasNoAdmin(t *testing.T) {
 	if err := st.Allowlist().Put(ctx, store.AllowlistEntry{OrgID: "org", Email: "bob@example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	seeded, err := SeedAllowlist(ctx, st, "org", path, nil)
+	seeded, err := SeedAllowlist(ctx, st, "org", path, nil, nil)
 	if err != nil || !seeded {
 		t.Fatalf("seeded = %v, err = %v; a non-empty org with no admin must still be seeded", seeded, err)
 	}
@@ -269,7 +269,7 @@ func TestASeedWithNoAdminIsAnnounced(t *testing.T) {
 	var warnings []string
 	st := store.NewMemory()
 	seeded, err := SeedAllowlist(context.Background(), st, "org",
-		writeAllowlist(t, "alice@example.com\n"), func(m string) { warnings = append(warnings, m) })
+		writeAllowlist(t, "alice@example.com\n"), nil, func(m string) { warnings = append(warnings, m) })
 	if err != nil || !seeded {
 		t.Fatalf("seeded = %v, err = %v", seeded, err)
 	}
@@ -319,7 +319,7 @@ func TestTheSeedRefusesToGuessWhenItCannotCount(t *testing.T) {
 	boom := errors.New("connection refused")
 	st := failingStore{Store: store.NewMemory(), err: boom}
 	seeded, err := SeedAllowlist(context.Background(), st, "org",
-		writeAllowlist(t, "alice@example.com admin\n"), nil)
+		writeAllowlist(t, "alice@example.com admin\n"), nil, nil)
 	if seeded || !errors.Is(err, boom) {
 		t.Fatalf("seeded = %v, err = %v; want the count's error", seeded, err)
 	}
@@ -334,7 +334,7 @@ func TestAMissingSeedFileIsFatalOnlyOnAFirstBoot(t *testing.T) {
 	absent := filepath.Join(t.TempDir(), "absent")
 
 	// First boot: nothing in the table, nothing to serve. Fatal.
-	if _, err := SeedAllowlist(ctx, store.NewMemory(), "org", absent, nil); err == nil {
+	if _, err := SeedAllowlist(ctx, store.NewMemory(), "org", absent, nil, nil); err == nil {
 		t.Error("a missing file on a first boot was accepted")
 	}
 
@@ -344,7 +344,7 @@ func TestAMissingSeedFileIsFatalOnlyOnAFirstBoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	var warnings []string
-	seeded, err := SeedAllowlist(ctx, st, "org", absent, func(m string) { warnings = append(warnings, m) })
+	seeded, err := SeedAllowlist(ctx, st, "org", absent, nil, func(m string) { warnings = append(warnings, m) })
 	if err != nil {
 		t.Fatalf("a missing file on a re-seed took the server down: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestAnEmptySeedFileIsFatalOnlyOnAFirstBoot(t *testing.T) {
 	if err := st.Allowlist().Put(ctx, store.AllowlistEntry{OrgID: "org", Email: "bob@example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := SeedAllowlist(ctx, st, "org", path, nil); err != nil {
+	if _, err := SeedAllowlist(ctx, st, "org", path, nil, nil); err != nil {
 		t.Errorf("an empty file on a re-seed took the server down: %v", err)
 	}
 	if _, _, err := seed(t, "# everyone went\n"); !errors.Is(err, ErrEmptyAllowlist) {

@@ -18,10 +18,13 @@ type AdminEvent struct {
 }
 
 type AllowlistEntry struct {
-	OrgID     string
-	Email     string
-	Admin     bool
-	CreatedAt pgtype.Timestamptz
+	OrgID       string
+	Email       string
+	Admin       bool
+	CreatedAt   pgtype.Timestamptz
+	GithubID    *int64
+	GithubLogin string
+	GithubName  string
 }
 
 type ApiToken struct {
@@ -285,6 +288,7 @@ type User struct {
 	DefaultGitAccess          string
 	DefaultJobGitAccess       string
 	DefaultJobDurationSeconds int64
+	GithubID                  *int64
 }
 
 type UserCredential struct {

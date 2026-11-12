@@ -563,7 +563,25 @@ type UserStore interface {
 	// ByEmail resolves the identity an OAuth login proves. E-mail is
 	// compared case-insensitively.
 	ByEmail(ctx context.Context, orgID, email string) (User, error)
+	// ByGithubID finds the row bound to one GitHub account.
+	//
+	// @decision(DL-128)
+	ByGithubID(ctx context.Context, orgID string, githubID int64) (User, error)
+	// ByGithubLogin lists the rows bound to an account whose stored
+	// login is login, compared case-insensitively. The login is a
+	// label, so a stale one can be on more than one row.
+	//
+	// @decision(DL-128)
+	ByGithubLogin(ctx context.Context, orgID, login string) ([]User, error)
+	// BindGithub records the account a row belongs to. A row already
+	// bound to that account is left as it is; one bound to another, or
+	// an account another row holds, is ErrConflict.
+	//
+	// @decision(DL-128)
+	BindGithub(ctx context.Context, orgID, userID string, githubID int64) error
 	List(ctx context.Context, orgID string) ([]User, error)
+	// Update writes the row, except GithubID, which only Create and
+	// BindGithub set.
 	Update(ctx context.Context, u User) error
 	Delete(ctx context.Context, orgID, id string) error
 }
@@ -621,22 +639,44 @@ type CredentialStore interface {
 	Lock(ctx context.Context, orgID, userID, platform string) error
 }
 
-// AllowlistStore holds the addresses that may log in. It is a table
-// rather than a file reloaded on SIGHUP (DL-007): a signal reaches one
-// replica, a table is read by all of them.
+// AllowlistStore holds who may log in. It is a table rather than a file
+// reloaded on SIGHUP (DL-007): a signal reaches one replica, a table is
+// read by all of them.
 //
-// E-mail is the key, normalised to lower case on the way in, so a
-// caller may pass whatever case a person typed.
+// An entry is an address, keyed on the address normalised to lower case
+// on the way in, so a caller may pass whatever case a person typed; or
+// a GitHub account, keyed on its numeric ID.
 //
-// @decision(DL-007)
+// @decision(DL-007) @decision(DL-128)
 type AllowlistStore interface {
 	List(ctx context.Context, orgID string) ([]AllowlistEntry, error)
+	// Get reads an address entry.
 	Get(ctx context.Context, orgID, email string) (AllowlistEntry, error)
-	// Put inserts or updates one entry. CreatedAt is kept from the
-	// existing row, so re-granting admin does not restate when the
-	// person was first allowed in.
+	// GetAccount reads an account entry.
+	//
+	// @decision(DL-128)
+	GetAccount(ctx context.Context, orgID string, githubID int64) (AllowlistEntry, error)
+	// ByLogin lists the account entries whose stored login is login,
+	// compared case-insensitively.
+	//
+	// @decision(DL-128)
+	ByLogin(ctx context.Context, orgID, login string) ([]AllowlistEntry, error)
+	// Put inserts or updates one entry: an address entry when Email is
+	// set, an account entry when GithubID is, and ErrMixedEntry for
+	// both or neither. CreatedAt is kept from the existing row, so
+	// re-granting admin does not restate when the person was first
+	// allowed in.
 	Put(ctx context.Context, e AllowlistEntry) error
+	// Relabel sets an account entry's login and name, which are labels
+	// refreshed at sign-in. An account with no entry is not an error.
+	//
+	// @decision(DL-128)
+	Relabel(ctx context.Context, orgID string, githubID int64, login, name string) error
 	Delete(ctx context.Context, orgID, email string) error
+	// DeleteAccount removes an account entry.
+	//
+	// @decision(DL-128)
+	DeleteAccount(ctx context.Context, orgID string, githubID int64) error
 	// CountAdmins counts the org's admin entries. Called inside a
 	// transaction it also takes an org-scoped advisory lock, which is
 	// what makes "this change would leave no admin" a decision rather
@@ -653,16 +693,30 @@ type AllowlistStore interface {
 	CountAdmins(ctx context.Context, orgID string) (int, error)
 }
 
-// AllowlistEntry is one address that may log in, and whether it is an
-// administrator. There is no ID: the address is the identity, and an
-// entry exists for an address whether or not anyone has logged in under
-// it yet.
+// ErrMixedEntry is an allowlist entry that names both an address and an
+// account, or neither.
 //
-// @decision(DL-007)
+// @decision(DL-128)
+var ErrMixedEntry = errors.New("store: an allowlist entry names an address or a GitHub account, not both or neither")
+
+// AllowlistEntry is one address or one GitHub account that may log in,
+// and whether it is an administrator. There is no ID: the address or the
+// account ID is the identity, and an entry exists whether or not anyone
+// has logged in under it yet.
+//
+// @decision(DL-007) @decision(DL-128)
 type AllowlistEntry struct {
 	OrgID string
+	// Email is an address entry's address; empty on an account entry.
 	Email string
-	Admin bool
+	// GithubID is an account entry's numeric GitHub ID, zero on an
+	// address entry. GithubLogin and GithubName are its labels.
+	//
+	// @decision(DL-128)
+	GithubID    int64
+	GithubLogin string
+	GithubName  string
+	Admin       bool
 	// CreatedAt is when the address was first allowed, not when the
 	// entry was last changed.
 	CreatedAt time.Time
@@ -677,7 +731,12 @@ type User struct {
 	Email       string
 	Name        string
 	GithubLogin string
-	Admin       bool
+	// GithubID is the GitHub account this row is. Zero on a row from
+	// before accounts were recorded, until its next sign-in binds it.
+	//
+	// @decision(DL-128)
+	GithubID int64
+	Admin    bool
 	// GitName and GitEmail author commits made in this user's sessions.
 	GitName  string
 	GitEmail string

@@ -102,6 +102,26 @@ func TestAllowlistPathDefaultsToTheMountPoint(t *testing.T) {
 	}
 }
 
+// The account lookup is a test's fake when one is set, and otherwise
+// GitHub's own API; a fake never falls through to the real one.
+//
+// @decision(DL-128)
+func TestTheAccountLookupIsTheFakeWhenOneIsSet(t *testing.T) {
+	asked := 0
+	env := Env{GitHubAccounts: func(context.Context, string) (auth.GitHubAccount, error) {
+		asked++
+		return auth.GitHubAccount{ID: 1, Login: "x"}, nil
+	}}
+	if a, err := env.accountLookup()(context.Background(), "x"); err != nil || a.ID != 1 || asked != 1 {
+		t.Errorf("the fake was not used: %+v, %v", a, err)
+	}
+	// The real one refuses a malformed login before any request, which
+	// is all a test may ask of it.
+	if _, err := (&Env{}).accountLookup()(context.Background(), "-x"); err == nil {
+		t.Error("the default lookup accepted a malformed login")
+	}
+}
+
 // TestSIGHUPIsAnsweredButNoLongerReloads pins that the signal is
 // delivered and answered, not that anything is reloaded.
 //
@@ -151,7 +171,7 @@ func TestSIGHUPIsAnsweredButNoLongerReloads(t *testing.T) {
 	}
 	// And the process is still here, which is the whole reason the trap
 	// exists.
-	if _, ok := list.Lookup("alice@example.com"); !ok {
+	if _, ok := list.Lookup(0, "alice@example.com"); !ok {
 		t.Error("the list was disturbed by the signal")
 	}
 }

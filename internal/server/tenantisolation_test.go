@@ -571,8 +571,11 @@ func (w *tenantWorld) adminOnly() []route {
 		{op: "PATCH /api/v1/users/{id}", ids: map[string]string{"id": w.a.UserID},
 			body: map[string]any{"quota": map[string]any{"max_concurrent_sessions": 1}}},
 		{op: "GET /api/v1/allowlist"},
-		{op: "PUT /api/v1/allowlist/{email}", ids: map[string]string{"email": "b@example.com"}, body: map[string]any{"admin": true}},
-		{op: "DELETE /api/v1/allowlist/{email}", ids: map[string]string{"email": aEmail}},
+		{op: "PUT /api/v1/allowlist/{entry}", ids: map[string]string{"entry": "b@example.com"}, body: map[string]any{"admin": true}},
+		// @decision(DL-128)
+		{op: "PUT /api/v1/allowlist/{entry}", ids: map[string]string{"entry": "@b-gh"}, body: map[string]any{"admin": true}},
+		{op: "DELETE /api/v1/allowlist/{entry}", ids: map[string]string{"entry": aEmail}},
+		{op: "DELETE /api/v1/allowlist/{entry}", ids: map[string]string{"entry": "@a-gh"}},
 		{op: "GET /api/v1/org/github"},
 		{op: "PUT /api/v1/org/github/{platform}", ids: map[string]string{"platform": "gh"},
 			body: OrgGitHubApp{AppID: "1", PrivateKey: "x"}},

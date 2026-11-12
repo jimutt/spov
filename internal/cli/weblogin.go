@@ -93,7 +93,7 @@ func (e *Env) newLogin(ctx context.Context, st store.Store, publicURL string, wa
 	// that. What enforcement reads is the table.
 	//
 	// @decision(DL-007)
-	if _, err := auth.SeedAllowlist(ctx, st, server.DefaultOrgID, e.allowlistPath(), warn); err != nil {
+	if _, err := auth.SeedAllowlist(ctx, st, server.DefaultOrgID, e.allowlistPath(), e.accountLookup(), warn); err != nil {
 		return nil, nil, err
 	}
 	list, err := auth.NewAllowlist(ctx,
@@ -114,11 +114,24 @@ func (e *Env) newLogin(ctx context.Context, st store.Store, publicURL string, wa
 		Sessions:  sessions,
 		Users:     st.Users(),
 		Allowlist: list,
-		OrgID:     server.DefaultOrgID,
-		Now:       e.now,
-		Warn:      warn,
+		// @decision(DL-128)
+		Entries: st.Allowlist(),
+		OrgID:   server.DefaultOrgID,
+		Now:     e.now,
+		Warn:    warn,
 	}
 	return login, pgstore.StopCleanup, nil
+}
+
+// accountLookup resolves an allowlist entry's GitHub login: the test's
+// fake, else GitHub's API, the same one the login reads.
+//
+// @decision(DL-128)
+func (e *Env) accountLookup() auth.AccountLookup {
+	if e.GitHubAccounts != nil {
+		return e.GitHubAccounts
+	}
+	return auth.GitHubAccounts{}.Lookup
 }
 
 // newSessionManager applies the session and cookie policy. It is

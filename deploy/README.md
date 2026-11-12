@@ -101,8 +101,9 @@ The app needs no configuration on GitHub's side: spov requests
 `read:user` and `user:email` itself on every login
 (`internal/auth/github.go`), and GitHub shows that consent screen to the
 user. `user:email` is required rather than convenient — a private address
-is only in `/user/emails`, and the login identity is the address that is
-both primary and verified there. The device flow (`spov login`) is spov's
+is only in `/user/emails`, and an address entry matches the address that
+is both primary and verified there. The user is the account's numeric ID
+from `/user`. The device flow (`spov login`) is spov's
 own authorization server (`/device/code`, `/device/token`, approval at
 `/device`); GitHub is never a party to it, so there is nothing
 device-related to enable on GitHub.
@@ -111,34 +112,74 @@ device-related to enable on GitHub.
 
 ### The allowlist
 
-**The allowlist lives in the database**, and is managed through the API.
-The file below only bootstraps a new deployment.
+**The allowlist lives in the database**, and an administrator manages it
+on the dashboard's **Settings** page, under **People**, or through the
+API. The file below only bootstraps a new deployment.
 
-Only a GitHub address that is both **primary and verified** is accepted,
-because GitHub lets anyone add an unverified one.
+An entry is one of two kinds (DL-128):
+
+- **a GitHub account**, written `@login` (`@bob`). This is the one to
+  use. The server looks the login up on GitHub when the entry is added
+  and stores the account's numeric ID, so the entry keeps admitting that
+  account after a rename, never admits whoever registers a released
+  login, and does not care which address the person signs in with. The
+  name GitHub returns is shown back, so a mistyped login is caught before
+  anyone signs in. A login GitHub does not know, or an organisation's
+  account, is refused.
+- **an address** (`bob@example.com`). It admits the GitHub account whose
+  **primary, verified** address it is, checked at each sign-in. Only a
+  verified address counts, because GitHub lets anyone add an unverified
+  one. An address is often not the one a person signs in to GitHub with,
+  which is why the account form is easier.
+
+A person is admitted when any entry covers them, and is an administrator
+when any entry that covers them is an admin entry. A user is the GitHub
+account: a person whose address changes at GitHub keeps their sessions,
+credentials and settings while an entry still covers them. An address
+already recorded for one account on this server is never given to
+another; a sign-in that would need it is refused with a page that says
+so.
 
 #### Managing it
 
-Every call needs an administrator's credential **belonging to the org
-the allowlist governs** — a browser session, or a per-user token from
-`spov login`. The shared `SPOV_SERVER_TOKEN` is *not* one: DL-006 gives
-it its own org, so it is refused here rather than allowed to edit an
-allowlist nothing reads.
+The Settings page is the easiest way: it lists every entry with whether
+it has been used, adds a GitHub username or an address, changes admin
+rights and removes a person, behind a confirmation.
+
+For a script, every API call needs an administrator's credential
+**belonging to the org the allowlist governs** — a browser session, or a
+per-user token from `spov login`. The shared `SPOV_SERVER_TOKEN` is
+*not* one: DL-006 gives it its own org, so it is refused here rather
+than allowed to edit an allowlist nothing reads.
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" https://spov.example.com/api/v1/allowlist
 
-# Add someone, or change their admin rights (the same call does both).
+# Add someone by GitHub account, or change their admin rights (the same
+# call does both). The answer names the account GitHub resolved.
+curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"admin":false}' https://spov.example.com/api/v1/allowlist/@bob
+
+# Or by address.
 curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"admin":false}' https://spov.example.com/api/v1/allowlist/bob@example.com
 
 # Remove someone, and end everything they have running and stored.
 curl -X DELETE -H "Authorization: Bearer $TOKEN" \
-  https://spov.example.com/api/v1/allowlist/bob@example.com
+  https://spov.example.com/api/v1/allowlist/@bob
 ```
 
+Adding an account asks GitHub once, without a token. GitHub allows 60
+such requests an hour from one address; past that, or when GitHub cannot
+be reached, the call answers 502 and stores nothing, and you try again
+later. An account entry that already exists is matched by its stored
+login without asking GitHub. That login, and the name, are refreshed
+whenever the account signs in.
+
 Removing someone who has signed in off-boards them in the same call
-(DL-132). After the entry is gone, the server:
+(DL-132), unless another entry still covers them: a person on the list
+both by address and by account keeps everything until the second entry
+goes. After the last entry covering them is gone, the server:
 
 - ends their browser sessions;
 - cancels their unfinished jobs and stops their live sessions, held sync
@@ -154,10 +195,12 @@ Their history stays: their user row, past sessions, transcripts, reports
 and snapshots. Their sandbox templates stay too, since a template holds
 settings and credential names but no secret. Every step is done as you, so a cancelled job says who
 cancelled it. If a step fails, the others still run, and the call
-answers 500 saying the address is removed, what is left, and that the
-same `DELETE` retries. A `DELETE` of an address that is no longer on the
-allowlist, but whose person has signed in, runs the steps again and
-answers 204. One that was never used is simply removed.
+answers 500 saying the entry is removed, what is left, and that the
+same `DELETE` retries; on the Settings page that is the **Retry** button
+the message offers. A `DELETE` of an address or `@login` that is no
+longer on the allowlist, but names a person who has signed in and whom
+no entry covers, runs the steps again and answers 204. One that was
+never used is simply removed.
 
 Two things are outside what a removal can reach. Their OpenCode sign-in
 is deleted from spov but not revoked at OpenCode; they can end it there.
@@ -176,8 +219,8 @@ when it opens.
 
 Three changes are refused, because the API is the only way back:
 
-- removing your **own** admin rights, or deleting your own entry — ask
-  another admin;
+- removing your **own** admin rights, or deleting your own entry, when
+  no other admin entry covers you — ask another admin;
 - any change that would leave the org with **no** administrator;
 - any change by someone whose own admin rights have already been
   removed. Reads keep the 10 s bound above; writes are checked against
@@ -187,14 +230,20 @@ Three changes are refused, because the API is the only way back:
 #### Seeding a new deployment
 
 `SPOV_ALLOWLIST_FILE` is imported **once**, at startup, when the org has
-no administrator. One entry per line: an address, optionally followed by
-`admin`. `#` starts a comment, and matching is case-insensitive.
+no administrator. One entry per line: a GitHub account written `@login`,
+or an address, optionally followed by `admin`. `#` starts a comment, and
+matching is case-insensitive.
 
 ```
 # The people who may use this server.
-alice@example.com admin
+@alice admin
 bob@example.com
 ```
+
+Account lines are looked up on GitHub at the import, before anything is
+written, within 30 seconds for the whole file. A login GitHub does not
+know, or a GitHub that cannot be reached in that time, makes the file
+unusable, with the consequences below.
 
 Mount it from a host directory, as `deploy.yml` does with `volumes:`, or from a
 Kubernetes ConfigMap. On a **first
@@ -613,7 +662,7 @@ docker compose -f deploy/compose.yaml up --build
 entry is a placeholder nobody owns — the bind source has to exist, or
 Docker creates a directory there and the server fails on a confusing
 read error. It is imported into the database on the first start; after
-that, edit the allowlist through `/api/v1/allowlist`, not the file. To
+that, edit the allowlist on the Settings page or through `/api/v1/allowlist`, not the file. To
 start over, drop the volume.
 
 A completed login lands on `/`, the dashboard the image embeds. To see who the

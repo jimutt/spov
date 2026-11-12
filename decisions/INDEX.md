@@ -10,7 +10,7 @@
 | DL-131 | One session stores a bounded number of conversations and a bounded size of history, and the verdict holds a bounded size | accepted | server | recorder, storage, security, limits |
 | DL-130 | An exec reads a bounded amount of a sandbox program's output, and more is an error | accepted | sandbox | sandbox, exec, security, limits |
 | DL-129 | Administrators manage the allowlist on the Settings page | proposed | web | allowlist, settings, admin, access |
-| DL-128 | An allowlist entry names an e-mail address or a GitHub account, and a user is the GitHub account, not the address | proposed | server | auth, login, allowlist, access |
+| DL-128 | An allowlist entry names an e-mail address or a GitHub account, and a user is the GitHub account, not the address | accepted | server | auth, login, allowlist, access |
 | DL-127 | The session store holds a hash of a browser session token, never the token | accepted | server | auth, login, security |
 | DL-126 | Sync-back writes only what git status would show, and never lands in place over a hooks directory | accepted | cli | sync, security, cli |
 | DL-125 | Getting started is install, spov init, spov fly, and a launch that finds nothing configured points at init | accepted | cli | init, onboarding, docs |

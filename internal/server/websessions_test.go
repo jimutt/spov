@@ -175,6 +175,8 @@ func TestRevokingAnotherUsersSessionIsNotFound(t *testing.T) {
 	// Bob, in his own browser.
 	bob := f.secondBrowser()
 	bob.github.emails = []map[string]any{{"email": "bob@example.com", "primary": true, "verified": true}}
+	// Another person is another GitHub account (DL-128).
+	bob.github.id, bob.github.login = 2002, "bob"
 	bob.doLogin("")
 
 	if code := bob.delete("/api/v1/me/sessions/" + alice[0].ID); code != http.StatusNotFound {

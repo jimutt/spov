@@ -14,7 +14,12 @@ type Principal struct {
 	UserID string
 	OrgID  string
 	Email  string
-	Admin  bool
+	// GitHubID is the GitHub account the user row is bound to, zero for
+	// a row not yet bound and for every principal outside the login.
+	//
+	// @decision(DL-128)
+	GitHubID int64
+	Admin    bool
 	// TokenID names the stored CLI token this request authenticated
 	// with, so a handler can resolve "the token I am using" — what
 	// `spov logout` revokes. It is a row id, never a credential, and is

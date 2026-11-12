@@ -63,18 +63,32 @@ branches on the forge. See [the sandbox](sandbox.md#credentials-stay-outside-the
 ## Who can sign in
 
 Only people on the allowlist can use a hosted server. Browser sign-in is GitHub
-OAuth; the identity is the account's **primary, verified** e-mail address, which
-must be on the allowlist. `spov login` is the same identity through spov's own
-device flow. An empty allowlist admits nobody.
+OAuth, and the identity is the GitHub account's **numeric ID**: one account is one
+user, whatever address it signs in with. `spov login` is the same identity
+through spov's own device flow. An empty allowlist admits nobody.
 
-- **The allowlist lives in the database** and is managed by admins through
-  `/api/v1/allowlist`. `SPOV_ALLOWLIST_FILE` only seeds a new deployment.
-- **An admin is an allowlist entry with `admin` set.** Admin comes from the
-  allowlist alone and is re-checked against the database on every write. The
-  server refuses to leave the organisation with no admin, or to let an admin
-  remove their own entry. Keep at least two, so that one person's lost GitHub
-  account does not leave you editing the database. If an organisation ends up with
-  none, restoring the seed file and restarting imports it again.
+- **An entry names a GitHub account or an address.** An account entry (`@bob`) is
+  looked up on GitHub when it is added and stored by the account's numeric ID, so
+  a renamed login keeps its entry and a released login registered by somebody
+  else gets none. An address entry admits the account whose **primary, verified**
+  address it is, checked at each sign-in; GitHub lets anyone add an unverified
+  address, so no other counts. A user from before account IDs were recorded is
+  bound to the account that next signs in with that verified primary address, and
+  no other account can claim the row after that. An address recorded for one
+  account is never given to another.
+- **The allowlist lives in the database** and is managed by admins on the
+  Settings page or through `/api/v1/allowlist`. `SPOV_ALLOWLIST_FILE` only seeds
+  a new deployment.
+- **An admin is a person covered by an allowlist entry with `admin` set.** Admin
+  comes from the allowlist alone and is re-checked against the database on every
+  write. The server refuses to leave the organisation with no admin entry, or to
+  let an admin remove or demote their own last admin entry. Keep at least two
+  admins, so that one person's lost GitHub account does not leave you editing the
+  database. If an organisation ends up with none, restoring the seed file and
+  restarting imports it again.
+- **What GitHub says about an account is shown as text.** A login and display
+  name come from GitHub and can be chosen by anyone; the server checks a login's
+  shape before using it, and the dashboard never renders either as markup.
 - **`SPOV_SERVER_TOKEN` is not an admin of the allowlist's organisation.** It is a
   standing credential for a separate user and organisation, `local`. Its holder can
   launch sessions and jobs there, on the deployment's own credentials and keys. The
@@ -84,8 +98,9 @@ device flow. An empty allowlist admits nobody.
 
 ### What removing someone does
 
-Removing the address of someone who has signed in off-boards them in the same
-call. Once the entry is gone, the server:
+Removing the entry of someone who has signed in off-boards them in the same
+call, unless another entry still covers them, in which case nothing of theirs is
+ended. Once the last entry covering them is gone, the server:
 
 - stops that person signing in, and refuses their browser sessions and CLI tokens
   on their next request, on every replica, after at most 10 seconds;

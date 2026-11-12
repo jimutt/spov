@@ -4,25 +4,30 @@
 #
 # The allowlist itself lives in the database. This ConfigMap is imported
 # once, at startup, when the org has no administrator; after that it is
-# ignored. Manage the allowlist through the API instead:
+# ignored. Manage the allowlist on the dashboard's Settings page, or
+# through the API:
 #
-#   GET/PUT/DELETE /api/v1/allowlist[/{email}]
+#   GET/PUT/DELETE /api/v1/allowlist[/{entry}]
 #
-# One entry per line: an address, optionally followed by "admin".
-# "#" starts a comment, and matching is case-insensitive. Only a GitHub
-# address that is both primary and verified is ever accepted.
+# One entry per line: a GitHub account written @login, or an address,
+# optionally followed by "admin". An account line is looked up on GitHub
+# at the import and stored by the account's numeric ID; one GitHub does
+# not know stops a first boot. An address matches only a GitHub account's
+# primary, verified address. "#" starts a comment, and matching is
+# case-insensitive.
 #
 # Editing the ConfigMap changes nothing on a deployment that already has
 # an administrator — not on SIGHUP, and not on a rollout. Removing
 # someone is a DELETE against the API; it locks them out on every
-# replica within ten seconds and deletes their browser sessions.
+# replica within ten seconds and ends what they have running and stored.
 #
-# @decision(DL-007)
+# @decision(DL-007) @decision(DL-128)
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: spov-allowlist
 data:
   allowlist: |
-    # The people who may use this server.
+    # The people who may use this server. Replace the placeholder with
+    # your GitHub account (@your-login admin) or your address.
     you@example.com admin

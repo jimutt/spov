@@ -71,13 +71,19 @@ func (a *TokenAuthenticator) Authenticate(r *http.Request) (Principal, error) {
 		}
 		return Principal{}, fmt.Errorf("auth: loading the token's user: %w", err)
 	}
-	admin, allowed := a.Allowlist.Lookup(user.Email)
+	// A row not yet bound to an account (zero) is covered only by an
+	// address entry until its next sign-in binds it.
+	//
+	// @decision(DL-128)
+	admin, allowed := a.Allowlist.Lookup(user.GithubID, user.Email)
 	if !allowed {
 		return Principal{}, fmt.Errorf("%w: %s is no longer on the allowlist", ErrBadCredential, user.Email)
 	}
 
 	a.touch(ctx, rec, now)
-	return Principal{UserID: user.ID, OrgID: user.OrgID, Email: user.Email, Admin: admin, TokenID: rec.ID}, nil
+	return Principal{
+		UserID: user.ID, OrgID: user.OrgID, Email: user.Email, GitHubID: user.GithubID, Admin: admin, TokenID: rec.ID,
+	}, nil
 }
 
 // touch records use, at most once a TouchInterval. A failure here is not

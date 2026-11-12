@@ -54,11 +54,11 @@ func plural(n int, noun, verb string) string {
 // user row, past sessions, transcripts, reports) is kept.
 //
 // @decision(DL-132)
-func (s *Service) Offboard(ctx context.Context, p auth.Principal, email string, user store.User) (offboardResult, error) {
+func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, user store.User) (offboardResult, error) {
 	var r offboardResult
 	left := func(what string, err error) {
 		r.Left = append(r.Left, what)
-		s.deps.Warn("allowlist: off-boarding " + email + ": " + what + ": " + redact.Error(err))
+		s.deps.Warn("allowlist: off-boarding " + who + ": " + what + ": " + redact.Error(err))
 	}
 
 	// Jobs first: a cancel stops the job's session by the path its
@@ -185,7 +185,7 @@ func (s *Service) Offboard(ctx context.Context, p auth.Principal, email string, 
 	// @decision(DL-134)
 	s.ForgetRepoListings(user.OrgID, user.ID)
 
-	detail := email + ": " + r.summary()
+	detail := who + ": " + r.summary()
 	if len(r.Left) > 0 {
 		detail += "; left: " + strings.Join(r.Left, ", ")
 	}
@@ -198,7 +198,7 @@ func (s *Service) Offboard(ctx context.Context, p auth.Principal, email string, 
 	if len(r.Left) > 0 {
 		return r, fmt.Errorf("%s is removed from the allowlist, but not everything of theirs was ended: %s"+
 			" (done: %s); send the same delete again to retry",
-			email, strings.Join(r.Left, ", "), r.summary())
+			who, strings.Join(r.Left, ", "), r.summary())
 	}
 	return r, nil
 }
