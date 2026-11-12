@@ -234,8 +234,8 @@ func TestSessionCookiePolicy(t *testing.T) {
 	if s.Cookie.SameSite != http.SameSiteLaxMode {
 		t.Errorf("SameSite = %v, want Lax", s.Cookie.SameSite)
 	}
-	if s.Cookie.Name != WebSessionCookie || s.Cookie.Path != "/" {
-		t.Errorf("cookie = %q at %q", s.Cookie.Name, s.Cookie.Path)
+	if s.Cookie.Name != "__Host-spov_session" || s.Cookie.Path != "/" || s.Cookie.Domain != "" {
+		t.Errorf("cookie = %q at %q for %q, want a __Host- name, path / and no domain", s.Cookie.Name, s.Cookie.Path, s.Cookie.Domain)
 	}
 	if s.Lifetime != WebSessionLifetime || s.IdleTimeout != WebSessionIdle {
 		t.Errorf("lifetime %s, idle %s", s.Lifetime, s.IdleTimeout)
@@ -253,6 +253,10 @@ func TestSessionCookiePolicy(t *testing.T) {
 	}
 	if len(warned) != 1 || !strings.Contains(warned[0], "not https") {
 		t.Errorf("warnings = %v, want one about the missing Secure flag", warned)
+	}
+	// The prefix needs Secure, so plain http keeps the plain name.
+	if plain.Cookie.Name != WebSessionCookie {
+		t.Errorf("an http cookie is named %q, want %q", plain.Cookie.Name, WebSessionCookie)
 	}
 	// A nil warn is not a panic.
 	newSessionManager("http://localhost:8080", nil)
