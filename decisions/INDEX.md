@@ -2,6 +2,8 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-127 | The session store holds a hash of a browser session token, never the token | accepted | server | auth, login, security |
+| DL-126 | Sync-back writes only what git status would show, and never lands in place over a hooks directory | accepted | cli | sync, security, cli |
 | DL-125 | Getting started is install, spov init, spov fly, and a launch that finds nothing configured points at init | accepted | cli | init, onboarding, docs |
 | DL-124 | spov init fixes a missing step only after asking: it writes the GitHub platform, opts into gh, stores a model key, and runs sign-ins and the image build | accepted | cli | init, onboarding, cli, credentials |
 | DL-123 | spov init is a re-runnable checklist that gets a local setup ready, GitHub through gh first | accepted | cli | init, onboarding, cli |

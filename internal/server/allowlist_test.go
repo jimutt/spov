@@ -50,6 +50,7 @@ func allowlistFixtureWith(t *testing.T, admin bool, entries map[string]bool, adj
 		// in it — and because a delete has to be able to end sessions.
 		sessions := scs.New()
 		sessions.Store = memstore.New()
+		sessions.HashTokenInStore = true
 		d.Login = &Login{
 			Sessions: sessions, Allowlist: list, Users: d.Store.Users(), OrgID: auth.LocalID,
 		}

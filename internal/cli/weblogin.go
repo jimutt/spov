@@ -124,6 +124,10 @@ func newSessionManager(publicURL string, warn func(string)) *scs.SessionManager 
 	sessions := scs.New()
 	sessions.Lifetime = WebSessionLifetime
 	sessions.IdleTimeout = WebSessionIdle
+	// The store keeps a hash of the token, never the cookie's value.
+	//
+	// @decision(DL-127)
+	sessions.HashTokenInStore = true
 	sessions.Cookie.Name = WebSessionCookie
 	sessions.Cookie.HttpOnly = true
 	sessions.Cookie.SameSite = http.SameSiteLaxMode

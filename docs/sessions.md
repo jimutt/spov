@@ -114,6 +114,11 @@ quit.
 - **Nothing is overwritten.** The work lands back on your branch when the
   checkout is as you left it, and on a `spov/<session>` branch when you have
   changed it meanwhile.
+- **Only what `git status` shows.** The sync never writes or deletes a
+  file your checkout ignores (`node_modules`, `.env`), and refuses a sync
+  that tries. If the session changed your repository's git hooks (a
+  `core.hooksPath` inside the checkout, such as `.githooks` or husky's
+  directory), the work lands on `spov/<session>` for you to read first.
 - **Nothing is lost.** The sandbox is terminated only after the work is
   back; a sync that fails leaves it running and tells you how to retry.
 - **The checkout must be clean and on a branch**, or the launch stops and
