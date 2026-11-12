@@ -181,8 +181,8 @@ delete from users where id = $1 and org_id = $2;
 
 -- name: CreateAPIToken :exec
 insert into api_tokens (id, org_id, user_id, token_hash, name, last_used_at,
-                        expires_at, revoked_at, created_at, updated_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+                        expires_at, revoked_at, created_at, updated_at, issued_by)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
 
 -- name: GetAPITokenByHash :one
 select * from api_tokens where token_hash = $1;
@@ -192,6 +192,10 @@ select * from api_tokens where id = $1 and org_id = $2;
 
 -- name: ListAPITokensByUser :many
 select * from api_tokens where org_id = $1 and user_id = $2 order by id;
+
+-- name: ListAPITokensIssuedBy :many
+-- The tokens an admin issued for service accounts (DL-141).
+select * from api_tokens where org_id = $1 and issued_by = $2 order by id;
 
 -- name: TouchAPIToken :execrows
 update api_tokens set last_used_at = $3 where id = $1 and org_id = $2;

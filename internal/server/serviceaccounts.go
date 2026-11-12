@@ -110,6 +110,19 @@ type ServiceTokenView struct {
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty" doc:"Absent on a token issued with no_expiry"`
+	// IssuedBy is the admin who issued it.
+	//
+	// @decision(DL-141)
+	IssuedBy *TokenIssuer `json:"issued_by,omitempty" doc:"The admin who issued the token"`
+}
+
+// TokenIssuer names the admin who issued a token: their user ID, and
+// their GitHub login or address as a label.
+//
+// @decision(DL-141)
+type TokenIssuer struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty" doc:"The issuer's @login, or their address"`
 }
 
 type serviceTokensOutput struct {
@@ -450,6 +463,12 @@ func (s *Server) deleteServiceAccount(ctx context.Context, in *serviceAccountRef
 		if u.DisabledAt != nil {
 			return nil
 		}
+		// The locks a create by the account takes, so a create either
+		// commits before this (and the off-boarding below ends it) or
+		// reads the account as deleted.
+		if err := lockOwnerQuotas(ctx, tx, p.OrgID, u.ID); err != nil {
+			return err
+		}
 		if err := tx.Users().Disable(ctx, p.OrgID, u.ID, now); err != nil {
 			return err
 		}
@@ -465,6 +484,41 @@ func (s *Server) deleteServiceAccount(ctx context.Context, in *serviceAccountRef
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
 	return nil, nil
+}
+
+// lockOwnerQuotas takes, inside tx, the owner's session and job quota
+// locks (the ones CountLive takes in a transaction), sessions first.
+// Taking both in that order wherever both are taken keeps two
+// transactions from waiting on each other.
+//
+// @decision(DL-140) @decision(DL-009)
+func lockOwnerQuotas(ctx context.Context, tx store.Store, orgID, ownerID string) error {
+	if _, err := tx.Sessions().CountLive(ctx, orgID, ownerID); err != nil {
+		return err
+	}
+	_, err := tx.Jobs().CountLive(ctx, orgID, ownerID)
+	return err
+}
+
+// liveServiceOwner refuses, inside a create's transaction and under
+// the owner's quota locks, a create by a service account that has been
+// deleted since its request was authenticated. The refusal is the 401
+// its token now gets.
+//
+// @decision(DL-140)
+func liveServiceOwner(ctx context.Context, tx store.Store, orgID, ownerID string) error {
+	if err := lockOwnerQuotas(ctx, tx, orgID, ownerID); err != nil {
+		return err
+	}
+	u, err := tx.Users().Get(ctx, orgID, ownerID)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+	case err != nil:
+		return err
+	case u.Kind == store.UserService && u.DisabledAt == nil:
+		return nil
+	}
+	return huma.Error401Unauthorized("this service account is deleted")
 }
 
 // createServiceToken issues a token for an account that is not
@@ -508,6 +562,7 @@ func (s *Server) createServiceToken(ctx context.Context, in *createServiceTokenI
 	}
 	rec := store.APIToken{
 		ID: store.NewID(now), OrgID: p.OrgID, Hash: auth.HashToken(token), Name: label, ExpiresAt: expires, CreatedAt: now,
+		IssuedBy: p.UserID,
 	}
 	err = s.deps.Store.Tx(ctx, func(tx store.Store) error {
 		if err := liveAdminIn(ctx, tx, p); err != nil {
@@ -549,10 +604,36 @@ func (s *Server) createServiceToken(ctx context.Context, in *createServiceTokenI
 	return &createServiceTokenOutput{
 		CacheControl: "no-store",
 		Body: IssuedServiceToken{
-			ServiceTokenView: ServiceTokenView{ID: rec.ID, Name: rec.Name, CreatedAt: rec.CreatedAt, ExpiresAt: rec.ExpiresAt},
-			Token:            token,
+			ServiceTokenView: ServiceTokenView{ID: rec.ID, Name: rec.Name, CreatedAt: rec.CreatedAt, ExpiresAt: rec.ExpiresAt,
+				IssuedBy: s.tokenIssuer(ctx, p.OrgID, rec.IssuedBy, nil)},
+			Token: token,
 		},
 	}, nil
+}
+
+// tokenIssuer names the admin who issued a token, reading their row
+// once per listing through seen. An issuer whose row cannot be read is
+// named by ID alone.
+//
+// @decision(DL-141)
+func (s *Server) tokenIssuer(ctx context.Context, orgID, id string, seen map[string]*TokenIssuer) *TokenIssuer {
+	if id == "" {
+		return nil
+	}
+	if v, ok := seen[id]; ok {
+		return v
+	}
+	v := &TokenIssuer{ID: id}
+	if u, err := s.deps.Store.Users().Get(ctx, orgID, id); err == nil {
+		v.Label = u.Email
+		if u.GithubID != 0 && u.GithubLogin != "" {
+			v.Label = "@" + u.GithubLogin
+		}
+	}
+	if seen != nil {
+		seen[id] = v
+	}
+	return v
 }
 
 // listServiceTokens lists an account's tokens that are not revoked.
@@ -573,12 +654,14 @@ func (s *Server) listServiceTokens(ctx context.Context, in *serviceAccountRef) (
 	}
 	out := &serviceTokensOutput{}
 	out.Body.Tokens = []ServiceTokenView{}
+	issuers := map[string]*TokenIssuer{}
 	for _, t := range found {
 		if t.RevokedAt != nil {
 			continue
 		}
 		out.Body.Tokens = append(out.Body.Tokens, ServiceTokenView{
 			ID: t.ID, Name: t.Name, CreatedAt: t.CreatedAt, LastUsedAt: t.LastUsedAt, ExpiresAt: t.ExpiresAt,
+			IssuedBy: s.tokenIssuer(ctx, p.OrgID, t.IssuedBy, issuers),
 		})
 	}
 	return out, nil

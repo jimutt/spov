@@ -38,6 +38,7 @@ type ApiToken struct {
 	RevokedAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	IssuedBy   *string
 }
 
 type Conversation struct {

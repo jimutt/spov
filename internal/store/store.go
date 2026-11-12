@@ -606,6 +606,11 @@ type TokenStore interface {
 	// @decision(DL-006)
 	ByID(ctx context.Context, orgID, id string) (APIToken, error)
 	ListByUser(ctx context.Context, orgID, userID string) ([]APIToken, error)
+	// ListIssuedBy lists the tokens an admin issued for service
+	// accounts, oldest first. An empty issuer lists nothing.
+	//
+	// @decision(DL-141)
+	ListIssuedBy(ctx context.Context, orgID, issuerID string) ([]APIToken, error)
 	// Touch records use, at most once a minute, so every request does
 	// not write.
 	Touch(ctx context.Context, orgID, id string, at time.Time) error
@@ -818,8 +823,13 @@ type APIToken struct {
 	OrgID  string
 	UserID string
 	// Hash is sha256 of the token text.
-	Hash       []byte
-	Name       string
+	Hash []byte
+	Name string
+	// IssuedBy is the admin who issued a service account's token; empty
+	// on a token the device flow issued.
+	//
+	// @decision(DL-141)
+	IssuedBy   string
 	LastUsedAt *time.Time
 	ExpiresAt  *time.Time
 	RevokedAt  *time.Time

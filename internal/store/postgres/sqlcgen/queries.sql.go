@@ -225,8 +225,8 @@ func (q *Queries) CountMintsSince(ctx context.Context, arg CountMintsSinceParams
 
 const createAPIToken = `-- name: CreateAPIToken :exec
 insert into api_tokens (id, org_id, user_id, token_hash, name, last_used_at,
-                        expires_at, revoked_at, created_at, updated_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        expires_at, revoked_at, created_at, updated_at, issued_by)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 `
 
 type CreateAPITokenParams struct {
@@ -240,6 +240,7 @@ type CreateAPITokenParams struct {
 	RevokedAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	IssuedBy   *string
 }
 
 func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) error {
@@ -254,6 +255,7 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 		arg.RevokedAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.IssuedBy,
 	)
 	return err
 }
@@ -837,7 +839,7 @@ func (q *Queries) FindEvent(ctx context.Context, arg FindEventParams) (Event, er
 }
 
 const getAPIToken = `-- name: GetAPIToken :one
-select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at from api_tokens where id = $1 and org_id = $2
+select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at, issued_by from api_tokens where id = $1 and org_id = $2
 `
 
 type GetAPITokenParams struct {
@@ -859,12 +861,13 @@ func (q *Queries) GetAPIToken(ctx context.Context, arg GetAPITokenParams) (ApiTo
 		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IssuedBy,
 	)
 	return i, err
 }
 
 const getAPITokenByHash = `-- name: GetAPITokenByHash :one
-select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at from api_tokens where token_hash = $1
+select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at, issued_by from api_tokens where token_hash = $1
 `
 
 func (q *Queries) GetAPITokenByHash(ctx context.Context, tokenHash []byte) (ApiToken, error) {
@@ -881,6 +884,7 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, tokenHash []byte) (ApiT
 		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IssuedBy,
 	)
 	return i, err
 }
@@ -1856,7 +1860,7 @@ func (q *Queries) LastSeqs(ctx context.Context, arg LastSeqsParams) ([]LastSeqsR
 }
 
 const listAPITokensByUser = `-- name: ListAPITokensByUser :many
-select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at from api_tokens where org_id = $1 and user_id = $2 order by id
+select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at, issued_by from api_tokens where org_id = $1 and user_id = $2 order by id
 `
 
 type ListAPITokensByUserParams struct {
@@ -1884,6 +1888,49 @@ func (q *Queries) ListAPITokensByUser(ctx context.Context, arg ListAPITokensByUs
 			&i.RevokedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IssuedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAPITokensIssuedBy = `-- name: ListAPITokensIssuedBy :many
+select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at, issued_by from api_tokens where org_id = $1 and issued_by = $2 order by id
+`
+
+type ListAPITokensIssuedByParams struct {
+	OrgID    string
+	IssuedBy *string
+}
+
+// The tokens an admin issued for service accounts (DL-141).
+func (q *Queries) ListAPITokensIssuedBy(ctx context.Context, arg ListAPITokensIssuedByParams) ([]ApiToken, error) {
+	rows, err := q.db.Query(ctx, listAPITokensIssuedBy, arg.OrgID, arg.IssuedBy)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ApiToken
+	for rows.Next() {
+		var i ApiToken
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.UserID,
+			&i.TokenHash,
+			&i.Name,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IssuedBy,
 		); err != nil {
 			return nil, err
 		}

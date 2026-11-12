@@ -739,6 +739,8 @@ func (s memUsers) Create(_ context.Context, u User) error {
 	if u.Kind == UserService && u.GithubID != 0 {
 		return ErrConflict
 	}
+	// Only Disable sets the time.
+	u.DisabledAt = nil
 	if _, ok := s.m.users[u.ID]; ok {
 		return ErrConflict
 	}
@@ -985,6 +987,19 @@ func (s memTokens) ListByUser(_ context.Context, orgID, userID string) ([]APITok
 	var out []APIToken
 	for _, t := range s.m.tokens {
 		if t.OrgID == orgID && t.UserID == userID {
+			out = append(out, copyToken(t))
+		}
+	}
+	slices.SortFunc(out, func(a, b APIToken) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
+// @decision(DL-141)
+func (s memTokens) ListIssuedBy(_ context.Context, orgID, issuerID string) ([]APIToken, error) {
+	defer s.m.lock()()
+	var out []APIToken
+	for _, t := range s.m.tokens {
+		if t.OrgID == orgID && issuerID != "" && t.IssuedBy == issuerID {
 			out = append(out, copyToken(t))
 		}
 	}

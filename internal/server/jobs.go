@@ -189,7 +189,7 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	if sreq.Sync != nil {
 		seed = sreq.Sync.Bundle
 	}
-	job, err = s.createJobWithinQuota(ctx, sess, job, seed, quota.MaxConcurrentJobs)
+	job, err = s.createJobWithinQuota(ctx, sess, job, seed, quota.MaxConcurrentJobs, p.Service)
 	if err != nil {
 		return store.Job{}, err
 	}
@@ -225,11 +225,18 @@ func storedPRPolicy(p store.PRPolicy) store.PRPolicy {
 // the session and the job in one transaction, so the count a create
 // decides on is the count it commits against. A max of zero or less is
 // no limit. It returns the job as stored, with the store's timestamps.
+// A service account's create checks first that the account is not
+// deleted.
 //
-// @decision(DL-045) @decision(DL-009)
-func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, job store.Job, seed []byte, max int) (store.Job, error) {
+// @decision(DL-045) @decision(DL-009) @decision(DL-140)
+func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, job store.Job, seed []byte, max int, service bool) (store.Job, error) {
 	stored := job
 	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
+		if service {
+			if err := liveServiceOwner(ctx, tx, job.OrgID, job.OwnerID); err != nil {
+				return err
+			}
+		}
 		if max > 0 {
 			n, err := tx.Jobs().CountLive(ctx, job.OrgID, job.OwnerID)
 			if err != nil {

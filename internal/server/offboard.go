@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/redact"
@@ -61,6 +63,35 @@ func plural(n int, noun, verb string) string {
 		noun += "s"
 	}
 	return fmt.Sprintf("%d %s %s", n, noun, verb)
+}
+
+// issuedServiceTokens counts the usable tokens of service accounts
+// still enabled that user issued, and names those accounts. A failed
+// read is a warning, not a failed off-boarding: nothing is ended here.
+//
+// @decision(DL-141)
+func (s *Service) issuedServiceTokens(ctx context.Context, user store.User, now time.Time) (int, []string) {
+	tokens, err := s.deps.Store.Tokens().ListIssuedBy(ctx, user.OrgID, user.ID)
+	if err != nil {
+		s.deps.Warn("off-boarding: counting the service tokens " + user.ID + " issued: " + redact.Error(err))
+		return 0, nil
+	}
+	n := 0
+	var accounts []string
+	for _, t := range tokens {
+		if !t.Usable(now) || t.UserID == user.ID {
+			continue
+		}
+		acct, err := s.deps.Store.Users().Get(ctx, t.OrgID, t.UserID)
+		if err != nil || acct.Kind != store.UserService || acct.DisabledAt != nil {
+			continue
+		}
+		n++
+		if !slices.Contains(accounts, acct.Name) {
+			accounts = append(accounts, acct.Name)
+		}
+	}
+	return n, accounts
 }
 
 // Offboard ends what a person removed from the allowlist still has: it
@@ -206,6 +237,20 @@ func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, us
 	detail := who + ": " + r.summary()
 	if len(r.Left) > 0 {
 		detail += "; left: " + strings.Join(r.Left, ", ")
+	}
+	// The service tokens they issued as an admin stay: revoking them
+	// would stop the pipelines that hold them. They are counted, and
+	// the accounts named, so someone rotates them.
+	//
+	// @decision(DL-141)
+	if n, accounts := s.issuedServiceTokens(ctx, user, now); n > 0 {
+		line := plural(n, "service account token", "they issued is still usable")
+		if n != 1 {
+			line = fmt.Sprintf("%d service account tokens they issued are still usable", n)
+		}
+		line += " (" + strings.Join(accounts, ", ") + "); rotate them"
+		detail += "; " + line
+		s.deps.Warn("off-boarding " + who + ": " + line)
 	}
 	if err := s.deps.Store.AdminEvents().Append(ctx, store.AdminEvent{
 		ID: store.NewID(now), OrgID: p.OrgID, Actor: actorOf(p), Action: how.action, At: now,

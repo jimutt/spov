@@ -376,7 +376,8 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/jso
   -d '{"name":"release workflow","expires_in_days":180}' \
   https://spov.example.com/api/v1/service-accounts/release-bot/tokens
 
-# List its tokens (never the tokens themselves), and revoke one.
+# List its tokens (never the tokens themselves), each with who issued
+# it, and revoke one.
 curl -H "Authorization: Bearer $TOKEN" \
   https://spov.example.com/api/v1/service-accounts/release-bot/tokens
 curl -X DELETE -H "Authorization: Bearer $TOKEN" \
@@ -392,7 +393,16 @@ and an account at most 10 usable tokens: two at once is what a rotation
 needs (issue a new one, switch the secret, revoke the old one). Nothing
 warns before a token expires; the listing shows the date. Every create,
 change, token issue, token revoke and deletion writes an audit row with
-the account's name and the token's id and label, never the token.
+the account's name and the token's id and label, never the token. The
+account can revoke its own token with `DELETE /api/v1/me/tokens/current`,
+which is audited too, but cannot issue one or change its commit author.
+
+**Removing an admin does not revoke the service tokens they issued**,
+because that would stop every pipeline they set up. The off-boarding
+counts the ones still usable in its audit row and names their accounts
+in the server's log, and the token listing shows who issued each token.
+Rotate those tokens: issue a new one, switch the pipeline's secret,
+revoke the old one.
 
 The account stores its own forge token, with its own spov token, through
 the routes a person uses, so no route writes a credential on another
@@ -414,13 +424,19 @@ person does, the server cancels its unfinished jobs, stops its live
 sessions, revokes its tokens and deletes its stored credentials, and
 writes an audit row with what was ended. Its name stays taken and its
 history is kept. If a step fails, the call answers 500 saying what is
-left, and the same `DELETE` retries it.
+left, and the same `DELETE` retries it. A session or job the account
+asks for while the delete runs is either ended by it or refused with
+401. A credential the account stores at that moment can outlive the
+delete; nothing can use it, and sending the `DELETE` again removes it.
 
 An administrator reads, steers, interrupts and cancels a service
 account's sessions and jobs as they do anyone's. A leaked service token
 can do what the account can, including replacing its stored credential;
 it cannot read one back, reach another user's work or administer
-anything. Revoke it, or delete the account.
+anything. That holds with the credential proxy: on a server run with
+`SPOV_TOKENS_IN_SANDBOX=1` the forge token is inside the account's
+sandboxes, where anyone who can attach to one of its sessions can read
+it. Revoke a leaked token, or delete the account.
 
 ## Credentials
 

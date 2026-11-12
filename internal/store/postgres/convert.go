@@ -232,7 +232,13 @@ func quotaJSON(q store.Quota) ([]byte, error) {
 }
 
 func tokenFromRow(r sqlcgen.ApiToken) store.APIToken {
+	issuer := ""
+	// @decision(DL-141)
+	if r.IssuedBy != nil {
+		issuer = *r.IssuedBy
+	}
 	return store.APIToken{
+		IssuedBy:   issuer,
 		ID:         r.ID,
 		OrgID:      r.OrgID,
 		UserID:     r.UserID,

@@ -1216,6 +1216,16 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		if err := users.Create(ctx, bound); !errors.Is(err, store.ErrConflict) {
 			t.Errorf("a service row was created with a GitHub account: %v", err)
 		}
+		// A create never carries a disabled time in.
+		at0 := t0
+		early := store.User{ID: store.NewID(t0.Add(5 * time.Second)), OrgID: "org", Email: "early@service.invalid",
+			Kind: store.UserService, DisabledAt: &at0}
+		if err := users.Create(ctx, early); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := users.Get(ctx, "org", early.ID); got.DisabledAt != nil {
+			t.Errorf("a create stored a disabled time: %+v", got)
+		}
 		odd := store.User{ID: store.NewID(t0.Add(3 * time.Second)), OrgID: "org", Email: "o@example.com", Kind: "robot"}
 		if err := users.Create(ctx, odd); err == nil {
 			t.Error("a row of an unknown kind was created")
@@ -1279,6 +1289,36 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if again, _ := users.Get(ctx, "org", other.ID); again.DisabledAt != nil {
 			t.Errorf("a rolled-back disable is visible: %+v", again)
+		}
+	},
+	// A service account's token records who issued it, and is listed by
+	// its issuer within the org.
+	//
+	// @decision(DL-141)
+	"tokens: the issuer is kept and listed": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		for i, tok := range []store.APIToken{
+			{ID: store.NewID(t0), OrgID: "org", UserID: "svc", Hash: []byte("i-a"), Name: "a", IssuedBy: "admin"},
+			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", UserID: "svc", Hash: []byte("i-b"), Name: "b", IssuedBy: "admin"},
+			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", UserID: "admin", Hash: []byte("i-c"), Name: "c"},
+			{ID: store.NewID(t0.Add(3 * time.Second)), OrgID: "other", UserID: "svc", Hash: []byte("i-d"), Name: "d", IssuedBy: "admin"},
+		} {
+			if err := s.Tokens().Create(ctx, tok); err != nil {
+				t.Fatalf("token %d: %v", i, err)
+			}
+		}
+		got, err := s.Tokens().ListIssuedBy(ctx, "org", "admin")
+		if err != nil || len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" || got[0].IssuedBy != "admin" {
+			t.Errorf("issued by admin = %+v, %v", got, err)
+		}
+		if got, err := s.Tokens().ListIssuedBy(ctx, "org", ""); err != nil || len(got) != 0 {
+			t.Errorf("issued by nobody = %+v, %v", got, err)
+		}
+		if own, _ := s.Tokens().ListByUser(ctx, "org", "admin"); len(own) != 1 || own[0].IssuedBy != "" {
+			t.Errorf("a device-flow token's issuer = %+v", own)
+		}
+		if byHash, _ := s.Tokens().ByHash(ctx, []byte("i-a")); byHash.IssuedBy != "admin" {
+			t.Errorf("by hash = %+v", byHash)
 		}
 	},
 	"tokens are found by hash across orgs, touched and revoked": func(t *testing.T, s store.Store) {

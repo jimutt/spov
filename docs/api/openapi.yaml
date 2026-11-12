@@ -706,6 +706,9 @@ components:
           type: string
         id:
           type: string
+        issued_by:
+          $ref: "#/components/schemas/TokenIssuer"
+          description: The admin who issued the token
         last_used_at:
           format: date-time
           type: string
@@ -2088,6 +2091,9 @@ components:
           type: string
         id:
           type: string
+        issued_by:
+          $ref: "#/components/schemas/TokenIssuer"
+          description: The admin who issued the token
         last_used_at:
           format: date-time
           type: string
@@ -2782,6 +2788,17 @@ components:
             - "null"
       required:
         - templates
+      type: object
+    TokenIssuer:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        label:
+          description: The issuer's @login, or their address
+          type: string
+      required:
+        - id
       type: object
     TokenView:
       additionalProperties: false

@@ -300,7 +300,36 @@ func (p pgTokens) Create(ctx context.Context, t store.APIToken) error {
 		RevokedAt:  tsPtr(t.RevokedAt),
 		CreatedAt:  ts(t.CreatedAt),
 		UpdatedAt:  ts(t.UpdatedAt),
+		// @decision(DL-141)
+		IssuedBy: nonEmptyText(t.IssuedBy),
 	}))
+}
+
+// nonEmptyText is s for a nullable text column, nil when it is empty.
+func nonEmptyText(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// @decision(DL-141)
+func (p pgTokens) ListIssuedBy(ctx context.Context, orgID, issuerID string) ([]store.APIToken, error) {
+	if issuerID == "" {
+		return nil, nil
+	}
+	rows, err := p.s.q.ListAPITokensIssuedBy(ctx, sqlcgen.ListAPITokensIssuedByParams{OrgID: orgID, IssuedBy: &issuerID})
+	if err != nil {
+		return nil, mapErr("list tokens issued by", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	out := make([]store.APIToken, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, tokenFromRow(r))
+	}
+	return out, nil
 }
 
 func (p pgTokens) ByHash(ctx context.Context, hash []byte) (store.APIToken, error) {

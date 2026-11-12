@@ -135,7 +135,11 @@ never sign in and are never on the allowlist.
 - The pipeline uses the token as `SPOV_SERVER_TOKEN`. The account then does what
   any user who is not an administrator may: start and read its own sessions and
   jobs, store its own credentials, list and revoke its own tokens. It cannot
-  issue itself a token and is never an administrator.
+  issue itself a token or change its commit author, and is never an
+  administrator.
+- Removing an administrator does not revoke the service tokens they issued, so
+  the pipelines keep running; the token listing shows who issued each, and they
+  should be rotated.
 - It stores its own forge token with `spov credentials add` under its own spov
   token. spov does not renew a stored token, so the pipeline's owner rotates it.
 - Its quotas and request limits are a user's, with the same defaults, and an

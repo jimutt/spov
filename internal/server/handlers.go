@@ -1187,6 +1187,13 @@ func (s *Server) registerMe() {
 		if p.UserID == "" || s.deps.Store == nil {
 			return nil, huma.Error501NotImplemented("this server has no user profiles to update")
 		}
+		// An admin sets a service account's commit author, audited.
+		//
+		// @decision(DL-140)
+		if p.Service && (in.Body.GitName != nil || in.Body.GitEmail != nil) {
+			return nil, huma.Error403Forbidden("a service account's commit author is set by an administrator," +
+				" with PATCH /api/v1/service-accounts/{name}")
+		}
 		// Checked before anything is written, against the same catalogue
 		// and keys a launch asks about.
 		//

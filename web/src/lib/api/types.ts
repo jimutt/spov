@@ -1238,6 +1238,8 @@ export interface components {
              */
             expires_at?: string;
             id: string;
+            /** @description The admin who issued the token */
+            issued_by?: components["schemas"]["TokenIssuer"];
             /** Format: date-time */
             last_used_at?: string;
             /** @description The token's label */
@@ -1964,6 +1966,8 @@ export interface components {
              */
             expires_at?: string;
             id: string;
+            /** @description The admin who issued the token */
+            issued_by?: components["schemas"]["TokenIssuer"];
             /** Format: date-time */
             last_used_at?: string;
             /** @description The token's label */
@@ -2278,6 +2282,11 @@ export interface components {
              */
             readonly $schema?: string;
             templates: components["schemas"]["TemplateView"][] | null;
+        };
+        TokenIssuer: {
+            id: string;
+            /** @description The issuer's @login, or their address */
+            label?: string;
         };
         TokenView: {
             /** Format: date-time */

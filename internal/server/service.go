@@ -206,7 +206,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 		State:   store.StateStarting,
 		Request: req,
 	}
-	if err := s.createWithinQuota(ctx, sess, quota.MaxConcurrentSessions); err != nil {
+	if err := s.createWithinQuota(ctx, sess, quota.MaxConcurrentSessions, p.Service); err != nil {
 		return store.Session{}, err
 	}
 	var seedBundle []byte
@@ -266,11 +266,17 @@ func attributionUser(ownerID string) string {
 // createWithinQuota counts the owner's live sessions and inserts the new
 // one in a single transaction, so the count a create decides on is the
 // count it commits against. A quota of zero or less is no limit;
-// nothing configures one, but a stored override could.
+// nothing configures one, but a stored override could. A service
+// account's create checks first that the account is not deleted.
 //
-// @decision(DL-009)
-func (s *Service) createWithinQuota(ctx context.Context, sess store.Session, max int) error {
+// @decision(DL-009) @decision(DL-140)
+func (s *Service) createWithinQuota(ctx context.Context, sess store.Session, max int, service bool) error {
 	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
+		if service {
+			if err := liveServiceOwner(ctx, tx, sess.OrgID, sess.OwnerID); err != nil {
+				return err
+			}
+		}
 		if max > 0 {
 			n, err := tx.Sessions().CountLive(ctx, sess.OrgID, sess.OwnerID)
 			if err != nil {
