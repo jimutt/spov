@@ -127,7 +127,7 @@ func TestTheTranscriptCarriesTheMessageId(t *testing.T) {
 	conv := seedConversation(t, f, sess, "ses_1", "one")
 	seedMessage(t, f, conv, realInboxMessageID, "user", "reply with ok", recordedAt)
 
-	convs, _, err := f.srv.transcript(context.Background(), sess)
+	convs, _, _, err := f.srv.transcript(context.Background(), sess)
 	if err != nil {
 		t.Fatal(err)
 	}

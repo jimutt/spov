@@ -42,6 +42,10 @@ type Memory struct {
 	eventsBySession map[string][]string // event IDs in Pos order
 	eventSeqs       map[convSeq]bool    // the OpenCode sequences stored
 	messageKeys     map[convMessage]string
+	// messagesBySession is each session's message IDs.
+	//
+	// @decision(DL-131)
+	messagesBySession map[string]map[string]struct{}
 	// proxyCAs are the sealed proxy CAs, by session ID.
 	//
 	// @decision(DL-034)
@@ -102,10 +106,12 @@ func NewMemory() *Memory {
 		eventSeqs:       map[convSeq]bool{},
 		messageKeys:     map[convMessage]string{},
 		jobs:            map[string]Job{},
-		runs:            map[string][]Run{},
-		deliverables:    map[string]map[string]Deliverable{},
-		jobFiles:        map[string]map[string]JobFile{},
-		jobSeeds:        map[string][]byte{},
+		// @decision(DL-131)
+		messagesBySession: map[string]map[string]struct{}{},
+		runs:              map[string][]Run{},
+		deliverables:      map[string]map[string]Deliverable{},
+		jobFiles:          map[string]map[string]JobFile{},
+		jobSeeds:          map[string][]byte{},
 	}
 }
 
@@ -213,7 +219,8 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		orgCredentials: m.orgCredentials, adminEvents: m.adminEvents,
 		conversations: m.conversations, messages: m.messages, events: m.events,
 		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
-		jobs: m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending,
+		messagesBySession: m.messagesBySession,
+		jobs:              m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending,
 		jobSeeds: m.jobSeeds}
 	committed := false
 	defer func() {
@@ -280,6 +287,32 @@ func (m *Memory) indexEvent(e Event) {
 			delete(m.eventSeqs, convSeq{e.ConversationID, e.Seq})
 		}
 	})
+}
+
+// indexMessage adds a newly stored message to the session's index.
+//
+// @decision(DL-131)
+func (m *Memory) indexMessage(msg Message) {
+	ids := m.messagesBySession[msg.SessionID]
+	if ids == nil {
+		ids = map[string]struct{}{}
+		m.messagesBySession[msg.SessionID] = ids
+	}
+	ids[msg.ID] = struct{}{}
+}
+
+// sessionMessages is a session's messages, in no order.
+//
+// @decision(DL-131)
+func (m *Memory) sessionMessages(orgID, sessionID string) []Message {
+	ids := m.messagesBySession[sessionID]
+	out := make([]Message, 0, len(ids))
+	for id := range ids {
+		if msg := m.messages[id]; msg.OrgID == orgID {
+			out = append(out, msg)
+		}
+	}
+	return out
 }
 
 func cloneMap[V any](in map[string]V) map[string]V {
@@ -1240,11 +1273,9 @@ func (s memConversations) StoredSize(_ context.Context, orgID, sessionID string)
 			size.Bytes += int64(len(e.Text) + len(e.Raw))
 		}
 	}
-	for _, m := range s.m.messages {
-		if m.OrgID == orgID && m.SessionID == sessionID {
-			size.Rows++
-			size.Bytes += int64(len(m.Text) + len(m.Raw))
-		}
+	for _, m := range s.m.sessionMessages(orgID, sessionID) {
+		size.Rows++
+		size.Bytes += int64(len(m.Text) + len(m.Raw))
 	}
 	return size, nil
 }
@@ -1260,15 +1291,15 @@ func (s memConversations) belongsTo(conversationID, orgID, sessionID string) boo
 // PutMessages implements ConversationStore. Every row is checked before
 // any is written, so a bad batch leaves the store as it was.
 //
-// @decision(DL-017)
-func (s memConversations) PutMessages(_ context.Context, msgs []Message) (int, error) {
+// @decision(DL-017) @decision(DL-131)
+func (s memConversations) PutMessages(_ context.Context, msgs []Message) (MessageWrite, error) {
 	defer s.m.lock()()
 	for _, msg := range msgs {
 		if !s.belongsTo(msg.ConversationID, msg.OrgID, msg.SessionID) {
-			return 0, ErrNotFound
+			return MessageWrite{}, ErrNotFound
 		}
 	}
-	changed := 0
+	var w MessageWrite
 	var stored []Message
 	// @decision(DL-091)
 	defer func() {
@@ -1288,14 +1319,15 @@ func (s memConversations) PutMessages(_ context.Context, msgs []Message) (int, e
 			s.m.messages[cur.ID] = *cur
 			s.m.journal(func() { s.m.messages[old.ID] = old })
 			stored = append(stored, *cur)
-			changed++
+			w.Changed++
+			w.Bytes += int64(len(cur.Text)+len(cur.Raw)) - int64(len(old.Text)+len(old.Raw))
 			continue
 		}
 		if _, ok := s.m.messages[msg.ID]; ok {
 			// Checked here rather than up front because a message
 			// whose key already exists is an update, not an insert,
 			// and only an insert needs a fresh id.
-			return changed, ErrConflict
+			return w, ErrConflict
 		}
 		if msg.CreatedAt.IsZero() {
 			msg.CreatedAt = s.m.now()
@@ -1306,14 +1338,18 @@ func (s memConversations) PutMessages(_ context.Context, msgs []Message) (int, e
 		s.m.messages[msg.ID] = msg
 		key := convMessage{msg.ConversationID, msg.OpenCodeID}
 		s.m.messageKeys[key] = msg.ID
+		s.m.indexMessage(msg)
 		s.m.journal(func() {
 			delete(s.m.messages, msg.ID)
 			delete(s.m.messageKeys, key)
+			delete(s.m.messagesBySession[msg.SessionID], msg.ID)
 		})
 		stored = append(stored, msg)
-		changed++
+		w.Changed++
+		w.Added++
+		w.Bytes += int64(len(msg.Text) + len(msg.Raw))
 	}
-	return changed, nil
+	return w, nil
 }
 
 func (s memConversations) messageByKey(conversationID, opencodeID string) *Message {
@@ -1335,13 +1371,39 @@ func compareMessages(a, b Message) int {
 func (s memConversations) ListMessages(_ context.Context, orgID, sessionID string) ([]Message, error) {
 	defer s.m.lock()()
 	var out []Message
-	for _, m := range s.m.messages {
-		if m.OrgID == orgID && m.SessionID == sessionID {
-			out = append(out, copyMessage(m))
-		}
+	for _, m := range s.m.sessionMessages(orgID, sessionID) {
+		out = append(out, copyMessage(m))
 	}
 	slices.SortFunc(out, compareMessages)
 	return out, nil
+}
+
+// RecentMessages implements ConversationStore, over the session's index.
+//
+// @decision(DL-131)
+func (s memConversations) RecentMessages(_ context.Context, orgID, sessionID, conversationID string, limit int, maxBytes int64) ([]Message, bool, error) {
+	defer s.m.lock()()
+	if limit <= 0 {
+		return nil, false, nil
+	}
+	var all []Message
+	for _, m := range s.m.sessionMessages(orgID, sessionID) {
+		if conversationID == "" || m.ConversationID == conversationID {
+			all = append(all, m)
+		}
+	}
+	slices.SortFunc(all, func(a, b Message) int { return compareMessages(b, a) })
+	var out []Message
+	var running int64
+	for _, m := range all {
+		running += int64(len(m.Text) + len(m.Raw))
+		if len(out) == limit || (maxBytes > 0 && running > maxBytes) {
+			break
+		}
+		out = append(out, copyMessage(m))
+	}
+	slices.Reverse(out)
+	return out, len(all) > len(out), nil
 }
 
 // LastMessages implements ConversationStore, over root conversations
@@ -1355,12 +1417,14 @@ func (s memConversations) LastMessages(_ context.Context, orgID string, sessionI
 		want[id] = true
 	}
 	out := map[string]Message{}
-	for _, m := range s.m.messages {
-		if m.OrgID != orgID || !want[m.SessionID] || !s.m.conversations[m.ConversationID].IsRoot() {
-			continue
-		}
-		if cur, ok := out[m.SessionID]; !ok || compareMessages(m, cur) > 0 {
-			out[m.SessionID] = copyMessage(m)
+	for id := range want {
+		for _, m := range s.m.sessionMessages(orgID, id) {
+			if !s.m.conversations[m.ConversationID].IsRoot() {
+				continue
+			}
+			if cur, ok := out[m.SessionID]; !ok || compareMessages(m, cur) > 0 {
+				out[m.SessionID] = copyMessage(m)
+			}
 		}
 	}
 	return out, nil

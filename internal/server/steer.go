@@ -144,10 +144,12 @@ type SteeredMessage struct {
 
 // MarkerSteered records who sent a message into this session. It is the
 // only attribution: the inbox item is typed `user` and names nobody, and
-// with connection reuse the Mint row no longer does either.
+// with connection reuse the Mint row no longer does either. Its raw body
+// is a jobs.SteerRecord, which a job's supervisor reads once the
+// session's recording has stopped.
 //
-// @decision(DL-019) @decision(DL-030) @decision(DL-058)
-const MarkerSteered = store.SpovNamespace + "session.steered"
+// @decision(DL-019) @decision(DL-030) @decision(DL-058) @decision(DL-131)
+const MarkerSteered = jobs.MarkerSteered
 
 // Steer relays one message into a session's sandbox.
 //
@@ -515,9 +517,14 @@ func (s *Service) recordSteer(ctx context.Context, p auth.Principal, sess store.
 	if sent.ID != "" {
 		note += ": " + sent.ID
 	}
-	_, err := s.deps.Store.Conversations().PutEvents(ctx, []store.Event{{
+	// @decision(DL-131)
+	raw, err := json.Marshal(jobs.SteerRecord{Message: sent.ID, Delivery: sent.Delivery, After: sent.After})
+	if err != nil {
+		raw = nil
+	}
+	_, err = s.deps.Store.Conversations().PutEvents(ctx, []store.Event{{
 		ID: store.NewID(now), OrgID: sess.OrgID, SessionID: sess.ID,
-		Source: store.SourceSpov, Name: MarkerSteered, Text: note, At: now,
+		Source: store.SourceSpov, Name: MarkerSteered, Text: note, At: now, Raw: raw,
 	}})
 	if err != nil {
 		s.deps.Warn(fmt.Sprintf("steer %s: recording the act: %s", sess.ID, redact.Error(err)))

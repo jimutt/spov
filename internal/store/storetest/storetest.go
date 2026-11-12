@@ -1857,17 +1857,30 @@ var cases = map[string]func(t *testing.T, s store.Store){
 				OpenCodeID: ocid, Role: "user", Text: text, At: at}
 		}
 		a, b := store.NewID(t0), store.NewID(t0.Add(time.Second))
+		// A write reports the bytes it added, not the bytes it was given:
+		// a rewrite counts its difference (DL-131).
 		n, err := cs.PutMessages(ctx, []store.Message{msg(a, "msg_a", "hi", t0), msg(b, "msg_b", "", time.Time{})})
-		if err != nil || n != 2 {
-			t.Fatalf("first put: %d, %v", n, err)
+		if err != nil || n != (store.MessageWrite{Changed: 2, Added: 2, Bytes: 2}) {
+			t.Fatalf("first put: %+v, %v", n, err)
 		}
 		n, err = cs.PutMessages(ctx, []store.Message{msg(store.NewID(t0), "msg_a", "hi", t0)})
-		if err != nil || n != 0 {
-			t.Errorf("the same message again changed %d rows, %v", n, err)
+		if err != nil || n != (store.MessageWrite{}) {
+			t.Errorf("the same message again changed %+v, %v", n, err)
 		}
 		n, err = cs.PutMessages(ctx, []store.Message{msg(store.NewID(t0), "msg_b", "hello there", t0.Add(time.Minute))})
-		if err != nil || n != 1 {
-			t.Errorf("a completed message changed %d rows, %v", n, err)
+		if err != nil || n != (store.MessageWrite{Changed: 1, Bytes: 11}) {
+			t.Errorf("a completed message changed %+v, %v", n, err)
+		}
+		n, err = cs.PutMessages(ctx, []store.Message{msg(store.NewID(t0), "msg_b", "hello", t0.Add(time.Minute))})
+		if err != nil || n != (store.MessageWrite{Changed: 1, Bytes: -6}) {
+			t.Errorf("a shorter rewrite changed %+v, %v", n, err)
+		}
+		n, err = cs.PutMessages(ctx, []store.Message{msg(store.NewID(t0), "msg_b", "hello there", t0.Add(time.Minute))})
+		if err != nil || n != (store.MessageWrite{Changed: 1, Bytes: 6}) {
+			t.Errorf("a longer rewrite changed %+v, %v", n, err)
+		}
+		if size, _ := cs.StoredSize(ctx, "org", sess.ID); size.Bytes != 13 || size.Rows != 2 {
+			t.Errorf("stored size = %+v, want 2 rows of 13 bytes", size)
 		}
 		got, err := cs.ListMessages(ctx, "org", sess.ID)
 		if err != nil {
@@ -1884,6 +1897,73 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if other, _ := cs.ListMessages(ctx, "org-2", sess.ID); len(other) != 0 {
 			t.Error("another org saw the messages")
+		}
+	},
+	"conversations: recent messages are the newest, bounded by count and by bytes": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sess := runningSession(t, s, "org", "u1", "alpha")
+		other := runningSession(t, s, "org", "u1", "beta")
+		cs := s.Conversations()
+		main := conversation(t, s, sess, "ses_main")
+		sub := conversation(t, s, sess, "ses_sub")
+		elsewhere := conversation(t, s, other, "ses_other")
+		var msgs []store.Message
+		// Ten bytes each, a minute apart, alternating conversations; one
+		// with no time, which is the oldest.
+		for i := range 6 {
+			conv := main
+			if i%2 == 1 {
+				conv = sub
+			}
+			msgs = append(msgs, store.Message{ID: store.NewID(t0.Add(time.Duration(i) * time.Second)), OrgID: "org",
+				SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: fmt.Sprintf("m%d", i), Role: "user",
+				Text: fmt.Sprintf("message-%d!", i), At: t0.Add(time.Duration(i) * time.Minute)})
+		}
+		msgs = append(msgs, store.Message{ID: store.NewID(t0.Add(time.Hour)), OrgID: "org", SessionID: sess.ID,
+			ConversationID: main.ID, OpenCodeID: "untimed", Text: "untimed"})
+		if _, err := cs.PutMessages(ctx, msgs); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := cs.PutMessages(ctx, []store.Message{{ID: store.NewID(t0), OrgID: "org", SessionID: other.ID,
+			ConversationID: elsewhere.ID, OpenCodeID: "x", Text: "another session's", At: t0.Add(time.Hour)}}); err != nil {
+			t.Fatal(err)
+		}
+		ids := func(ms []store.Message) []string {
+			var out []string
+			for _, m := range ms {
+				out = append(out, m.OpenCodeID)
+			}
+			return out
+		}
+		got, more, err := cs.RecentMessages(ctx, "org", sess.ID, "", 3, 0)
+		if err != nil || !more || !slices.Equal(ids(got), []string{"m3", "m4", "m5"}) {
+			t.Errorf("newest three = %v, more %v, %v", ids(got), more, err)
+		}
+		if got[2].Text != "message-5!" || got[2].ConversationID != sub.ID || !got[2].At.Equal(t0.Add(5*time.Minute)) {
+			t.Errorf("a recent message reads back as %+v", got[2])
+		}
+		got, more, _ = cs.RecentMessages(ctx, "org", sess.ID, main.ID, 10, 0)
+		if more || !slices.Equal(ids(got), []string{"untimed", "m0", "m2", "m4"}) {
+			t.Errorf("one conversation's = %v, more %v", ids(got), more)
+		}
+		// 25 bytes hold two of the newest ten-byte messages, not three.
+		got, more, _ = cs.RecentMessages(ctx, "org", sess.ID, "", 10, 25)
+		if !more || !slices.Equal(ids(got), []string{"m4", "m5"}) {
+			t.Errorf("within 25 bytes = %v, more %v", ids(got), more)
+		}
+		got, more, _ = cs.RecentMessages(ctx, "org", sess.ID, "", 10, 20)
+		if !more || !slices.Equal(ids(got), []string{"m4", "m5"}) {
+			t.Errorf("within exactly 20 bytes = %v, more %v", ids(got), more)
+		}
+		got, more, _ = cs.RecentMessages(ctx, "org", sess.ID, "", 100, 1<<20)
+		if more || len(got) != 7 {
+			t.Errorf("everything = %v, more %v", ids(got), more)
+		}
+		if got, more, _ := cs.RecentMessages(ctx, "org-2", sess.ID, "", 10, 0); len(got) != 0 || more {
+			t.Errorf("another org read %v", ids(got))
+		}
+		if got, _, _ := cs.RecentMessages(ctx, "org", sess.ID, "", 0, 0); len(got) != 0 {
+			t.Errorf("a zero limit read %v", ids(got))
 		}
 	},
 	"conversations: a message with no time sorts first": func(t *testing.T, s store.Store) {

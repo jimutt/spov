@@ -374,3 +374,38 @@ func TestRemovingAPersonForgetsTheirRepositoryListings(t *testing.T) {
 		t.Error("the removal dropped another user's listing")
 	}
 }
+
+// TestOffboardingDeletesTheOpenCodeSignInUnderItsLock is DL-132: the
+// console rows go inside the sign-in's own lock, so a refresh that held
+// it when the removal began cannot write the grant back afterwards.
+//
+// @decision(DL-132) @decision(DL-015)
+func TestOffboardingDeletesTheOpenCodeSignInUnderItsLock(t *testing.T) {
+	grants := &MemoryConsoleStore{}
+	o := newOffboarded(t, func(d *Deps) { d.ConsoleGrants = grants })
+	ctx := context.Background()
+	if err := grants.Put(ctx, auth.LocalID, theirID, ConsoleSlotAttempt, "pending"); err != nil {
+		t.Fatal(err)
+	}
+	holding, refreshed := make(chan struct{}), make(chan error, 1)
+	go func() {
+		refreshed <- grants.Locked(ctx, auth.LocalID, theirID, func(cs ConsoleStore) error {
+			close(holding)
+			// The console answers while the removal waits.
+			time.Sleep(50 * time.Millisecond)
+			return cs.Put(ctx, auth.LocalID, theirID, ConsoleSlotGrant, "a refreshed grant")
+		})
+	}()
+	<-holding
+	if resp, out := o.f.do(http.MethodDelete, "/api/v1/allowlist/"+theirEmail, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE = %d: %s", resp.StatusCode, out)
+	}
+	if err := <-refreshed; err != nil {
+		t.Fatal(err)
+	}
+	for _, slot := range []string{ConsoleSlotGrant, ConsoleSlotAttempt} {
+		if v, _ := grants.Get(ctx, auth.LocalID, theirID, slot); v != "" {
+			t.Errorf("their OpenCode %s outlived the removal: %q", slot, v)
+		}
+	}
+}

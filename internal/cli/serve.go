@@ -800,7 +800,9 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 		// Every credential of a local server is its user's own.
 		//
 		// @decision(DL-043)
-		GitAllowAll:  localMode || cfg.Git.AllowAll,
+		GitAllowAll: localMode || cfg.Git.AllowAll,
+		// @decision(DL-134)
+		Local:        localMode,
 		ProviderKeys: e.providerKeys(),
 		Identity:     git.Identity{Name: cfg.Git.Name, Email: cfg.Git.Email},
 		User:         e.username(),

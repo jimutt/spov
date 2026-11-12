@@ -1059,6 +1059,9 @@ components:
           type:
             - array
             - "null"
+        truncated:
+          description: Only the newest messages are included; older ones are left out
+          type: boolean
         warnings:
           items:
             type: string

@@ -1288,6 +1288,8 @@ export interface components {
              */
             readonly $schema?: string;
             conversations: components["schemas"]["ConversationView"][] | null;
+            /** @description Only the newest messages are included; older ones are left out */
+            truncated?: boolean;
             warnings?: string[] | null;
         };
         ModelProviderView: {
