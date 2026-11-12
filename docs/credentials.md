@@ -59,7 +59,8 @@ an App; it refuses a plain token, which only a hosted server stores.
 
 ### Reuse your gh login (local)
 
-If `gh` is signed in on this machine (`gh auth login` if not):
+`spov init` does this for you: it adds the platform to your config file and
+opts into gh's login, after asking. By hand, if `gh` is signed in on this machine (`gh auth login` if not):
 
 ```sh
 spov credentials add github --from-gh

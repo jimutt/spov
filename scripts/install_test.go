@@ -133,6 +133,13 @@ func TestInstallScriptVerifiesBeforeItUnpacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
 	}
+	// The install directory is not on this PATH, so the next command is
+	// given by its full path.
+	//
+	// @decision(DL-125)
+	if !strings.Contains(out, "next: run '"+bin+" init'") {
+		t.Errorf("the script does not say to run init next:\n%s", out)
+	}
 	if b, err := os.ReadFile(bin); err != nil || string(b) != stubSpov || !strings.Contains(out, "installed spov 1.2.3") {
 		t.Fatalf("installed %q, %v\n%s", b, err, out)
 	}

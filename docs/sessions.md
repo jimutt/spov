@@ -6,6 +6,42 @@ terminal TUI, in OpenCode's web UI, or from the dashboard. This guide covers
 everything you can do with one. For handing a goal off to run on its own,
 see [Autonomous jobs](jobs.md).
 
+## First-time setup
+
+```sh
+spov init
+```
+
+`spov init` checks, in order, what a first launch needs on this machine, and
+offers to set up each thing that is missing:
+
+| Step | Ready when | What init offers |
+|---|---|---|
+| Modal | Its credentials are found and Modal accepts them | Run `modal setup` in your terminal |
+| Git platform | A configured platform has a working credential | GitHub through `gh`: run `gh auth login` if needed, add the `platforms` entry to your user config, and use gh's login |
+| Model | A provider key is stored or exported, or OpenCode is signed in | Paste an API key, or sign in to OpenCode Go or Zen |
+| OpenCode client | A client the pinned version accepts is installed | Nothing: it prints the install command. `spov fly --web` works without one |
+| Sandbox image | The image for the pinned OpenCode version is published | Build it, which takes a few minutes |
+
+It asks before every change, and a no skips that step. If a spov server from
+an earlier command is still running idle on this machine, init stops it after
+a change, so the next command starts one that sees what you set up. It is safe to run
+again: a step that is done is left alone. It never stores a Modal token or
+copies gh's token, and it adds to your config file only by creating it or
+appending a `platforms` block; a file that already has a `platforms` list is
+yours, and init prints the lines to add instead.
+
+`spov init --check` changes nothing and exits 1 when a required step is
+missing, as a run without a terminal does. `--json` prints the same as one
+document: `{ready, steps: [{name, state, required, detail, fix}]}`, with the
+step names `modal`, `git`, `model`, `client` and `image`.
+
+Init sets up GitHub on github.com only. For Forgejo, Gitea, GitLab, GitHub
+Enterprise or a GitHub App use `spov credentials add`
+([Credentials](credentials.md)); init then reports the platform as ready.
+With a hosted server configured, init only checks that you are signed in to it
+and that your local client matches it.
+
 ## Starting one
 
 ```sh

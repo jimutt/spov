@@ -321,6 +321,18 @@ A stopped interactive session is reopened in a new sandbox, the same row, as its
 - The orientation and the `pr` branch note ride on the re-asserted goal. They are guidance, not containment, and must carry no credential (DL-039).
 - `/api/fs/read` answers an error for an absolute path and for a missing file, so `readEvidence` splits the path and a missing file maps to `ErrNoFile` (DL-045). Re-run `go test -tags integration ./internal/sandbox/ -run S7FsReadShape` on an OpenCode bump (one sandbox, no agent turn, no model key).
 
+## First-time setup (`spov init`)
+
+`spov init` (DL-123 to DL-125) is a re-runnable checklist for a local setup: Modal, a git platform, a model, the OpenCode client, the sandbox image. `docs/sessions.md` is the reader's page.
+
+- "Ready" is `initSteps` in `internal/cli/init.go`. A step's `check` reads and never changes anything; its `fix` (`initfix.go`) runs only in an interactive run, for a missing step, after a yes, and calls what the matching command calls (`addLocalPlatform`, `addLocalProvider`, `runOpenCodeLogin`, `publishImage`). `--check`, `--json` and a run without a terminal never reach a fix (DL-123; `TestInitCheckChangesNothing`, `TestInitChangesNothingWithoutAYes`).
+- Init sets `Env.ServerConfig`, so it reads the user file and the environment as the local server does and never a project file, whose `opencode` and `modal` keys the server ignores (DL-123; `TestInitIgnoresAProjectFile`).
+- A tick means the next launch gets past that point: Modal is checked by building the provider, and gh's login marker counts only while `gh` answers (`errGhMissing`, `errGhSignedOut`). Any platform with a working credential satisfies the git step; only GitHub on github.com through gh is set up (DL-123; `TestInitAndGh`, `TestInitWithoutModal`).
+- `config.AddPlatform` is the user file's only writer. It creates the file or appends a `platforms` block to one that has none, byte for byte around it, and never edits a list, a multi-document file or a flow-style one; init prints the lines instead. After a write init drops `Env.cachedConfig` and loads again, restoring the file if it no longer loads (DL-124; `TestAddPlatformCreatesOrAppends`, `TestAddPlatformNeverEditsAList`).
+- Without an embedded credential proxy gh's token would live inside the sandbox, so the gh question is followed by a second one that says so (DL-124, DL-034; `TestInitAsksTwiceWithoutTheProxy`).
+- A local server reads platforms and keys once at start, so after a fix init stops an idle one and leaves one with a live session (`settleLocalServer`) (DL-124).
+- Three first-run errors name init: no Modal credentials (checked in `spawnLocal` before the spawn, only where the provider is the real one), no git platform (`Env.noPlatforms`, which names the user file and never `.spov.yaml`), and an unpublished base image (DL-125; `TestFirstRunErrorsNameInit`).
+
 ## Sandbox templates
 
 A sandbox template (DL-118 to DL-122) is a user's own named set of sandbox settings (egress, routed credential names, variables, add-ons, apt, git access) that a launch takes with `template`. `docs/sandbox.md` is the reader's page.
