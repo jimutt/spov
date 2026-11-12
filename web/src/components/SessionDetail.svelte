@@ -1652,6 +1652,13 @@
             <dt class="text-soft">Egress</dt>
             <dd class="m-0 text-right">{sentence(s.egress)}</dd>
           {/if}
+          <!-- The sandbox template the launch took settings from; the
+               settings themselves are drawn as any session's.
+               @decision(DL-121) -->
+          {#if s.template}
+            <dt class="text-soft">Template</dt>
+            <dd class="m-0 text-right font-mono [overflow-wrap:anywhere]" data-testid="session-template">{s.template}</dd>
+          {/if}
           <!-- A floor, and sandbox compute only: model tokens are not
                metered. @decision(DL-116) -->
           <dt class="text-soft">Sandbox cost</dt>

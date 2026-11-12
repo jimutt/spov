@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"github.com/jimutt/spov/internal/config"
 	"strings"
@@ -83,66 +84,7 @@ func newImageBuildCmd(env *Env) *cobra.Command {
 			if err := spec.Validate(); err != nil {
 				return err
 			}
-			warn := func(msg string) { _, _ = fmt.Fprintln(env.Err, "spov serve image build: "+msg) }
-			st, closeStore, _, err := env.openStore(cmd.Context(), false, config.Config{}, warn)
-			if err != nil {
-				return err
-			}
-			defer closeStore()
-			reg, file := env.imageRegistry(st, warn)
-			// The exact build of what the add-ons resolve to today, the
-			// image a launch looks for first.
-			//
-			// @decision(DL-033) @decision(DL-016)
-			if len(sel) > 0 {
-				spec.Addons = env.addonResolver(file, warn).Resolve(cmd.Context(), sel)
-			}
-			// Named before the work, because a build is minutes long
-			// and the name is what a launch will look for — so a
-			// mismatch is visible without waiting for it.
-			//
-			// "resolving", not "building": EnsureImage resolves first
-			// and builds only on a miss, so an already-published image
-			// returns in about a second. Announcing a build that did
-			// not happen would make the safe-before-every-deploy case
-			// read as a rebuild every time.
-			_, _ = fmt.Fprintf(env.Out, "resolving %s\n", spec.Name())
-			if len(sel) > 0 {
-				_, _ = fmt.Fprintf(env.Out, "  add-ons: %s\n", strings.Join(toolchain.Installed(spec.Addons), ", "))
-			}
-			_, _ = fmt.Fprintln(env.Out, "  (already published? this returns at once; otherwise it builds, which takes minutes)")
-
-			// A name pruning deleted still resolves, so it is built
-			// again without looking it up.
-			//
-			// @decision(DL-016)
-			ensure := builder.EnsureImage
-			if rebuild {
-				ensure = builder.BuildImage
-			} else if reg != nil {
-				if img, err := reg.Get(cmd.Context(), spec.Name()); err == nil && img.DeletedAt != nil {
-					ensure = builder.BuildImage
-				}
-			}
-			name, err := ensure(cmd.Context(), spec)
-			if err != nil {
-				return err
-			}
-			if reg != nil {
-				img := server.VariantImage(spec)
-				if len(spec.Addons) == 0 && len(sandbox.ExtraPackages(spec.ExtraPackages)) == 0 {
-					img = store.Image{Name: name, Kind: store.ImageBase}
-				}
-				img.PublishedAt = env.now()
-				if id, err := builder.ImageID(cmd.Context(), name); err == nil {
-					img.ID = id
-				}
-				if err := reg.Record(cmd.Context(), img); err != nil {
-					warn(fmt.Sprintf("record image %s: %v", name, err))
-				}
-			}
-			_, _ = fmt.Fprintf(env.Out, "published %s\n", name)
-			return nil
+			return publishImage(cmd.Context(), env, builder, spec, sel, rebuild)
 		},
 	}
 	cmd.Flags().StringVar(&version, "opencode-version", "",
@@ -153,6 +95,74 @@ func newImageBuildCmd(env *Env) *cobra.Command {
 	cmd.Flags().BoolVar(&rebuild, "rebuild", false,
 		"build and publish again even though the name resolves, for an image deleted outside this deployment's registry")
 	return cmd
+}
+
+// publishImage resolves an image and builds it on a miss, records it in
+// the registry and reports its name. It is the body of `spov serve image
+// build`, which `spov init` runs too.
+//
+// @decision(DL-016) @decision(DL-124)
+func publishImage(ctx context.Context, env *Env, builder sandbox.ImageBuilder, spec sandbox.ImageSpec, sel []toolchain.Selection, rebuild bool) error {
+	warn := func(msg string) { _, _ = fmt.Fprintln(env.Err, "spov serve image build: "+msg) }
+	st, closeStore, _, err := env.openStore(ctx, false, config.Config{}, warn)
+	if err != nil {
+		return err
+	}
+	defer closeStore()
+	reg, file := env.imageRegistry(st, warn)
+	// The exact build of what the add-ons resolve to today, the
+	// image a launch looks for first.
+	//
+	// @decision(DL-033) @decision(DL-016)
+	if len(sel) > 0 {
+		spec.Addons = env.addonResolver(file, warn).Resolve(ctx, sel)
+	}
+	// Named before the work, because a build is minutes long
+	// and the name is what a launch will look for — so a
+	// mismatch is visible without waiting for it.
+	//
+	// "resolving", not "building": EnsureImage resolves first
+	// and builds only on a miss, so an already-published image
+	// returns in about a second. Announcing a build that did
+	// not happen would make the safe-before-every-deploy case
+	// read as a rebuild every time.
+	_, _ = fmt.Fprintf(env.Out, "resolving %s\n", spec.Name())
+	if len(sel) > 0 {
+		_, _ = fmt.Fprintf(env.Out, "  add-ons: %s\n", strings.Join(toolchain.Installed(spec.Addons), ", "))
+	}
+	_, _ = fmt.Fprintln(env.Out, "  (already published? this returns at once; otherwise it builds, which takes minutes)")
+
+	// A name pruning deleted still resolves, so it is built
+	// again without looking it up.
+	//
+	// @decision(DL-016)
+	ensure := builder.EnsureImage
+	if rebuild {
+		ensure = builder.BuildImage
+	} else if reg != nil {
+		if img, err := reg.Get(ctx, spec.Name()); err == nil && img.DeletedAt != nil {
+			ensure = builder.BuildImage
+		}
+	}
+	name, err := ensure(ctx, spec)
+	if err != nil {
+		return err
+	}
+	if reg != nil {
+		img := server.VariantImage(spec)
+		if len(spec.Addons) == 0 && len(sandbox.ExtraPackages(spec.ExtraPackages)) == 0 {
+			img = store.Image{Name: name, Kind: store.ImageBase}
+		}
+		img.PublishedAt = env.now()
+		if id, err := builder.ImageID(ctx, name); err == nil {
+			img.ID = id
+		}
+		if err := reg.Record(ctx, img); err != nil {
+			warn(fmt.Sprintf("record image %s: %v", name, err))
+		}
+	}
+	_, _ = fmt.Fprintf(env.Out, "published %s\n", name)
+	return nil
 }
 
 // newImagePruneCmd is `spov serve image prune`.
