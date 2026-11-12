@@ -23,6 +23,12 @@ type BrowserGuard struct {
 	//
 	// @decision(DL-010)
 	public string
+	// publicScheme is the public URL's scheme. An Origin naming the
+	// public host must use it, so an http page on an https deployment's
+	// name is another site.
+	//
+	// @decision(DL-135)
+	publicScheme string
 	// navigable holds paths that a top-level cross-site navigation may
 	// reach, such as the OAuth callback.
 	//
@@ -81,6 +87,12 @@ func (g *BrowserGuard) Wrap(next http.Handler) http.Handler {
 // @decision(DL-010)
 func (g *BrowserGuard) AllowPublicHost(host string) { g.public = strings.ToLower(host) }
 
+// RequirePublicScheme makes an Origin that names the public host carry
+// the public URL's scheme.
+//
+// @decision(DL-135)
+func (g *BrowserGuard) RequirePublicScheme(scheme string) { g.publicScheme = strings.ToLower(scheme) }
+
 // AllowCrossSiteNavigation exempts path from the Sec-Fetch-Site and
 // Origin checks, for a route an identity provider redirects the browser
 // to. The Host check still applies, and the route must carry its own CSRF
@@ -123,10 +135,16 @@ func (g *BrowserGuard) allowedHost(host string) bool {
 }
 
 // allowedOrigin accepts an Origin that names this server over http or
-// https. "null" and anything else is another site.
+// https. "null" and anything else is another site. An Origin naming the
+// public host must also carry the public URL's scheme.
+//
+// @decision(DL-135)
 func (g *BrowserGuard) allowedOrigin(origin string) bool {
 	u, err := url.Parse(origin)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	if g.publicScheme != "" && g.public != "" && strings.EqualFold(u.Host, g.public) && u.Scheme != g.publicScheme {
 		return false
 	}
 	return g.allowedHost(u.Host)

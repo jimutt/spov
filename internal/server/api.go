@@ -91,6 +91,10 @@ type Server struct {
 	// @decision(DL-018)
 	streamLifetime time.Duration
 	heartbeat      time.Duration
+	// lim holds the request limits' state.
+	//
+	// @decision(DL-133)
+	lim *limiter
 	// revokeSessions ends one address's browser sessions when its
 	// allowlist entry is deleted. A field, not a call through
 	// deps.Login, so a test can see the delete trigger it without
@@ -129,6 +133,10 @@ func New(deps Deps, addr string) (*Server, error) {
 			return nil, err
 		}
 		guard.AllowPublicHost(host)
+		// @decision(DL-135)
+		if u, err := url.Parse(deps.PublicURL); err == nil {
+			guard.RequirePublicScheme(u.Scheme)
+		}
 	}
 	s := &Server{deps: deps, svc: newService(deps), mux: http.NewServeMux(), guard: guard}
 	// Polling, behind the Subscribe seam a LISTEN/NOTIFY feed replaces.
@@ -144,6 +152,15 @@ func New(deps Deps, addr string) (*Server, error) {
 		interval: StateFeedInterval, page: LogPageSize, warn: deps.Warn,
 	}
 	s.streamLifetime, s.heartbeat = StreamLifetime, HeartbeatInterval
+	limits := DefaultLimits()
+	if deps.Limits != nil {
+		limits = *deps.Limits
+	}
+	s.lim = newLimiter(limits, deps.TrustedProxies, deps.Warn, deps.Metrics)
+	s.lim.routeOf = func(r *http.Request) string {
+		_, pattern := s.mux.Handler(r)
+		return pattern
+	}
 	// @decision(DL-007)
 	if deps.Login != nil {
 		s.revokeSessions = deps.Login.RevokeSessions
@@ -155,6 +172,8 @@ func New(deps Deps, addr string) (*Server, error) {
 		bearerScheme: {Type: "http", Scheme: "bearer"},
 	}
 	s.api = humago.New(s.mux, config)
+	// @decision(DL-133)
+	s.api.UseMiddleware(keepReadDeadline)
 	// @decision(DL-011)
 	if deps.Metrics != nil {
 		s.api.UseMiddleware(measureRequests(deps.Metrics, deps.Now))
@@ -255,7 +274,40 @@ func New(deps Deps, addr string) (*Server, error) {
 	//
 	// @decision(DL-010)
 	s.mux.HandleFunc("GET /startupz", s.handleReady(StartupBudget))
+	// @decision(DL-133)
+	s.lim.classes = routeClasses(s.api.OpenAPI())
+	if deps.Login != nil {
+		s.lim.loginDeny = func(w http.ResponseWriter, status int, reason string) {
+			deps.Login.deny(w, nil, status, reason, "")
+		}
+	}
+	s.lim.deviceRefusal = func(w http.ResponseWriter, status int, reason string) {
+		code := "slow_down"
+		if status == http.StatusServiceUnavailable {
+			code = "temporarily_unavailable"
+		}
+		oauthError(w, status, code, reason)
+	}
 	return s, nil
+}
+
+// routeClasses reads which routes are streams and which are creates off
+// the API document, by the mux pattern humago registers each one under,
+// so a new stream is counted as one without a list to update.
+//
+// @decision(DL-133)
+func routeClasses(doc *huma.OpenAPI) map[string]routeClass {
+	out := map[string]routeClass{}
+	for _, item := range doc.Paths {
+		for _, op := range []*huma.Operation{item.Get, item.Put, item.Post, item.Delete, item.Patch, item.Head, item.Options} {
+			if op == nil {
+				continue
+			}
+			stream, _ := op.Metadata[streamMetadata].(bool)
+			out[strings.ToUpper(op.Method)+" "+op.Path] = routeClass{stream: stream, create: createOperations[op.OperationID]}
+		}
+	}
+	return out
 }
 
 const (
@@ -332,7 +384,11 @@ func (s *Server) WebUI() fs.FS { return s.deps.WebUI }
 //
 // @decision(DL-005) @decision(DL-006)
 func (s *Server) Handler() http.Handler {
-	guardedAuthed := s.guard.Wrap(auth.Middleware(s.deps.Auth, s.deps.Warn)(s.mux))
+	// The per-user limits need the principal, so they run behind
+	// authentication.
+	//
+	// @decision(DL-133)
+	guardedAuthed := s.guard.Wrap(auth.Middleware(s.deps.Auth, s.deps.Warn)(s.lim.perUser(s.mux)))
 	// The login routes are how a browser gets a credential, so they run
 	// behind the guard but not behind authentication.
 	//
@@ -350,6 +406,13 @@ func (s *Server) Handler() http.Handler {
 	guardedOptional := s.guard.Wrap(auth.Optional(browserAuth)(s.mux))
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.deps.Login != nil && isLoginPath(r.URL.Path) {
+			// Each start writes a row and nobody is signed in yet, so
+			// starts are limited by address and in total.
+			//
+			// @decision(DL-133)
+			if r.Method == http.MethodGet && r.URL.Path == LoginPath && !s.lim.signIn(w, r, false) {
+				return
+			}
 			guardedOpen.ServeHTTP(w, r)
 			return
 		}
@@ -358,6 +421,13 @@ func (s *Server) Handler() http.Handler {
 		//
 		// @decision(DL-006)
 		if s.deps.Device != nil && isDevicePath(r.URL.Path) {
+			// @decision(DL-133)
+			if r.Method == http.MethodPost && r.URL.Path == DeviceCodePath && !s.lim.signIn(w, r, true) {
+				return
+			}
+			if r.Method == http.MethodPost && r.URL.Path == deviceTokenPath && !s.lim.devicePoll(w, r) {
+				return
+			}
 			guardedOpen.ServeHTTP(w, r)
 			return
 		}
@@ -381,6 +451,11 @@ func (s *Server) Handler() http.Handler {
 		owned = s.deps.Login.Sessions.LoadAndSave(inner)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// @decision(DL-133)
+		if tooLarge(w, r) {
+			return
+		}
+		s.lim.readDeadline(w, r)
 		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytesFor(r.URL.Path))
 		// Health is outside the guard as well as outside auth: a load
 		// balancer has no credential and sends no browser headers. It
@@ -482,14 +557,17 @@ func (s *Server) OpenAPI(downgrade bool) ([]byte, error) {
 }
 
 // NewHTTPServer wraps the handler with the timeouts the API needs. There
-// is no WriteTimeout: SSE streams are long-lived by design.
+// is no WriteTimeout, since SSE streams are long-lived by design, and no
+// ReadTimeout, which would cut a stream: a body's deadline is set per
+// request (limiter.readDeadline).
 //
-// @decision(DL-005)
+// @decision(DL-005) @decision(DL-133)
 func (s *Server) NewHTTPServer(addr string) *http.Server {
 	return &http.Server{
 		Addr:              addr,
 		Handler:           s.Handler(),
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: HeaderTimeout,
+		IdleTimeout:       IdleTimeout,
 	}
 }
 

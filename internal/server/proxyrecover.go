@@ -33,6 +33,12 @@ const (
 // ProxyGaveOut is why a sandbox whose proxy sidecar died twice was ended.
 const ProxyGaveOut = "the credential proxy sidecar stopped a second time, so the sandbox was ended"
 
+// caInstallTimeout bounds writing a recreated sidecar's CA into the
+// sandbox's trust store.
+//
+// @decision(DL-135)
+const caInstallTimeout = time.Minute
+
 // RunSidecarChecks runs CheckSidecars every SidecarCheckInterval until
 // ctx ends. It runs where the reconciler runs, on one replica.
 //
@@ -248,7 +254,10 @@ func (s *Service) recreateSidecar(ctx context.Context, sess store.Session, h san
 	//
 	// @decision(DL-034)
 	if !ps.Reused {
-		res, err := h.ExecInput(ctx, credproxy.InstallCACommand(), []byte(ps.CACert))
+		// @decision(DL-135)
+		ictx, cancelInstall := context.WithTimeout(ctx, caInstallTimeout)
+		defer cancelInstall()
+		res, err := h.ExecInput(ictx, credproxy.InstallCACommand(), []byte(ps.CACert))
 		if err == nil && res.ExitCode != 0 {
 			err = fmt.Errorf("exit %d: %s", res.ExitCode, truncateFrame(redact.Text(res.Stderr)))
 		}

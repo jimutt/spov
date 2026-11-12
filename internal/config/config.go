@@ -5,6 +5,9 @@
 package config
 
 import (
+	"fmt"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/jimutt/spov/internal/git"
@@ -59,7 +62,8 @@ type Config struct {
 	// @decision(DL-086)
 	Snapshots Snapshots `koanf:"snapshots"`
 	// History is how long a local server keeps a stopped session's
-	// history. It means nothing to a hosted server or the CLI.
+	// history, and how much any server stores of one session. It means
+	// nothing to the CLI.
 	//
 	// @decision(DL-093)
 	History History `koanf:"history"`
@@ -137,6 +141,12 @@ type History struct {
 	// Retention is how long after it stopped a session's history is
 	// kept; 0 keeps it forever.
 	Retention time.Duration `koanf:"retention" json:"retention" yaml:"retention"`
+	// MaxSessionMiB is how much one session's events and messages may
+	// occupy, on a local server and a hosted one, before its recording
+	// stops. Zero or less is the built-in default.
+	//
+	// @decision(DL-131)
+	MaxSessionMiB int `koanf:"max_session_mib" json:"max_session_mib" yaml:"max_session_mib"`
 }
 
 // Server is where the CLI finds its spov server. Empty means none is
@@ -145,6 +155,38 @@ type History struct {
 // @decision(DL-002)
 type Server struct {
 	URL string `koanf:"url" json:"url,omitempty" yaml:"url,omitempty"`
+	// TrustedProxies are the reverse proxies, as addresses or CIDR
+	// ranges, whose X-Forwarded-For `spov serve` reads for its
+	// per-address limits. Empty trusts no peer's header. Like every
+	// list, it is set only in a file.
+	//
+	// @decision(DL-133)
+	TrustedProxies []string `koanf:"trusted_proxies" json:"trusted_proxies,omitempty" yaml:"trusted_proxies,omitempty"`
+}
+
+// TrustedProxyPrefixes parses server.trusted_proxies: each entry is an
+// address or a CIDR range with no host bits set.
+//
+// @decision(DL-133)
+func TrustedProxyPrefixes(entries []string) ([]netip.Prefix, error) {
+	out := make([]netip.Prefix, 0, len(entries))
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if a, err := netip.ParseAddr(e); err == nil {
+			a = a.Unmap()
+			out = append(out, netip.PrefixFrom(a, a.BitLen()))
+			continue
+		}
+		p, err := netip.ParsePrefix(e)
+		if err != nil {
+			return nil, fmt.Errorf("config: server.trusted_proxies: %q is neither an address nor a CIDR range", e)
+		}
+		if p != p.Masked() {
+			return nil, fmt.Errorf("config: server.trusted_proxies: %q has host bits set; the range is %s", e, p.Masked())
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 // Modal holds Modal account/workspace selection. Tokens are never stored

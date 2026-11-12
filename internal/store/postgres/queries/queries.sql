@@ -270,7 +270,29 @@ returning *;
 -- monotonic across milliseconds, so two conversations minted in the same
 -- one sort by their random suffix. Id breaks the tie so the order is
 -- total and stable.
-select * from conversations where org_id = $1 and session_id = $2 order by created_at, id;
+--
+-- Without info: a reader of a session's conversations is not made to
+-- load what its sandbox chose to store there.
+-- @decision(DL-131)
+select id, org_id, session_id, opencode_id, title, created_at, updated_at, parent_opencode_id, seq_base, seq_after
+from conversations where org_id = $1 and session_id = $2 order by created_at, id;
+
+-- name: ConversationInfos :many
+-- @decision(DL-131)
+select id, info from conversations
+where org_id = $1 and session_id = $2 and info is not null and octet_length(info) > 0;
+
+-- name: StoredSize :one
+-- octet_length reads a stored value's size without fetching it.
+-- @decision(DL-131)
+select
+    (select count(*) from conversations c where c.org_id = $1 and c.session_id = $2)::bigint as conversations,
+    (select count(*) from events e where e.org_id = $1 and e.session_id = $2)::bigint as event_rows,
+    (select coalesce(sum(octet_length(e.text) + octet_length(e.raw)), 0) from events e
+      where e.org_id = $1 and e.session_id = $2)::bigint as event_bytes,
+    (select count(*) from messages m where m.org_id = $1 and m.session_id = $2)::bigint as message_rows,
+    (select coalesce(sum(octet_length(m.text) + octet_length(m.raw)), 0) from messages m
+      where m.org_id = $1 and m.session_id = $2)::bigint as message_bytes;
 
 -- name: PutMessage :execrows
 -- The update is conditional so the count reports rows that changed,

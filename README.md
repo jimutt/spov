@@ -59,7 +59,12 @@ curl -fsSL https://github.com/jimutt/spov/releases/latest/download/install.sh | 
 spov goes to `~/.local/bin` (the script tells you if that is not on your
 `PATH`) and OpenCode beside spov's data in `~/.local/share/spov/bin/`. The
 [script](scripts/install.sh) checks the download against the release's
-checksums, and their signature when `cosign` is installed. Running it again updates spov;
+checksums, and their signature when `cosign` is installed. Without `cosign` it
+installs after the checksum matches and says, in one line, that the signature
+was not verified; `SPOV_REQUIRE_SIGNATURE=1` makes that a failure instead, and
+is the checked path. A version (`SPOV_VERSION`, or the OpenCode version a server
+names) must be `N.N.N` or `N.N.N-prerelease`, or the script stops before it
+downloads anything. Running it again updates spov;
 `… | SPOV_VERSION=0.2.0 sh -s -- --with-opencode` pins a release. With Homebrew,
 `brew install jimutt/tap/spov` installs spov alone; install OpenCode 2 with
 its own installer (`curl -fsSL https://opencode.ai/v2/install | bash`).
@@ -227,7 +232,9 @@ them.
 - Reference: [forges](docs/forges.md), [GitHub access](docs/github-access.md),
   [local history](docs/local-history.md), [metrics](docs/metrics.md),
   [the HTTP API](docs/api/openapi.yaml)
-- Running a server: [deploy/README.md](deploy/README.md)
+- Running a server: [deploy/README.md](deploy/README.md), and what to decide
+  before you share one: [Running a shared server safely](docs/security.md)
+- Reporting a vulnerability: [SECURITY.md](SECURITY.md)
 
 ## Contributing
 

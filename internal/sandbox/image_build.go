@@ -160,7 +160,10 @@ func (p *ModalProvider) bakeProxyImage(ctx context.Context, binary []byte, name 
 	}
 	defer func() { _, _ = sb.Terminate(context.WithoutCancel(ctx), nil) }()
 	h := &modalHandle{sb: sb}
-	res, err := h.ExecInput(ctx, []string{"sh", "-c", "cat > " + ProxyBinaryPath + " && chmod 755 " + ProxyBinaryPath}, binary)
+	// @decision(DL-135)
+	wctx, cancelWrite := context.WithTimeout(ctx, proxyBinaryWriteTimeout)
+	defer cancelWrite()
+	res, err := h.ExecInput(wctx, []string{"sh", "-c", "cat > " + ProxyBinaryPath + " && chmod 755 " + ProxyBinaryPath}, binary)
 	if err != nil {
 		return "", fmt.Errorf("sandbox: write the proxy binary: %w", err)
 	}
