@@ -389,6 +389,35 @@ func (c *Client) DeleteRoutedCredential(ctx context.Context, name string) error 
 	return c.do(ctx, http.MethodDelete, "me/routed-credentials/"+url.PathEscape(name), nil, nil)
 }
 
+// ListTemplates lists the caller's sandbox templates.
+//
+// @decision(DL-119)
+func (c *Client) ListTemplates(ctx context.Context) ([]server.TemplateView, error) {
+	var out struct {
+		Templates []server.TemplateView `json:"templates"`
+	}
+	if err := c.do(ctx, http.MethodGet, "me/templates", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Templates, nil
+}
+
+// GetTemplate reads one of the caller's sandbox templates.
+//
+// @decision(DL-119)
+func (c *Client) GetTemplate(ctx context.Context, name string) (server.TemplateView, error) {
+	var out server.TemplateView
+	err := c.do(ctx, http.MethodGet, "me/templates/"+url.PathEscape(name), nil, &out)
+	return out, err
+}
+
+// DeleteTemplate removes one of the caller's sandbox templates.
+//
+// @decision(DL-119)
+func (c *Client) DeleteTemplate(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "me/templates/"+url.PathEscape(name), nil, nil)
+}
+
 // ListOrgRoutedCredentials lists the organisation's routed credentials,
 // never their secrets.
 //

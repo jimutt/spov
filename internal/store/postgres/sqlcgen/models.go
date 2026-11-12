@@ -208,6 +208,15 @@ type OrgCredential struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type SandboxTemplate struct {
+	OrgID     string
+	UserID    string
+	Name      string
+	Settings  []byte
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Session struct {
 	ID                string
 	OrgID             string

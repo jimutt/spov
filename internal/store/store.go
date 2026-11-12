@@ -436,6 +436,12 @@ type SessionRequest struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:",omitempty"`
+	// Template names the sandbox template the launch took settings from.
+	// They are resolved into the fields above at create, and the
+	// template is never read again.
+	//
+	// @decision(DL-120)
+	Template string `json:",omitempty"`
 	// Sync records the local branch and commit a synced session started
 	// from; Bundle is passed to the launch in memory and never stored in
 	// the database.
