@@ -866,6 +866,20 @@ type LocalConsoleStore struct {
 
 func localConsoleKey(slot string) (string, error) { return credentials.Key("opencode", slot) }
 
+// LocalOpenCodeSignedIn reports whether this machine's credential store
+// holds an OpenCode sign-in that can still be used, possibly after a
+// refresh. It answers yes or no and gives nothing of the grant away, so
+// a caller outside the server can ask without holding a token.
+//
+// @decision(DL-123) @decision(DL-015)
+func LocalOpenCodeSignedIn(creds credentials.Store) bool {
+	if creds == nil {
+		return false
+	}
+	g, ok, err := readGrant(context.Background(), &LocalConsoleStore{Creds: creds}, "", "")
+	return err == nil && ok && g.connected()
+}
+
 // Get returns a slot's value, or "".
 func (l *LocalConsoleStore) Get(_ context.Context, _, _, slot string) (string, error) {
 	key, err := localConsoleKey(slot)

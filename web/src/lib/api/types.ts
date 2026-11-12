@@ -286,6 +286,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/me/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's sandbox templates */
+        get: operations["list-templates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/templates/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One of the caller's sandbox templates */
+        get: operations["get-template"];
+        /** Create a sandbox template, or replace it whole */
+        put: operations["put-template"];
+        post?: never;
+        /** Remove a sandbox template */
+        delete: operations["delete-template"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me/tokens": {
         parameters: {
             query?: never;
@@ -1119,6 +1155,8 @@ export interface components {
             sandbox?: components["schemas"]["SandboxConfigView"];
             /** @description Seed a sync job's repository from a local git branch and commit; required for kind sync */
             sync?: components["schemas"]["SessionSyncRequest"];
+            /** @description One of the caller's sandbox templates: its settings apply where the request sets none */
+            template?: string;
         };
         JobSyncView: {
             /**
@@ -1618,14 +1656,14 @@ export interface components {
             /** @enum {string} */
             attach?: "always" | "asked";
             header?: string;
-            hosts: string[] | null;
+            hosts?: string[] | null;
             name: string;
             paths?: string[] | null;
             /** @enum {string} */
             preset?: "npm" | "maven" | "nuget" | "pypi";
             repo_id?: string;
             /** @enum {string} */
-            scheme: "bearer" | "basic" | "header";
+            scheme?: "bearer" | "basic" | "header";
             scope?: string;
             url?: string;
             user?: string;
@@ -1753,6 +1791,8 @@ export interface components {
             sandbox?: components["schemas"]["SandboxConfigView"];
             /** @description Seed the repository from a local git branch and commit */
             sync?: components["schemas"]["SessionSyncRequest"];
+            /** @description One of the caller's sandbox templates: its settings apply where the request sets none */
+            template?: string;
         };
         SessionRoutedCredentialView: {
             /** @description The header it is set in */
@@ -1841,6 +1881,8 @@ export interface components {
             stopped_at?: string;
             /** @description The local git branch and commit the session started from */
             sync?: components["schemas"]["SessionSyncView"];
+            /** @description The sandbox template the launch took settings from */
+            template?: string;
             /** Format: date-time */
             updated_at: string;
         };
@@ -1925,6 +1967,70 @@ export interface components {
             head_commit: string;
             /** @description Base64-encoded gzipped tar of modified, staged and untracked non-ignored files */
             worktree_tar?: string;
+        };
+        TemplateSettingsView: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateSettingsView.json
+             */
+            readonly $schema?: string;
+            addons?: string[] | null;
+            apt?: string[] | null;
+            /** @description Attach exactly these routed credentials, asked-only ones included */
+            credentials?: string[] | null;
+            description?: string;
+            /** @description Egress preset name */
+            egress?: string;
+            /** @description Domains added to the preset; they need a preset, and not open */
+            egress_extra_domains?: string[] | null;
+            /** @description Environment variables, as name to value; not secret */
+            env?: {
+                [key: string]: string;
+            };
+            /** @enum {string} */
+            git_access?: "repos" | "all";
+            /** @description Attach no routed credential */
+            no_credentials?: boolean;
+        };
+        TemplateView: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateView.json
+             */
+            readonly $schema?: string;
+            addons?: string[] | null;
+            apt?: string[] | null;
+            /** @description Attach exactly these routed credentials, asked-only ones included */
+            credentials?: string[] | null;
+            description?: string;
+            /** @description Egress preset name */
+            egress?: string;
+            /** @description Domains added to the preset; they need a preset, and not open */
+            egress_extra_domains?: string[] | null;
+            /** @description Environment variables, as name to value; not secret */
+            env?: {
+                [key: string]: string;
+            };
+            /** @enum {string} */
+            git_access?: "repos" | "all";
+            /** @description Listed routed credentials the caller does not hold now */
+            missing_credentials?: string[] | null;
+            name: string;
+            /** @description Attach no routed credential */
+            no_credentials?: boolean;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        TemplatesOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplatesOutputBody.json
+             */
+            readonly $schema?: string;
+            templates: components["schemas"]["TemplateView"][] | null;
         };
         TokenView: {
             /** Format: date-time */
@@ -3289,6 +3395,229 @@ export interface operations {
         };
     };
     "delete-routed-credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplatesOutputBody"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "put-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateSettingsView"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "delete-template": {
         parameters: {
             query?: never;
             header?: never;

@@ -389,5 +389,5 @@ func (s *Service) unbuiltBase(pick variantPick, err error) error {
 	if pick.image != s.baseImage() {
 		return err
 	}
-	return fmt.Errorf("%w; the sandbox image for this OpenCode version is not on Modal: run `spov serve image build` once (it takes a few minutes)", err)
+	return fmt.Errorf("%w; the sandbox image for this OpenCode version is not on Modal: run `spov serve image build` once (it takes a few minutes; `spov init` does it for a local setup)", err)
 }

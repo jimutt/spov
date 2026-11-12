@@ -174,6 +174,14 @@ func TestPostgresImagesMeetTheContract(t *testing.T) {
 	storetest.RunImages(t, func(t *testing.T) store.ImageStore { return newStore(t).Images() })
 }
 
+// TestPostgresTemplatesMeetTheContract runs the sandbox template
+// store's contract.
+//
+// @decision(DL-119)
+func TestPostgresTemplatesMeetTheContract(t *testing.T) {
+	storetest.RunTemplates(t, "org", func(t *testing.T) store.TemplateStore { return newStore(t).Templates() })
+}
+
 // TestMigrateUpIsIdempotentAndReversible.
 //
 // @decision(DL-003)
