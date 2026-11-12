@@ -28,8 +28,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // exitStatus reports err on stderr and returns the exit code. A command
 // that exits by an outcome names its own code; every other error is 1.
+// The text is printed with its control characters made visible, since an
+// error can quote a sandbox.
 //
-// @decision(DL-103)
+// @decision(DL-103) @decision(DL-136)
 func exitStatus(err error, stderr io.Writer) int {
 	if err == nil {
 		return 0
@@ -37,11 +39,11 @@ func exitStatus(err error, stderr io.Writer) int {
 	var exit *cli.ExitError
 	if errors.As(err, &exit) {
 		if exit.Err != nil {
-			_, _ = fmt.Fprintln(stderr, "spov: "+exit.Err.Error())
+			_, _ = fmt.Fprintln(stderr, "spov: "+cli.Printable(exit.Err.Error()))
 		}
 		return exit.Code
 	}
-	_, _ = fmt.Fprintln(stderr, "spov: "+err.Error())
+	_, _ = fmt.Fprintln(stderr, "spov: "+cli.Printable(err.Error()))
 	return 1
 }
 

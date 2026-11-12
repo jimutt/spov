@@ -124,6 +124,7 @@ snapshots:                          # exit snapshots for resume; servers under t
 
 history:                            # a local server's session history, under $XDG_DATA_HOME/spov/sessions
   retention: 720h                   # kept this long after a session stopped; 0 keeps it forever
+  max_session_mib: 1024             # any server: one session's stored events and messages; past it its recording stops
 
 metrics:                            # see docs/metrics.md; OTLP is configured by OTEL_EXPORTER_OTLP_* instead
   prometheus_listen: 127.0.0.1:9464 # serves GET /metrics on its own listener, unauthenticated; empty serves none

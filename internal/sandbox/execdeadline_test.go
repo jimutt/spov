@@ -35,6 +35,9 @@ func TestTheFakeRefusesAnExecWithNoDeadline(t *testing.T) {
 	if _, err := h.ExecInput(context.Background(), []string{"cat"}, []byte("x")); !errors.Is(err, ErrExecNoDeadline) {
 		t.Errorf("ExecInput with no deadline = %v, want ErrExecNoDeadline", err)
 	}
+	if _, err := h.ExecBounded(context.Background(), []string{"cat"}, nil, MaxExecOutput); !errors.Is(err, ErrExecNoDeadline) {
+		t.Errorf("ExecBounded with no deadline = %v, want ErrExecNoDeadline", err)
+	}
 	if _, err := h.SidecarExecInput(context.Background(), "proxy", []string{"set-token", "gh"}, nil); !errors.Is(err, ErrExecNoDeadline) {
 		t.Errorf("SidecarExecInput with no deadline = %v, want ErrExecNoDeadline", err)
 	}

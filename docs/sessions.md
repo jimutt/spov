@@ -82,6 +82,14 @@ quit.
   that tries. If the session changed your repository's git hooks (a
   `core.hooksPath` inside the checkout, such as `.githooks` or husky's
   directory), the work lands on `spov/<session>` for you to read first.
+- **You see what landed.** After a sync, spov prints the branch the work
+  landed on, the commits it added (how many, and the short range), and each
+  changed (`M`), added (`A`) and deleted (`D`) path, up to 30 and then "and N
+  more". A path or message the sandbox wrote is printed with any terminal
+  control character shown as an escape such as `\x1b`.
+- **Your checkout's hooks do not run.** Every git command spov runs in your
+  checkout turns off its hooks (`core.hooksPath`) and its filesystem monitor
+  (`core.fsmonitor`), and uses no pager.
 - **Nothing is lost.** The sandbox is terminated only after the work is
   back; a sync that fails leaves it running and tells you how to retry.
 - **The checkout must be clean and on a branch**, or the launch stops and

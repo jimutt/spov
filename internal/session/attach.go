@@ -139,6 +139,11 @@ func (a *Attacher) Attach(ctx context.Context, opts AttachOptions) (*Session, er
 // @decision(DL-135)
 const PasswordReadTimeout = 30 * time.Second
 
+// maxPasswordOutput is far above any password spov generates.
+//
+// @decision(DL-130)
+const maxPasswordOutput = 4 << 10
+
 // PasswordFromSandbox reads OPENCODE_PASSWORD back out of the running
 // container. A process started by Exec inherits the sandbox's secret
 // environment, so this recovers the password for a session launched on
@@ -149,7 +154,7 @@ func PasswordFromSandbox(ctx context.Context, h sandbox.Handle) (string, error) 
 	// @decision(DL-135)
 	ctx, cancel := context.WithTimeout(ctx, PasswordReadTimeout)
 	defer cancel()
-	res, err := h.Exec(ctx, []string{"printenv", opencode.PasswordEnvVar})
+	res, err := h.ExecBounded(ctx, []string{"printenv", opencode.PasswordEnvVar}, nil, maxPasswordOutput)
 	if err != nil {
 		return "", fmt.Errorf("session: reading the password from the sandbox: %w", err)
 	}

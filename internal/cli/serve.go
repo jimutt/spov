@@ -471,6 +471,8 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 	//
 	// @decision(DL-017)
 	rec := server.NewRecorder(srv.Service(), deps.Store, env.now, deps.Warn)
+	// @decision(DL-131)
+	rec.SetSessionBytes(int64(cfg.History.MaxSessionMiB) << 20)
 	srv.Service().OnStop = rec.Final
 	// And the other end: a launch tells the recorder to attach at once,
 	// rather than leaving a short interactive session to finish inside
