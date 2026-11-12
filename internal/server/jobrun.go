@@ -30,6 +30,13 @@ import (
 //
 // @decision(DL-045) @decision(DL-046)
 func (s *Service) ProvisionJob(ctx context.Context, job store.Job) error {
+	// The supervisor stores what this returns as the job's error.
+	//
+	// @decision(DL-135)
+	return hideStoreError(s.provisionJob(ctx, job))
+}
+
+func (s *Service) provisionJob(ctx context.Context, job store.Job) error {
 	sess, err := s.deps.Store.Sessions().Get(ctx, job.OrgID, job.SessionID)
 	if err != nil {
 		return fmt.Errorf("reading the job's session: %w", err)

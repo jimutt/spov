@@ -160,7 +160,8 @@ func TestTheDefaultLimitsAreTheDecidedValues(t *testing.T) {
 	got := DefaultLimits()
 	want := Limits{
 		SignIns: Rate{30, 30}, DevicePolls: Rate{120, 120},
-		PendingLogins: 10_000, PendingDeviceCode: 10_000,
+		NetworkSignIns: Rate{300, 300}, NetworkPolls: Rate{1_200, 1_200},
+		PendingLogins: 10_000, PendingDeviceCode: 10_000, PendingPerNetwork: 500,
 		Requests: Rate{600, 100}, Creates: Rate{20, 20},
 		Streams: 20, InFlight: 32,
 		ReadTimeout: 30 * time.Second, BundleReadTimeout: 5 * time.Minute,

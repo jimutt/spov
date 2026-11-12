@@ -46,6 +46,9 @@ func awaitJoinable(ctx context.Context, env *Env, c *client.Client, view server.
 		if wait == "" && view.Job != nil {
 			convs, err := c.Conversations(wctx, view.ID)
 			if err != nil {
+				if pauseForServer(wctx, env, err, poll) {
+					continue
+				}
 				return view, "", readFailed(ctx, wctx, view, "waiting for the job's conversation to be recorded", opts, err)
 			}
 			if conv = firstConversation(convs); conv == "" {
@@ -84,10 +87,30 @@ func awaitJoinable(ctx context.Context, env *Env, c *client.Client, view server.
 			if client.IsNotFound(err) {
 				return view, "", sessionError(opts.Ref, err)
 			}
+			if pauseForServer(wctx, env, err, poll) {
+				continue
+			}
 			return view, "", readFailed(ctx, wctx, view, last, opts, err)
 		}
 		view = next
 	}
+}
+
+// pauseForServer sleeps for a 429's wait (slowedDown), or until wctx
+// ends, and reports whether err was one; the wait then reads again.
+//
+// @decision(DL-133) @decision(DL-025)
+func pauseForServer(wctx context.Context, env *Env, err error, poll time.Duration) bool {
+	pause, ok := slowedDown(err, poll)
+	if !ok {
+		return false
+	}
+	_, _ = fmt.Fprintf(env.Err, "  the server asked to slow down; reading again in %s\n", pause)
+	select {
+	case <-wctx.Done():
+	case <-time.After(pause):
+	}
+	return true
 }
 
 // readFailed ends the wait on a failed read: as a given-up wait when the

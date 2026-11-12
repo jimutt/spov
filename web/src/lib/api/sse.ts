@@ -36,12 +36,18 @@ export class StreamProblem extends Error {
   readonly problem: Problem | undefined;
   /** final reports whether reopening the stream could ever help. */
   readonly final: boolean;
+  /** retryAfter is a refusal's Retry-After in ms, when it sent one. */
+  readonly retryAfter: number | undefined;
 
-  constructor(message: string, opts: { status?: number; problem?: Problem; final?: boolean } = {}) {
+  constructor(
+    message: string,
+    opts: { status?: number; problem?: Problem; final?: boolean; retryAfter?: number } = {},
+  ) {
     super(message);
     this.name = "StreamProblem";
     this.status = opts.status;
     this.problem = opts.problem;
+    this.retryAfter = opts.retryAfter;
     // A status means the server refused and said why, which no reopen
     // can change. Anything else is a broken connection unless the caller
     // says otherwise.
@@ -185,10 +191,26 @@ export async function openStream(
     throw new StreamProblem(problem?.title ?? `the server answered ${res.status}`, {
       status: res.status,
       problem,
+      retryAfter: retryAfterMs(res.headers.get("Retry-After")),
     });
   }
   if (!res.body) throw new StreamProblem("the stream carried no body");
   return res.body;
+}
+
+/**
+ * retryAfterMs reads a Retry-After header, in seconds or as a date, as
+ * milliseconds, or undefined when it has none it can read.
+ *
+ * @decision(DL-133)
+ */
+export function retryAfterMs(v: string | null, now = Date.now()): number | undefined {
+  const s = v?.trim();
+  if (!s) return undefined;
+  if (/^\d+$/.test(s)) return Number(s) * 1000;
+  // An HTTP date names its day and month; Date.parse alone reads "-5" as a year.
+  const at = /[a-z]/i.test(s) ? Date.parse(s) : NaN;
+  return Number.isNaN(at) ? undefined : Math.max(at - now, 0);
 }
 
 /**
