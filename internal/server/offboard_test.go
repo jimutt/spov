@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -350,5 +351,53 @@ func TestRemovingAnAddressNobodySignedInUnderRemovesOnlyTheEntry(t *testing.T) {
 	}
 	if evs, _ := f.store.AdminEvents().List(context.Background(), auth.LocalID, 10); len(evs) != 0 {
 		t.Errorf("audit rows = %+v, want none", evs)
+	}
+}
+
+// TestOffboardingDeletesBrowserStoredCredentialsAndKeepsTemplates: a
+// routed credential the person stored from the browser, a preset's as
+// the form sends it, is a row of CredentialStore.ListByUser and is
+// deleted with the rest. Their sandbox templates hold no secret, only
+// settings and credential names, so they are kept as history is, and
+// one that names the deleted credential is refused at launch.
+//
+// @decision(DL-132) @decision(DL-118) @decision(DL-119)
+func TestOffboardingDeletesBrowserStoredCredentialsAndKeepsTemplates(t *testing.T) {
+	templates := &store.FileTemplates{}
+	o := newOffboarded(t, func(d *Deps) {
+		d.RoutedCredentials = &SealedRoutedCredentials{Store: d.Store.Credentials(), Sealer: testSealer(t)}
+		d.Templates = templates
+	})
+	admin := o.f.auth.inner
+	o.f.auth.inner = auth.StaticAuthenticator{Principal: auth.Principal{UserID: theirID, OrgID: auth.LocalID, Email: theirEmail}}
+	for path, body := range map[string]any{
+		"/api/v1/me/routed-credentials/team-npm": map[string]any{"secret": "npm_THEIR_SECRET", "route": map[string]any{
+			"name": "team-npm", "preset": "npm", "url": "https://art.acme.com/api/npm/team-a/", "scope": "@acme"}},
+		"/api/v1/me/templates/work": map[string]any{"description": "their work", "credentials": []string{"team-npm"},
+			"env": map[string]string{"STAGE": "dev"}},
+	} {
+		if resp, out := o.f.do(http.MethodPut, path, body); resp.StatusCode != http.StatusOK {
+			t.Fatalf("PUT %s as them = %d: %s", path, resp.StatusCode, out)
+		}
+	}
+	o.f.auth.inner = admin
+
+	if resp, out := o.f.do(http.MethodDelete, "/api/v1/allowlist/"+theirEmail, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE = %d: %s", resp.StatusCode, out)
+	}
+	o.assertEnded(t)
+	if evs := o.offboardEvents(t); len(evs) != 1 || !strings.Contains(evs[0].Detail, "4 credentials deleted") {
+		t.Errorf("audit rows = %+v, want the browser's routed credential counted with the other three", evs)
+	}
+	kept, err := templates.Get(context.Background(), auth.LocalID, theirID, "work")
+	if err != nil || kept.Description != "their work" {
+		t.Errorf("their template = %+v, %v, want it kept", kept, err)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", kept), "npm_THEIR_SECRET") {
+		t.Error("the template holds the credential's secret")
+	}
+	missing := missingCredentials(kept, nil)
+	if len(missing) != 1 || missing[0] != "team-npm" {
+		t.Errorf("the kept template's missing credentials = %v, want the deleted one", missing)
 	}
 }
