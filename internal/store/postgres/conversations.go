@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 
@@ -49,20 +50,57 @@ func (p pgConversations) ListConversations(ctx context.Context, orgID, sessionID
 	}
 	out := make([]store.Conversation, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, conversationFromRow(r))
+		out = append(out, conversationFromRow(sqlcgen.Conversation{
+			ID: r.ID, OrgID: r.OrgID, SessionID: r.SessionID, OpencodeID: r.OpencodeID, Title: r.Title,
+			CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, ParentOpencodeID: r.ParentOpencodeID,
+			SeqBase: r.SeqBase, SeqAfter: r.SeqAfter,
+		}))
 	}
 	return out, nil
+}
+
+// ConversationInfos implements store.ConversationStore.
+//
+// @decision(DL-131)
+func (p pgConversations) ConversationInfos(ctx context.Context, orgID, sessionID string) (map[string][]byte, error) {
+	rows, err := p.s.q.ConversationInfos(ctx, sqlcgen.ConversationInfosParams{OrgID: orgID, SessionID: sessionID})
+	if err != nil {
+		return nil, mapErr("conversation infos", err)
+	}
+	out := make(map[string][]byte, len(rows))
+	for _, r := range rows {
+		out[r.ID] = r.Info
+	}
+	return out, nil
+}
+
+// StoredSize implements store.ConversationStore.
+//
+// @decision(DL-131)
+func (p pgConversations) StoredSize(ctx context.Context, orgID, sessionID string) (store.StoredSize, error) {
+	r, err := p.s.q.StoredSize(ctx, sqlcgen.StoredSizeParams{OrgID: orgID, SessionID: sessionID})
+	if err != nil {
+		return store.StoredSize{}, mapErr("stored size", err)
+	}
+	return store.StoredSize{
+		Conversations: int(r.Conversations),
+		Rows:          r.EventRows + r.MessageRows,
+		Bytes:         r.EventBytes + r.MessageBytes,
+	}, nil
 }
 
 // PutMessages writes the batch in one transaction. The composite
 // foreign key is what refuses a message naming a different org or
 // session than its conversation, and mapErr turns that into
-// ErrNotFound, so both stores answer the same.
-func (p pgConversations) PutMessages(ctx context.Context, msgs []store.Message) (int, error) {
+// ErrNotFound, so both stores answer the same. A message that changed
+// nothing returns no row.
+//
+// @decision(DL-131)
+func (p pgConversations) PutMessages(ctx context.Context, msgs []store.Message) (store.MessageWrite, error) {
 	if len(msgs) == 0 {
-		return 0, nil
+		return store.MessageWrite{}, nil
 	}
-	changed := 0
+	var w store.MessageWrite
 	put := func(s *Store) error {
 		for _, m := range msgs {
 			if m.CreatedAt.IsZero() {
@@ -74,22 +112,90 @@ func (p pgConversations) PutMessages(ctx context.Context, msgs []store.Message) 
 			if raw == nil {
 				raw = []byte{}
 			}
-			n, err := s.q.PutMessage(ctx, sqlcgen.PutMessageParams{
+			row, err := s.q.PutMessage(ctx, sqlcgen.PutMessageParams{
 				ID: m.ID, OrgID: m.OrgID, SessionID: m.SessionID, ConversationID: m.ConversationID,
 				OpencodeID: m.OpenCodeID, Role: m.Role, Text: m.Text, At: ts(m.At),
 				Raw: raw, CreatedAt: ts(m.CreatedAt),
 			})
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
 			if err != nil {
 				return mapErr("put message", err)
 			}
-			changed += int(n)
+			w.Changed++
+			if row.Inserted {
+				w.Added++
+			}
+			w.Bytes += row.NewBytes - row.OldBytes
 		}
 		return nil
 	}
 	if err := p.s.atomically(ctx, put); err != nil {
-		return 0, err
+		return store.MessageWrite{}, err
 	}
-	return changed, nil
+	return w, nil
+}
+
+// recentRow is one row of a RecentMessages read, with the bytes of it
+// and every newer one.
+type recentRow struct {
+	msg     store.Message
+	running int64
+}
+
+// RecentMessages implements store.ConversationStore: one query, which
+// reads the newest rows of the session's (or the conversation's) index
+// and stops at the limit.
+//
+// @decision(DL-131)
+func (p pgConversations) RecentMessages(ctx context.Context, orgID, sessionID, conversationID string, limit int, maxBytes int64) ([]store.Message, bool, error) {
+	if limit <= 0 {
+		return nil, false, nil
+	}
+	if maxBytes <= 0 {
+		maxBytes = math.MaxInt64
+	}
+	// One more than the limit, so a full read says whether more exist.
+	rowLimit := int32(min(limit, math.MaxInt32-1) + 1)
+	var rows []recentRow
+	if conversationID == "" {
+		got, err := p.s.q.RecentSessionMessages(ctx, sqlcgen.RecentSessionMessagesParams{
+			OrgID: orgID, SessionID: sessionID, RowLimit: rowLimit, MaxBytes: maxBytes,
+		})
+		if err != nil {
+			return nil, false, mapErr("recent messages", err)
+		}
+		for _, r := range got {
+			rows = append(rows, recentRow{messageFromRow(sqlcgen.Message{
+				ID: r.ID, OrgID: r.OrgID, SessionID: r.SessionID, ConversationID: r.ConversationID,
+				OpencodeID: r.OpencodeID, Role: r.Role, Text: r.Text, At: r.At, CreatedAt: r.CreatedAt, Raw: r.Raw,
+			}), r.Running})
+		}
+	} else {
+		got, err := p.s.q.RecentConversationMessages(ctx, sqlcgen.RecentConversationMessagesParams{
+			OrgID: orgID, SessionID: sessionID, ConversationID: conversationID, RowLimit: rowLimit, MaxBytes: maxBytes,
+		})
+		if err != nil {
+			return nil, false, mapErr("recent messages", err)
+		}
+		for _, r := range got {
+			rows = append(rows, recentRow{messageFromRow(sqlcgen.Message{
+				ID: r.ID, OrgID: r.OrgID, SessionID: r.SessionID, ConversationID: r.ConversationID,
+				OpencodeID: r.OpencodeID, Role: r.Role, Text: r.Text, At: r.At, CreatedAt: r.CreatedAt, Raw: r.Raw,
+			}), r.Running})
+		}
+	}
+	// Newest first: keep those that fit, then put them oldest first.
+	var out []store.Message
+	for _, r := range rows {
+		if len(out) == limit || r.running > maxBytes {
+			break
+		}
+		out = append(out, r.msg)
+	}
+	slices.Reverse(out)
+	return out, len(rows) > len(out), nil
 }
 
 // atomically runs fn inside the current transaction, or a new one when

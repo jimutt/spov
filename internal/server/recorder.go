@@ -1,8 +1,8 @@
 package server
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/store"
 	"github.com/jimutt/spov/internal/telemetry"
 )
@@ -45,6 +46,51 @@ const RecorderBufferBytes = 64 << 20
 //
 // @decision(DL-018) @decision(DL-017)
 const MaxConversations = 32
+
+// MaxSessionConversations bounds how many conversations one session
+// stores. Past it a frame naming a new one is dropped, with one note in
+// the session's log.
+//
+// @decision(DL-131)
+const MaxSessionConversations = 800
+
+// MaxConversationInfoBytes bounds the Session.Info stored for one
+// conversation. A larger one is not stored; the conversation still is.
+//
+// @decision(DL-131)
+const MaxConversationInfoBytes = 128 << 10
+
+// MaxSessionRows and DefaultSessionBytes bound what one session's
+// events and messages occupy. At either the recorder stops recording
+// the session and says so in its log; the sandbox runs on.
+//
+// @decision(DL-131)
+const (
+	MaxSessionRows      = 1_000_000
+	DefaultSessionBytes = 1 << 30
+)
+
+// RemeasureInterval is how often one capture may measure its session
+// again once its count reaches a limit. In between the count is
+// believed.
+//
+// @decision(DL-131)
+const RemeasureInterval = time.Minute
+
+// MarkerConversationLimit is written once when a session reaches
+// MaxSessionConversations.
+//
+// @decision(DL-131)
+const MarkerConversationLimit = store.SpovNamespace + "recorder.conversations.limit"
+
+// errConversationLimit is a conversation the session has no room for.
+// errStorageLimit ends the recording of a session at its storage limit.
+//
+// @decision(DL-131)
+var (
+	errConversationLimit = errors.New("the session is at its conversation limit")
+	errStorageLimit      = errors.New("the session is at its storage limit")
+)
 
 // MessagePageSize is how many messages one request for a conversation
 // asks for: the pinned build's own default page, so no page is larger
@@ -115,6 +161,12 @@ type Recorder struct {
 	drop    func(sessionID, token string)
 	backoff []time.Duration
 	sleep   func(ctx context.Context, d time.Duration) error
+	// The bounds on what one session stores; see the constants.
+	//
+	// @decision(DL-131)
+	maxConversations int
+	maxRows          int64
+	maxBytes         int64
 
 	mu sync.Mutex
 	// runCtx is the context Run was started with; Wake parents captures
@@ -149,6 +201,7 @@ func NewRecorder(svc *Service, st store.Store, now func() time.Time, warn func(s
 	}
 	return &Recorder{
 		store: st, now: now, warn: warn, interval: ReconcileInterval, metrics: metrics, maxPages: MaxMessagePages,
+		maxConversations: MaxSessionConversations, maxRows: MaxSessionRows, maxBytes: DefaultSessionBytes,
 		// A span is a server-side act, so it reuses a cached connection
 		// and a redial usually costs no mint.
 		//
@@ -174,6 +227,16 @@ func sleepFor(ctx context.Context, d time.Duration) error {
 		return ctx.Err()
 	case <-time.After(d):
 		return nil
+	}
+}
+
+// SetSessionBytes sets the storage limit of one session, in bytes. Zero
+// or less keeps the default.
+//
+// @decision(DL-131)
+func (r *Recorder) SetSessionBytes(n int64) {
+	if n > 0 {
+		r.maxBytes = n
 	}
 }
 
@@ -240,10 +303,34 @@ func (r *Recorder) Sync(ctx context.Context) error {
 func (r *Recorder) startCaptureLocked(ctx context.Context, sess store.Session) {
 	cctx, cancel := context.WithCancel(ctx)
 	r.captures[sess.ID] = cancel
+	// A panic ends this capture, is logged, and gives the session up as
+	// a spent redial budget does, before the capture is forgotten, so
+	// the next poll does not start it again.
+	//
+	// @decision(DL-135) @decision(DL-017)
 	r.wg.Go(func() {
 		defer r.forgetCapture(sess.ID, cancel)
-		r.record(cctx, sess)
+		if safego.Do("recorder capture of session "+sess.ID, r.warn, func() { r.record(cctx, sess) }) {
+			r.giveUpAfterPanic(ctx, sess)
+		}
 	})
+}
+
+// giveUpAfterPanic marks the session abandoned for its sandbox and says
+// so once in its log.
+//
+// @decision(DL-135) @decision(DL-017)
+func (r *Recorder) giveUpAfterPanic(ctx context.Context, sess store.Session) {
+	r.mu.Lock()
+	r.abandoned[sess.ID] = sess.SandboxID
+	r.mu.Unlock()
+	last, err := r.store.Conversations().LastEvent(ctx, sess.OrgID, sess.ID)
+	if err == nil && last.Source == store.SourceSpov && last.Name == MarkerStopped {
+		return
+	}
+	if merr := r.mark(ctx, sess, MarkerStopped, "recording stopped: the recorder failed on this session and gave it up; the sandbox is still running"); merr != nil {
+		r.warn(fmt.Sprintf("recorder %s: %s", sess.ID, merr))
+	}
 }
 
 // Wake starts recording one session now rather than at the next poll.
@@ -309,6 +396,13 @@ func (r *Recorder) record(ctx context.Context, sess store.Session) {
 		if ctx.Err() != nil {
 			return
 		}
+		// Nothing more of this session is recorded by this process.
+		//
+		// @decision(DL-131)
+		if errors.Is(err, errStorageLimit) {
+			r.stopAtStorageLimit(ctx, sess)
+			return
+		}
 		cur, gerr := r.store.Sessions().Get(ctx, sess.OrgID, sess.ID)
 		if gerr == nil && cur.State != store.StateRunning {
 			// The sandbox went, and the reconciler has said so or is
@@ -344,12 +438,45 @@ func (r *Recorder) record(ctx context.Context, sess store.Session) {
 	}
 }
 
+// stopAtStorageLimit says once in the session's log that its recording
+// ended at the storage limit, and gives the session up. A later process
+// finds the marker and stays quiet.
+//
+// @decision(DL-131)
+func (r *Recorder) stopAtStorageLimit(ctx context.Context, sess store.Session) {
+	r.mu.Lock()
+	r.abandoned[sess.ID] = sess.SandboxID
+	r.mu.Unlock()
+	last, err := r.store.Conversations().LastEvent(ctx, sess.OrgID, sess.ID)
+	if err == nil && last.Source == store.SourceSpov && last.Name == MarkerStopped {
+		return
+	}
+	text := fmt.Sprintf("recording stopped: this session has stored its limit of %d MiB or %d events and messages; the sandbox is still running", r.maxBytes>>20, r.maxRows)
+	r.warn(fmt.Sprintf("recorder %s: %s", sess.ID, text))
+	if merr := r.mark(ctx, sess, MarkerStopped, text); merr != nil {
+		r.warn(fmt.Sprintf("recorder %s: %s", sess.ID, merr))
+	}
+}
+
 // capture is one span's working state: the connection it holds and the
 // conversations it has seen, by OpenCode id.
 type capture struct {
 	sess  store.Session
 	conn  Connection
 	convs map[string]store.Conversation
+	// known is every conversation the session has stored, by OpenCode
+	// id, read at attach; infoSum is the Info last written for each, so
+	// none is held. size is what the session has stored, as measured at
+	// measuredAt and counted since from what each write reports.
+	//
+	// @decision(DL-131)
+	known         map[string]bool
+	infoSum       map[string][sha256.Size]byte
+	size          store.StoredSize
+	measured      bool
+	measuredAt    time.Time
+	warnedInfo    bool
+	warnedConvCap bool
 	// warnedNoSeq is set once a durable frame without a sequence has
 	// been reported, so a flattened marker is said once per span
 	// rather than once per frame — and never silently.
@@ -386,6 +513,8 @@ func newCapture(sess store.Session, conn Connection) *capture {
 		sess:       sess,
 		conn:       conn,
 		convs:      map[string]store.Conversation{},
+		known:      map[string]bool{},
+		infoSum:    map[string][sha256.Size]byte{},
 		gapChecked: map[string]bool{},
 		t0:         time.Now(),
 	}
@@ -507,17 +636,25 @@ func (r *Recorder) spanOver(ctx context.Context, sess store.Session, conn Connec
 	var reader sync.WaitGroup
 	reader.Go(func() {
 		defer func() { _ = body.Close() }()
-		err := readSSEFrames(sctx, body, func(raw string) bool {
-			if !queue.push(raw) {
-				queue.close(fmt.Errorf("the sandbox outran the recorder by more than %d bytes", RecorderBufferBytes))
-				return false
+		// It parses what the sandbox sends; a panic ends the span with
+		// an error instead of the process.
+		//
+		// @decision(DL-135)
+		if safego.Do("recorder frame reader", r.warn, func() {
+			err := readSSEFrames(sctx, body, func(raw string) bool {
+				if !queue.push(raw) {
+					queue.close(fmt.Errorf("the sandbox outran the recorder by more than %d bytes", RecorderBufferBytes))
+					return false
+				}
+				return true
+			})
+			if err == nil {
+				err = io.EOF
 			}
-			return true
-		})
-		if err == nil {
-			err = io.EOF
+			queue.close(err)
+		}) {
+			queue.close(errors.New("the frame reader panicked"))
 		}
-		queue.close(err)
 	})
 	defer func() {
 		stop()
@@ -552,7 +689,56 @@ func (r *Recorder) attach(ctx context.Context, c *capture) error {
 		return fmt.Errorf("read the store: %w", err)
 	}
 	c.lastSeq = last
+	if err := r.measure(ctx, c); err != nil {
+		return err
+	}
 	return r.catchUp(ctx, c)
+}
+
+// measure reads what the session has stored: which conversations, and
+// how much. It answers errStorageLimit for a session already at its
+// limit.
+//
+// @decision(DL-131)
+func (r *Recorder) measure(ctx context.Context, c *capture) error {
+	convs, err := r.store.Conversations().ListConversations(ctx, c.sess.OrgID, c.sess.ID)
+	if err != nil {
+		return fmt.Errorf("read the store: %w", err)
+	}
+	for _, conv := range convs {
+		c.known[conv.OpenCodeID] = true
+	}
+	size, err := r.store.Conversations().StoredSize(ctx, c.sess.OrgID, c.sess.ID)
+	if err != nil {
+		return fmt.Errorf("read the store: %w", err)
+	}
+	c.size, c.measured, c.measuredAt = size, true, r.now()
+	return r.room(ctx, c)
+}
+
+// room reports errStorageLimit once the session has stored its limit.
+// The count is what each write reported, so it misses only what others
+// wrote; a count at the limit is checked against the store once per
+// RemeasureInterval of the capture, and believed in between.
+//
+// @decision(DL-131)
+func (r *Recorder) room(ctx context.Context, c *capture) error {
+	if !c.measured || (c.size.Rows < r.maxRows && c.size.Bytes < r.maxBytes) {
+		return nil
+	}
+	now := r.now()
+	if now.Sub(c.measuredAt) < RemeasureInterval {
+		return errStorageLimit
+	}
+	size, err := r.store.Conversations().StoredSize(ctx, c.sess.OrgID, c.sess.ID)
+	if err != nil {
+		return fmt.Errorf("read the store: %w", err)
+	}
+	c.size, c.measuredAt = size, now
+	if size.Rows >= r.maxRows || size.Bytes >= r.maxBytes {
+		return errStorageLimit
+	}
+	return nil
 }
 
 // missedCount agrees with its number. Built by concatenation, which is
@@ -625,6 +811,9 @@ func (r *Recorder) catchUp(ctx context.Context, c *capture) error {
 	}
 	for _, id := range ids {
 		conv, err := r.conversationWith(ctx, c, id, titles[id], infos[id], parents[id])
+		if errors.Is(err, errConversationLimit) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -645,6 +834,13 @@ func (r *Recorder) catchUp(ctx context.Context, c *capture) error {
 func (r *Recorder) conversation(ctx context.Context, c *capture, opencodeID string) (store.Conversation, error) {
 	if conv, ok := c.convs[opencodeID]; ok {
 		return conv, nil
+	}
+	// Before the read: a conversation with no room costs the sandbox a
+	// frame and the server nothing.
+	//
+	// @decision(DL-131)
+	if err := r.conversationRoom(ctx, c, opencodeID); err != nil {
+		return store.Conversation{}, err
 	}
 	var (
 		title, parent string
@@ -668,9 +864,24 @@ func (r *Recorder) conversation(ctx context.Context, c *capture, opencodeID stri
 //
 // @decision(DL-089) @decision(DL-110)
 func (r *Recorder) conversationWith(ctx context.Context, c *capture, opencodeID, title string, info []byte, parent string) (store.Conversation, error) {
-	if conv, ok := c.convs[opencodeID]; ok && (title == "" || conv.Title == title) && (len(info) == 0 || bytes.Equal(conv.Info, info)) &&
+	// @decision(DL-131)
+	if len(info) > MaxConversationInfoBytes {
+		if !c.warnedInfo {
+			c.warnedInfo = true
+			r.warn(fmt.Sprintf("recorder %s: the info of conversation %s is %d bytes, over the limit of %d, and is not stored", c.sess.ID, opencodeID, len(info), MaxConversationInfoBytes))
+		}
+		info = nil
+	}
+	var sum [sha256.Size]byte
+	if len(info) > 0 {
+		sum = sha256.Sum256(info)
+	}
+	if conv, ok := c.convs[opencodeID]; ok && (title == "" || conv.Title == title) && (len(info) == 0 || c.infoSum[opencodeID] == sum) &&
 		(parent == "" || conv.ParentOpenCodeID == parent) {
 		return conv, nil
+	}
+	if err := r.conversationRoom(ctx, c, opencodeID); err != nil {
+		return store.Conversation{}, err
 	}
 	conv, err := r.store.Conversations().UpsertConversation(ctx, store.Conversation{
 		ID: store.NewID(r.now()), OrgID: c.sess.OrgID, SessionID: c.sess.ID, OpenCodeID: opencodeID, Title: title, Info: info,
@@ -679,8 +890,39 @@ func (r *Recorder) conversationWith(ctx context.Context, c *capture, opencodeID,
 	if err != nil {
 		return store.Conversation{}, fmt.Errorf("write the store: %w", err)
 	}
+	// The row is kept without its Info, which only an import reads.
+	//
+	// @decision(DL-131)
+	conv.Info = nil
+	if len(info) > 0 {
+		c.infoSum[opencodeID] = sum
+	}
 	c.convs[opencodeID] = conv
+	c.known[opencodeID] = true
 	return conv, nil
+}
+
+// conversationRoom answers errConversationLimit for a conversation the
+// session has not stored once it holds its limit, and writes the note
+// the first time any span of the session is refused one.
+//
+// @decision(DL-131)
+func (r *Recorder) conversationRoom(ctx context.Context, c *capture, opencodeID string) error {
+	if c.known[opencodeID] || len(c.known) < r.maxConversations {
+		return nil
+	}
+	if c.warnedConvCap {
+		return errConversationLimit
+	}
+	c.warnedConvCap = true
+	r.warn(fmt.Sprintf("recorder %s: the session holds its limit of %d conversations; %s and any later new one are not recorded", c.sess.ID, r.maxConversations, opencodeID))
+	if _, err := r.store.Conversations().FindEvent(ctx, c.sess.OrgID, c.sess.ID, MarkerConversationLimit, nil); errors.Is(err, store.ErrNotFound) {
+		text := fmt.Sprintf("this session has reached its limit of %d conversations; new ones, such as further subagents, are not recorded", r.maxConversations)
+		if merr := r.mark(ctx, c.sess, MarkerConversationLimit, text); merr != nil {
+			return merr
+		}
+	}
+	return errConversationLimit
 }
 
 // readMessages reads one conversation's messages newest first, a page
@@ -724,18 +966,33 @@ func (r *Recorder) readMessages(ctx context.Context, c *capture, conv store.Conv
 			}
 			msgs = append(msgs, msg)
 		}
+		// @decision(DL-131)
+		if err := r.room(ctx, c); err != nil {
+			return err
+		}
 		changed, err := r.store.Conversations().PutMessages(ctx, msgs)
 		if err != nil {
 			return fmt.Errorf("write the store: %w", err)
 		}
+		// @decision(DL-131)
+		c.count(int64(changed.Added), changed.Bytes)
 		n, next := messagePage(body)
-		if n < MessagePageSize || next == "" || changed == 0 {
+		if n < MessagePageSize || next == "" || changed.Changed == 0 {
 			return nil
 		}
 		// A cursor keeps the first page's order and refuses an order
 		// beside it.
 		query = url.Values{"limit": {strconv.Itoa(MessagePageSize)}, "cursor": {next}}
 	}
+}
+
+// count adds a write to the span's running size: the rows it added and
+// the net bytes it reported.
+//
+// @decision(DL-131)
+func (c *capture) count(rows, bytes int64) {
+	c.size.Rows += rows
+	c.size.Bytes += bytes
 }
 
 // messagePage is how many messages a /message page holds and its next
@@ -797,7 +1054,9 @@ func (r *Recorder) frame(ctx context.Context, c *capture, raw string) error {
 	// @decision(DL-110)
 	if parent, ok := createdParent(decoded); ok && ev.Session != "" {
 		if _, known := c.convs[ev.Session]; !known || parent != "" {
-			if _, err := r.conversationWith(ctx, c, ev.Session, "", nil, parent); err != nil {
+			if _, err := r.conversationWith(ctx, c, ev.Session, "", nil, parent); errors.Is(err, errConversationLimit) {
+				return nil
+			} else if err != nil {
 				return err
 			}
 		}
@@ -821,7 +1080,14 @@ func (r *Recorder) frame(ctx context.Context, c *capture, raw string) error {
 		return nil
 	}
 	conv, err := r.conversation(ctx, c, ev.Session)
+	// @decision(DL-131)
+	if errors.Is(err, errConversationLimit) {
+		return nil
+	}
 	if err != nil {
+		return err
+	}
+	if err := r.room(ctx, c); err != nil {
 		return err
 	}
 	// An imported conversation's log started again: its echo of the
@@ -848,12 +1114,16 @@ func (r *Recorder) frame(ctx context.Context, c *capture, raw string) error {
 	if ms := findMillis(decoded, createdKeys); ms > 0 {
 		at = time.UnixMilli(ms).UTC()
 	}
-	_, err = r.store.Conversations().PutEvents(ctx, []store.Event{{
+	wrote, err := r.store.Conversations().PutEvents(ctx, []store.Event{{
 		ID: store.NewID(now), OrgID: c.sess.OrgID, SessionID: c.sess.ID, ConversationID: conv.ID,
 		Source: source, Seq: seq, Name: ev.Name, Text: ev.Text, At: at, Raw: []byte(raw),
 	}})
 	if err != nil {
 		return fmt.Errorf("write the store: %w", err)
+	}
+	// @decision(DL-131)
+	for _, w := range wrote {
+		c.count(1, int64(len(w.Text)+len(w.Raw)))
 	}
 	if turnEnded(ev.Name) {
 		return r.readMessages(ctx, c, conv)
@@ -899,7 +1169,14 @@ func (r *Recorder) Final(ctx context.Context, p auth.Principal, sess store.Sessi
 		return
 	}
 	c := newCapture(sess, conn)
-	if err := r.catchUp(ctx, c); err != nil {
+	// The last read keeps the session's limits too.
+	//
+	// @decision(DL-131)
+	err = r.measure(ctx, c)
+	if err == nil {
+		err = r.catchUp(ctx, c)
+	}
+	if err != nil && !errors.Is(err, errStorageLimit) {
 		r.warn(fmt.Sprintf("recorder %s: final read: %s", sess.ID, redact.Error(err)))
 	}
 }

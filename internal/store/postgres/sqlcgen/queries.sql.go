@@ -37,6 +37,42 @@ func (q *Queries) AppendAdminEvent(ctx context.Context, arg AppendAdminEventPara
 	return err
 }
 
+const conversationInfos = `-- name: ConversationInfos :many
+select id, info from conversations
+where org_id = $1 and session_id = $2 and info is not null and octet_length(info) > 0
+`
+
+type ConversationInfosParams struct {
+	OrgID     string
+	SessionID string
+}
+
+type ConversationInfosRow struct {
+	ID   string
+	Info []byte
+}
+
+// @decision(DL-131)
+func (q *Queries) ConversationInfos(ctx context.Context, arg ConversationInfosParams) ([]ConversationInfosRow, error) {
+	rows, err := q.db.Query(ctx, conversationInfos, arg.OrgID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConversationInfosRow
+	for rows.Next() {
+		var i ConversationInfosRow
+		if err := rows.Scan(&i.ID, &i.Info); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countAllowlistAdmins = `-- name: CountAllowlistAdmins :one
 select count(*) from allowlist_entries where org_id = $1 and admin
 `
@@ -529,6 +565,24 @@ type DeleteOrgCredentialParams struct {
 
 func (q *Queries) DeleteOrgCredential(ctx context.Context, arg DeleteOrgCredentialParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteOrgCredential, arg.OrgID, arg.Platform)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSandboxTemplate = `-- name: DeleteSandboxTemplate :execrows
+delete from sandbox_templates where org_id = $1 and user_id = $2 and name = $3
+`
+
+type DeleteSandboxTemplateParams struct {
+	OrgID  string
+	UserID string
+	Name   string
+}
+
+func (q *Queries) DeleteSandboxTemplate(ctx context.Context, arg DeleteSandboxTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSandboxTemplate, arg.OrgID, arg.UserID, arg.Name)
 	if err != nil {
 		return 0, err
 	}
@@ -1075,6 +1129,30 @@ func (q *Queries) GetOrgCredential(ctx context.Context, arg GetOrgCredentialPara
 		&i.KeyVersion,
 		&i.Meta,
 		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSandboxTemplate = `-- name: GetSandboxTemplate :one
+select org_id, user_id, name, settings, created_at, updated_at from sandbox_templates where org_id = $1 and user_id = $2 and name = $3
+`
+
+type GetSandboxTemplateParams struct {
+	OrgID  string
+	UserID string
+	Name   string
+}
+
+func (q *Queries) GetSandboxTemplate(ctx context.Context, arg GetSandboxTemplateParams) (SandboxTemplate, error) {
+	row := q.db.QueryRow(ctx, getSandboxTemplate, arg.OrgID, arg.UserID, arg.Name)
+	var i SandboxTemplate
+	err := row.Scan(
+		&i.OrgID,
+		&i.UserID,
+		&i.Name,
+		&i.Settings,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1724,7 +1802,8 @@ func (q *Queries) ListAllowlist(ctx context.Context, orgID string) ([]AllowlistE
 }
 
 const listConversations = `-- name: ListConversations :many
-select id, org_id, session_id, opencode_id, title, created_at, updated_at, info, seq_base, seq_after, parent_opencode_id from conversations where org_id = $1 and session_id = $2 order by created_at, id
+select id, org_id, session_id, opencode_id, title, created_at, updated_at, parent_opencode_id, seq_base, seq_after
+from conversations where org_id = $1 and session_id = $2 order by created_at, id
 `
 
 type ListConversationsParams struct {
@@ -1732,19 +1811,36 @@ type ListConversationsParams struct {
 	SessionID string
 }
 
+type ListConversationsRow struct {
+	ID               string
+	OrgID            string
+	SessionID        string
+	OpencodeID       string
+	Title            string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	ParentOpencodeID *string
+	SeqBase          int64
+	SeqAfter         int64
+}
+
 // Oldest first, by created_at rather than by id: a ULID is only
 // monotonic across milliseconds, so two conversations minted in the same
 // one sort by their random suffix. Id breaks the tie so the order is
 // total and stable.
-func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]Conversation, error) {
+//
+// Without info: a reader of a session's conversations is not made to
+// load what its sandbox chose to store there.
+// @decision(DL-131)
+func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]ListConversationsRow, error) {
 	rows, err := q.db.Query(ctx, listConversations, arg.OrgID, arg.SessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Conversation
+	var items []ListConversationsRow
 	for rows.Next() {
-		var i Conversation
+		var i ListConversationsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -1753,10 +1849,9 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 			&i.Title,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.Info,
+			&i.ParentOpencodeID,
 			&i.SeqBase,
 			&i.SeqAfter,
-			&i.ParentOpencodeID,
 		); err != nil {
 			return nil, err
 		}
@@ -2231,6 +2326,42 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]SessionRu
 	return items, nil
 }
 
+const listSandboxTemplates = `-- name: ListSandboxTemplates :many
+select org_id, user_id, name, settings, created_at, updated_at from sandbox_templates where org_id = $1 and user_id = $2 order by name collate "C"
+`
+
+type ListSandboxTemplatesParams struct {
+	OrgID  string
+	UserID string
+}
+
+func (q *Queries) ListSandboxTemplates(ctx context.Context, arg ListSandboxTemplatesParams) ([]SandboxTemplate, error) {
+	rows, err := q.db.Query(ctx, listSandboxTemplates, arg.OrgID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SandboxTemplate
+	for rows.Next() {
+		var i SandboxTemplate
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.UserID,
+			&i.Name,
+			&i.Settings,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserCredentials = `-- name: ListUserCredentials :many
 select id, org_id, user_id, platform, ciphertext, nonce, key_version, verified_as, created_at, updated_at, scopes, expires_at, route from user_credentials where org_id = $1 and user_id = $2 order by platform
 `
@@ -2642,23 +2773,34 @@ func (q *Queries) PutJobSeed(ctx context.Context, arg PutJobSeedParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
-const putMessage = `-- name: PutMessage :execrows
-insert into messages (id, org_id, session_id, conversation_id, opencode_id, role, text, at, raw, created_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-on conflict (conversation_id, opencode_id) do update
-set role = excluded.role, text = excluded.text, at = excluded.at, raw = excluded.raw
-where messages.role is distinct from excluded.role
-   or messages.text is distinct from excluded.text
-   or messages.at is distinct from excluded.at
-   or messages.raw is distinct from excluded.raw
+const putMessage = `-- name: PutMessage :one
+with old as (
+    select octet_length(o.text) + octet_length(o.raw) as bytes from messages o
+    where o.conversation_id = $1 and o.opencode_id = $2
+), up as (
+    insert into messages (id, org_id, session_id, conversation_id, opencode_id, role, text, at, raw, created_at)
+    values ($3, $4, $5, $1, $2,
+            $6, $7, $8, $9, $10)
+    on conflict (conversation_id, opencode_id) do update
+    set role = excluded.role, text = excluded.text, at = excluded.at, raw = excluded.raw
+    where messages.role is distinct from excluded.role
+       or messages.text is distinct from excluded.text
+       or messages.at is distinct from excluded.at
+       or messages.raw is distinct from excluded.raw
+    returning octet_length(messages.text) + octet_length(messages.raw) as bytes
+)
+select up.bytes::bigint as new_bytes,
+       coalesce((select old.bytes from old), 0)::bigint as old_bytes,
+       not exists (select 1 from old) as inserted
+from up
 `
 
 type PutMessageParams struct {
+	ConversationID string
+	OpencodeID     string
 	ID             string
 	OrgID          string
 	SessionID      string
-	ConversationID string
-	OpencodeID     string
 	Role           string
 	Text           string
 	At             pgtype.Timestamptz
@@ -2666,25 +2808,33 @@ type PutMessageParams struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
-// The update is conditional so the count reports rows that changed,
-// not rows that were mentioned.
-func (q *Queries) PutMessage(ctx context.Context, arg PutMessageParams) (int64, error) {
-	result, err := q.db.Exec(ctx, putMessage,
+type PutMessageRow struct {
+	NewBytes int64
+	OldBytes int64
+	Inserted bool
+}
+
+// The update is conditional so a row comes back only when it changed,
+// not when it was mentioned. Every part of a WITH reads the snapshot
+// from before the statement, so old is the row the upsert replaced:
+// the write's net size is new_bytes less old_bytes.
+// @decision(DL-131)
+func (q *Queries) PutMessage(ctx context.Context, arg PutMessageParams) (PutMessageRow, error) {
+	row := q.db.QueryRow(ctx, putMessage,
+		arg.ConversationID,
+		arg.OpencodeID,
 		arg.ID,
 		arg.OrgID,
 		arg.SessionID,
-		arg.ConversationID,
-		arg.OpencodeID,
 		arg.Role,
 		arg.Text,
 		arg.At,
 		arg.Raw,
 		arg.CreatedAt,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var i PutMessageRow
+	err := row.Scan(&i.NewBytes, &i.OldBytes, &i.Inserted)
+	return i, err
 }
 
 const putOrgCredential = `-- name: PutOrgCredential :exec
@@ -2722,6 +2872,32 @@ func (q *Queries) PutOrgCredential(ctx context.Context, arg PutOrgCredentialPara
 		arg.UpdatedBy,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const putSandboxTemplate = `-- name: PutSandboxTemplate :exec
+insert into sandbox_templates (org_id, user_id, name, settings, created_at, updated_at)
+values ($1, $2, $3, $4, $5, $5)
+on conflict (org_id, user_id, name) do update
+set settings = excluded.settings, updated_at = excluded.updated_at
+`
+
+type PutSandboxTemplateParams struct {
+	OrgID     string
+	UserID    string
+	Name      string
+	Settings  []byte
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) PutSandboxTemplate(ctx context.Context, arg PutSandboxTemplateParams) error {
+	_, err := q.db.Exec(ctx, putSandboxTemplate,
+		arg.OrgID,
+		arg.UserID,
+		arg.Name,
+		arg.Settings,
+		arg.CreatedAt,
 	)
 	return err
 }
@@ -2803,6 +2979,171 @@ func (q *Queries) PutUserCredential(ctx context.Context, arg PutUserCredentialPa
 		arg.Route,
 	)
 	return err
+}
+
+const recentConversationMessages = `-- name: RecentConversationMessages :many
+select t.id, t.org_id, t.session_id, t.conversation_id, t.opencode_id, t.role,
+       case when t.running <= $1::bigint then t.text else '' end as text,
+       t.at, t.created_at,
+       case when t.running <= $1::bigint then t.raw else ''::bytea end as raw,
+       t.running::bigint as running
+from (
+    select m.id, m.org_id, m.session_id, m.conversation_id, m.opencode_id, m.role, m.text, m.at, m.created_at, m.raw, sum(octet_length(m.text) + octet_length(m.raw)) over w as running,
+           octet_length(m.text) + octet_length(m.raw) as own
+    from messages m
+    where m.org_id = $2 and m.session_id = $3
+      and m.conversation_id = $4
+    window w as (order by m.at desc nulls last, m.id desc rows between unbounded preceding and current row)
+    order by m.at desc nulls last, m.id desc
+    limit $5
+) t
+where t.running - t.own <= $1::bigint
+order by t.at desc nulls last, t.id desc
+`
+
+type RecentConversationMessagesParams struct {
+	MaxBytes       int64
+	OrgID          string
+	SessionID      string
+	ConversationID string
+	RowLimit       int32
+}
+
+type RecentConversationMessagesRow struct {
+	ID             string
+	OrgID          string
+	SessionID      string
+	ConversationID string
+	OpencodeID     string
+	Role           string
+	Text           string
+	At             pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	Raw            []byte
+	Running        int64
+}
+
+// RecentSessionMessages over one conversation, by its own index.
+// @decision(DL-131)
+func (q *Queries) RecentConversationMessages(ctx context.Context, arg RecentConversationMessagesParams) ([]RecentConversationMessagesRow, error) {
+	rows, err := q.db.Query(ctx, recentConversationMessages,
+		arg.MaxBytes,
+		arg.OrgID,
+		arg.SessionID,
+		arg.ConversationID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecentConversationMessagesRow
+	for rows.Next() {
+		var i RecentConversationMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SessionID,
+			&i.ConversationID,
+			&i.OpencodeID,
+			&i.Role,
+			&i.Text,
+			&i.At,
+			&i.CreatedAt,
+			&i.Raw,
+			&i.Running,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recentSessionMessages = `-- name: RecentSessionMessages :many
+select t.id, t.org_id, t.session_id, t.conversation_id, t.opencode_id, t.role,
+       case when t.running <= $1::bigint then t.text else '' end as text,
+       t.at, t.created_at,
+       case when t.running <= $1::bigint then t.raw else ''::bytea end as raw,
+       t.running::bigint as running
+from (
+    select m.id, m.org_id, m.session_id, m.conversation_id, m.opencode_id, m.role, m.text, m.at, m.created_at, m.raw, sum(octet_length(m.text) + octet_length(m.raw)) over w as running,
+           octet_length(m.text) + octet_length(m.raw) as own
+    from messages m
+    where m.org_id = $2 and m.session_id = $3
+    window w as (order by m.at desc nulls last, m.id desc rows between unbounded preceding and current row)
+    order by m.at desc nulls last, m.id desc
+    limit $4
+) t
+where t.running - t.own <= $1::bigint
+order by t.at desc nulls last, t.id desc
+`
+
+type RecentSessionMessagesParams struct {
+	MaxBytes  int64
+	OrgID     string
+	SessionID string
+	RowLimit  int32
+}
+
+type RecentSessionMessagesRow struct {
+	ID             string
+	OrgID          string
+	SessionID      string
+	ConversationID string
+	OpencodeID     string
+	Role           string
+	Text           string
+	At             pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	Raw            []byte
+	Running        int64
+}
+
+// A session's newest messages, newest first: at most row_limit, and each
+// with the bytes of it and every newer one (running). Rows that start
+// past max_bytes are left out, so at most one row past the bound comes
+// back, and its text and raw do not: the caller learns there is more
+// without loading it. octet_length and a case not taken read no value.
+// @decision(DL-131)
+func (q *Queries) RecentSessionMessages(ctx context.Context, arg RecentSessionMessagesParams) ([]RecentSessionMessagesRow, error) {
+	rows, err := q.db.Query(ctx, recentSessionMessages,
+		arg.MaxBytes,
+		arg.OrgID,
+		arg.SessionID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecentSessionMessagesRow
+	for rows.Next() {
+		var i RecentSessionMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SessionID,
+			&i.ConversationID,
+			&i.OpencodeID,
+			&i.Role,
+			&i.Text,
+			&i.At,
+			&i.CreatedAt,
+			&i.Raw,
+			&i.Running,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const recordImage = `-- name: RecordImage :exec
@@ -3151,6 +3492,45 @@ func (q *Queries) SnapshotRuns(ctx context.Context, dollar_1 []string) ([]Sessio
 		return nil, err
 	}
 	return items, nil
+}
+
+const storedSize = `-- name: StoredSize :one
+select
+    (select count(*) from conversations c where c.org_id = $1 and c.session_id = $2)::bigint as conversations,
+    (select count(*) from events e where e.org_id = $1 and e.session_id = $2)::bigint as event_rows,
+    (select coalesce(sum(octet_length(e.text) + octet_length(e.raw)), 0) from events e
+      where e.org_id = $1 and e.session_id = $2)::bigint as event_bytes,
+    (select count(*) from messages m where m.org_id = $1 and m.session_id = $2)::bigint as message_rows,
+    (select coalesce(sum(octet_length(m.text) + octet_length(m.raw)), 0) from messages m
+      where m.org_id = $1 and m.session_id = $2)::bigint as message_bytes
+`
+
+type StoredSizeParams struct {
+	OrgID     string
+	SessionID string
+}
+
+type StoredSizeRow struct {
+	Conversations int64
+	EventRows     int64
+	EventBytes    int64
+	MessageRows   int64
+	MessageBytes  int64
+}
+
+// octet_length reads a stored value's size without fetching it.
+// @decision(DL-131)
+func (q *Queries) StoredSize(ctx context.Context, arg StoredSizeParams) (StoredSizeRow, error) {
+	row := q.db.QueryRow(ctx, storedSize, arg.OrgID, arg.SessionID)
+	var i StoredSizeRow
+	err := row.Scan(
+		&i.Conversations,
+		&i.EventRows,
+		&i.EventBytes,
+		&i.MessageRows,
+		&i.MessageBytes,
+	)
+	return i, err
 }
 
 const touchAPIToken = `-- name: TouchAPIToken :execrows

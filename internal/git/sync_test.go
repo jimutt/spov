@@ -528,3 +528,172 @@ func TestBundleCommit(t *testing.T) {
 		t.Errorf("bundling refs were left: %s", refs)
 	}
 }
+
+// TestSyncBackNeverTouchesAPathGitStatusHides: an in-place apply refuses
+// an archive entry the checkout ignores and a deletion of a path the
+// sandbox's commit does not track, and changes nothing.
+//
+// @decision(DL-126)
+func TestSyncBackNeverTouchesAPathGitStatusHides(t *testing.T) {
+	ctx := context.Background()
+	dir, _ := initTestRepo(t, "https://codefloe.com/alice/spov.git")
+	write := func(rel, body string) {
+		t.Helper()
+		full := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".gitignore", ".env\nnode_modules/\n")
+	write("forced/.env", "tracked although ignored\n")
+	runGit(t, dir, "add", ".gitignore")
+	runGit(t, dir, "add", "-f", "forced/.env")
+	runGit(t, dir, "commit", "-m", "ignore rules")
+	write(".env", "SECRET=1\n")
+	write("node_modules/.bin/tsc", "#!/bin/sh\necho real\n")
+	head := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
+	state := func(files map[string]string, deleted ...string) ExportedState {
+		s := ExportedState{Branch: "main", BaseCommit: head, HeadCommit: head, Deleted: deleted}
+		if len(files) > 0 {
+			s.WorktreeTar = makeWorktreeTar(t, files)
+		}
+		return s
+	}
+
+	ignoredRes, err := ApplySync(ctx, dir, "s", "main", state(map[string]string{
+		"a.txt": "fine\n", "node_modules/.bin/tsc": "#!/bin/sh\necho planted\n",
+	}))
+	if err != nil || ignoredRes.InPlace || !strings.Contains(ignoredRes.Reason, "node_modules/.bin/tsc") {
+		t.Fatalf("an ignored archive entry: %+v, %v", ignoredRes, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "node_modules/.bin/tsc")); !strings.Contains(string(b), "real") {
+		t.Errorf("the ignored file was overwritten: %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.txt")); err == nil {
+		t.Error("a refused apply still wrote a file")
+	}
+
+	if _, err := ApplySync(ctx, dir, "s", "main", state(nil, ".env")); err == nil {
+		t.Fatal("a deletion of an untracked, ignored file was applied")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".env")); err != nil {
+		t.Errorf("the ignored file was deleted: %v", err)
+	}
+
+	// A tracked file may match an ignore rule; an edit to it is shown by
+	// git status, so it lands.
+	res, err := ApplySync(ctx, dir, "s", "main", state(map[string]string{"forced/.env": "edited\n", "new.txt": "n\n"}))
+	if err != nil || !res.InPlace {
+		t.Fatalf("an honest export: %+v, %v", res, err)
+	}
+	if got := runGit(t, dir, "status", "--porcelain"); !strings.Contains(got, "forced/.env") || !strings.Contains(got, "new.txt") {
+		t.Errorf("git status does not show what landed:\n%s", got)
+	}
+}
+
+// TestSyncBackNeverLandsInPlaceOverAHooksDirectory: when git runs hooks
+// from a directory in the working tree, a session that changed a file
+// there lands on the fallback branch, by a commit or by an uncommitted
+// file alike.
+//
+// @decision(DL-126)
+func TestSyncBackNeverLandsInPlaceOverAHooksDirectory(t *testing.T) {
+	ctx := context.Background()
+	setup := func(t *testing.T) (string, string) {
+		dir, _ := initTestRepo(t, "https://codefloe.com/alice/spov.git")
+		if err := os.MkdirAll(filepath.Join(dir, ".githooks"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".githooks", "pre-push"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, dir, "add", ".githooks")
+		runGit(t, dir, "commit", "-m", "hooks")
+		runGit(t, dir, "config", "core.hooksPath", ".githooks")
+		return dir, strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
+	}
+
+	t.Run("an uncommitted hook", func(t *testing.T) {
+		dir, head := setup(t)
+		res, err := ApplySync(ctx, dir, "s1", "main", ExportedState{
+			Branch: "main", BaseCommit: head, HeadCommit: head,
+			WorktreeTar: makeWorktreeTar(t, map[string]string{".githooks/post-index-change": "#!/bin/sh\ntouch ran\n"}),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.InPlace || res.FallbackBranch == "" || !strings.Contains(res.Reason, ".githooks") {
+			t.Errorf("result = %+v", res)
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".githooks", "post-index-change")); err == nil {
+			t.Error("the hook was written into the checkout")
+		}
+	})
+
+	t.Run("a committed hook", func(t *testing.T) {
+		dir, head := setup(t)
+		sandbox := filepath.Join(t.TempDir(), "sandbox")
+		runGit(t, dir, "clone", dir, sandbox)
+		runGit(t, sandbox, "config", "user.name", "Agent")
+		runGit(t, sandbox, "config", "user.email", "agent@example.com")
+		if err := os.WriteFile(filepath.Join(sandbox, ".githooks", "post-index-change"), []byte("#!/bin/sh\ntouch ran\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		runGit(t, sandbox, "add", ".githooks")
+		runGit(t, sandbox, "commit", "-m", "plant")
+		sandboxHead := strings.TrimSpace(runGit(t, sandbox, "rev-parse", "HEAD"))
+		bundle := filepath.Join(t.TempDir(), "b.bundle")
+		runGit(t, sandbox, "bundle", "create", bundle, head+"..HEAD")
+		raw, err := os.ReadFile(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := ApplySync(ctx, dir, "s2", "main", ExportedState{
+			Branch: "main", BaseCommit: head, HeadCommit: sandboxHead, Bundle: raw,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.InPlace || !strings.Contains(res.Reason, ".githooks") {
+			t.Errorf("result = %+v", res)
+		}
+		if got := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD")); got != head {
+			t.Errorf("the checkout moved to %s", got)
+		}
+	})
+
+	t.Run("a session that leaves the hooks alone", func(t *testing.T) {
+		dir, head := setup(t)
+		res, err := ApplySync(ctx, dir, "s3", "main", ExportedState{
+			Branch: "main", BaseCommit: head, HeadCommit: head,
+			WorktreeTar: makeWorktreeTar(t, map[string]string{"a.txt": "x\n"}),
+		})
+		if err != nil || !res.InPlace {
+			t.Errorf("result = %+v, %v", res, err)
+		}
+	})
+}
+
+// TestSyncBackRefusesEveryNameOfTheGitDirectory covers the names some
+// filesystems resolve to `.git`.
+//
+// @decision(DL-126)
+func TestSyncBackRefusesEveryNameOfTheGitDirectory(t *testing.T) {
+	for _, p := range []string{
+		".git/config", ".GIT/config", "GIT~1/config", "git~12/hooks/x", "sub/GiT~1/x",
+		".git./config", ".git /config", ".git::$INDEX_ALLOCATION/config", ".g\u200cit/config",
+		"\ufeff.git/config", `a\..\.git\config`,
+	} {
+		if clean, err := cleanRepoRelPath(p); err == nil {
+			t.Errorf("cleanRepoRelPath(%q) = %q, want a refusal", p, clean)
+		}
+	}
+	for _, p := range []string{".gitignore", ".github/workflows/ci.yml", "git~x/a", "legit~1.txt", "a/.gitkeep", ".gitattributes"} {
+		if _, err := cleanRepoRelPath(p); err != nil {
+			t.Errorf("cleanRepoRelPath(%q): %v", p, err)
+		}
+	}
+}

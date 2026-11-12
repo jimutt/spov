@@ -21,6 +21,7 @@ import (
 	"github.com/jimutt/spov/internal/credproxy"
 	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -397,15 +398,21 @@ func (s *Service) freshConsoleToken(ctx context.Context, orgID, userID string, n
 	}
 	if refreshed {
 		s.pushes.Add(1)
-		go func() {
+		// @decision(DL-135)
+		go safego.Do("opencode grant push", s.deps.Warn, func() {
 			defer s.pushes.Done()
 			s.pushOpenCodeGrants(context.WithoutCancel(ctx), func(sess store.Session) bool {
 				return sess.OrgID == orgID && sess.OwnerID == userID
 			})
-		}()
+		})
 	}
 	return g.Access, g.Generation, "", nil
 }
+
+// setKeyTimeout bounds writing a refreshed grant into a sidecar.
+//
+// @decision(DL-135)
+const setKeyTimeout = 30 * time.Second
 
 const reconnectNote = "OpenCode refused the stored sign-in; reconnect OpenCode (`spov login opencode`, or Settings)"
 
@@ -496,7 +503,10 @@ func (s *Service) pushOpenCodeGrant(ctx context.Context, sess store.Session, g C
 	if err != nil {
 		return err
 	}
-	res, err := h.SidecarExecInput(ctx, credproxy.SidecarName, credproxy.SetKeyCommand(prep.OpenCodeKeyEnv), []byte(g.Access+"\n"))
+	// @decision(DL-135)
+	xctx, cancelExec := context.WithTimeout(ctx, setKeyTimeout)
+	defer cancelExec()
+	res, err := h.SidecarExecInput(xctx, credproxy.SidecarName, credproxy.SetKeyCommand(prep.OpenCodeKeyEnv), []byte(g.Access+"\n"))
 	if err == nil && res.ExitCode != 0 && strings.Contains(res.Stderr, "no provider key") {
 		// The sidecar holds no OpenCode key to replace, so it never will.
 		return s.deps.Store.Sessions().SetOpenCodeGrant(ctx, sess.OrgID, sess.ID, 0)
@@ -855,6 +865,20 @@ type LocalConsoleStore struct {
 }
 
 func localConsoleKey(slot string) (string, error) { return credentials.Key("opencode", slot) }
+
+// LocalOpenCodeSignedIn reports whether this machine's credential store
+// holds an OpenCode sign-in that can still be used, possibly after a
+// refresh. It answers yes or no and gives nothing of the grant away, so
+// a caller outside the server can ask without holding a token.
+//
+// @decision(DL-123) @decision(DL-015)
+func LocalOpenCodeSignedIn(creds credentials.Store) bool {
+	if creds == nil {
+		return false
+	}
+	g, ok, err := readGrant(context.Background(), &LocalConsoleStore{Creds: creds}, "", "")
+	return err == nil && ok && g.connected()
+}
 
 // Get returns a slot's value, or "".
 func (l *LocalConsoleStore) Get(_ context.Context, _, _, slot string) (string, error) {

@@ -205,13 +205,15 @@ func (s *Server) registerLive() {
 		if err != nil {
 			return nil, toHumaError(err)
 		}
-		conv, warnings, err := s.transcript(ctx, sess)
+		conv, warnings, truncated, err := s.transcript(ctx, sess)
 		if err != nil {
 			return nil, toHumaError(err)
 		}
 		out := &messagesOutput{}
 		out.Body.Conversations = conv
 		out.Body.Warnings = warnings
+		// @decision(DL-131)
+		out.Body.Truncated = truncated
 		// The rows move while the session runs, so this is never a
 		// cacheable representation of it.
 		out.CacheControl = "no-store"

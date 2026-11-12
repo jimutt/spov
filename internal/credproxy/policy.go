@@ -60,6 +60,21 @@ func (p Platform) allows(host string, r *http.Request) bool {
 		return true
 	}
 	read := r.Method == http.MethodGet || r.Method == http.MethodHead
+	// A Forgejo or Gitea request that names a user or a token in its
+	// query gets no credential.
+	//
+	// @decision(DL-135)
+	if (p.Kind == KindForgejo || p.Kind == KindGitea) && carriesQueryNamed(r.URL.RawQuery, forgejoCredentialQuery) {
+		return false
+	}
+	// Forgejo, Gitea and GitLab read the same names from a form body,
+	// which no request the forge CLIs, git or LFS make on an allowed
+	// endpoint has, so a form body gets no credential there.
+	//
+	// @decision(DL-135)
+	if (p.Kind == KindForgejo || p.Kind == KindGitea || p.Kind == KindGitLab) && carriesForm(r) {
+		return false
+	}
 	// The forge's package registry reads its own escapes.
 	//
 	// @decision(DL-078)
@@ -86,6 +101,21 @@ func (p Platform) allows(host string, r *http.Request) bool {
 	// A kind without a policy gets no credential anywhere.
 	//
 	// @decision(DL-041)
+	return false
+}
+
+// carriesForm reports whether any Content-Type of r is a form a forge
+// would read parameters from: urlencoded, or any multipart type.
+//
+// @decision(DL-135)
+func carriesForm(r *http.Request) bool {
+	for _, v := range r.Header.Values("Content-Type") {
+		mt, _, _ := strings.Cut(v, ";")
+		mt = strings.ToLower(strings.TrimSpace(mt))
+		if mt == "application/x-www-form-urlencoded" || strings.HasPrefix(mt, "multipart/") {
+			return true
+		}
+	}
 	return false
 }
 
@@ -174,10 +204,20 @@ func (p Platform) allowsAPI(segs []string, read bool) bool {
 		return read
 	}
 	anyMethod, listed := repoSections[segs[3]]
-	if segs[3] == "pulls" && len(segs) > 5 && segs[5] == "merge" {
+	if segs[3] == "pulls" && len(segs) > 5 && isMergeSegment(segs[5]) {
 		anyMethod = false
 	}
 	return listed && (anyMethod || read)
+}
+
+// isMergeSegment reports a path segment a forge may route to the merge of
+// a pull request: the word in any case, with a servlet-style parameter
+// dropped.
+//
+// @decision(DL-135)
+func isMergeSegment(seg string) bool {
+	name, _, _ := strings.Cut(seg, ";")
+	return strings.EqualFold(name, "merge")
 }
 
 // allowsGit checks a git smart HTTP path: <owner>/<repo>[.git]/<service>.
@@ -215,7 +255,8 @@ func (p Platform) hasRepo(owner, name string) bool {
 }
 
 // cleanSegments splits the request's path, refusing one with
-// percent-encoding, a dot segment or an empty segment.
+// percent-encoding, a dot segment or an empty segment, with or without
+// path parameters.
 func cleanSegments(r *http.Request) ([]string, bool) {
 	// An absolute-form request line names its own target.
 	if r.RequestURI != "" && !strings.HasPrefix(r.RequestURI, "/") {
@@ -227,7 +268,10 @@ func cleanSegments(r *http.Request) ([]string, bool) {
 	}
 	segs := strings.Split(raw[1:], "/")
 	for _, s := range segs {
-		if s == "" || s == "." || s == ".." {
+		// A servlet container drops a segment's `;parameters` before it
+		// resolves dot segments, so `..;x` is `..` there.
+		name, _, _ := strings.Cut(s, ";")
+		if name == "" || name == "." || name == ".." {
 			return nil, false
 		}
 	}

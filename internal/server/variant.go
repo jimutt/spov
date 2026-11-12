@@ -10,6 +10,7 @@ import (
 	"github.com/jimutt/spov/internal/addonindex"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/store"
+	"github.com/jimutt/spov/internal/telemetry"
 	"github.com/jimutt/spov/internal/toolchain"
 )
 
@@ -94,10 +95,11 @@ const imageUseInterval = time.Hour
 // packages boots: the exact build of its resolved versions when it is
 // published, else the newest build of the same request while the exact
 // one builds in the background, else the exact build on the launch path.
-// Without a registry it is the variant the request names.
+// Without a registry it is the variant the request names. owner is the
+// user whose launch this is, to whom a background build counts (DL-134).
 //
-// @decision(DL-033) @decision(DL-016)
-func (s *Service) pickVariant(ctx context.Context, requested sandbox.ImageSpec, note func(string)) variantPick {
+// @decision(DL-033) @decision(DL-016) @decision(DL-134)
+func (s *Service) pickVariant(ctx context.Context, owner string, requested sandbox.ImageSpec, note func(string)) variantPick {
 	key := requested.Name()
 	exact := requested
 	if s.deps.Resolver != nil {
@@ -131,7 +133,7 @@ func (s *Service) pickVariant(ctx context.Context, requested sandbox.ImageSpec, 
 	}
 	s.useImage(ctx, older)
 	if s.deps.Defaults.BuildOnDemand && s.deps.Variants != nil && worthBuilding(exact.Addons, sel) {
-		if s.deps.Variants.Start(ctx, exact, onLaunchPath.rebuild) {
+		if s.deps.Variants.Start(ctx, owner, exact, onLaunchPath.rebuild) {
 			note(fmt.Sprintf("using the image built with %s; %s is building for later launches",
 				strings.Join(older.Versions, ", "), strings.Join(toolchain.Installed(exact.Addons), ", ")))
 		}
@@ -169,22 +171,81 @@ func worthBuilding(exact, older []toolchain.Selection) bool {
 //
 // @decision(DL-016)
 func (s *Service) olderBuild(ctx context.Context, requested sandbox.ImageSpec, key, name string) (store.Image, bool) {
+	img, legacy, ok := s.olderCandidate(ctx, requested, key, name)
+	if ok && legacy {
+		s.useImage(ctx, img)
+	}
+	return img, ok
+}
+
+// olderCandidate is olderBuild's choice without its write. legacy is set
+// for the image named by the request as written.
+func (s *Service) olderCandidate(ctx context.Context, requested sandbox.ImageSpec, key, name string) (img store.Image, legacy, ok bool) {
 	newest, err := s.deps.Images.Newest(ctx, key)
 	if err == nil && newest.Name != name {
-		return newest, true
+		return newest, false, true
 	}
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.deps.Warn(fmt.Sprintf("read the image registry: %v", err))
 	}
 	if key == name {
-		return store.Image{}, false
+		return store.Image{}, false, false
 	}
 	if _, known := s.imageEntry(ctx, key); known || !s.published(ctx, key) {
-		return store.Image{}, false
+		return store.Image{}, false, false
 	}
-	legacy := VariantImage(requested)
-	s.useImage(ctx, legacy)
-	return legacy, true
+	return VariantImage(requested), true, true
+}
+
+// refuseBuildOverLimit refuses, before anything exists, a create whose
+// launch would have to build an image on its own path while the owner has
+// no new build left in their window. A launch that boots an image that
+// exists, or an older build while the exact one builds in the background,
+// is not refused: the background build is skipped past the limit instead.
+// The launch checks the limit again when the build starts.
+//
+// @decision(DL-134) @decision(DL-016)
+func (s *Service) refuseBuildOverLimit(ctx context.Context, ownerID string, req store.SessionRequest) error {
+	if s.deps.Variants == nil || !s.deps.Defaults.BuildOnDemand {
+		return nil
+	}
+	spec, ok := s.variantOf(req)
+	if !ok {
+		return nil
+	}
+	err := s.deps.Variants.Allow(attributionUser(ownerID))
+	if err == nil || !s.needsLaunchBuild(ctx, spec) {
+		return nil
+	}
+	s.deps.Metrics.QuotaRefused(ctx, telemetry.QuotaImageBuilds)
+	return fmt.Errorf("%w: %s", ErrQuotaExceeded, err.Error())
+}
+
+// needsLaunchBuild reports whether a launch of requested would build its
+// image on the launch path, as pickVariant would decide, without
+// recording anything.
+func (s *Service) needsLaunchBuild(ctx context.Context, requested sandbox.ImageSpec) bool {
+	exact := requested
+	if s.deps.Resolver != nil {
+		exact.Addons = s.deps.Resolver.Resolve(ctx, requested.Addons)
+	}
+	name := exact.Name()
+	if s.deps.Images == nil {
+		return !s.published(ctx, name)
+	}
+	entry, known := s.imageEntry(ctx, name)
+	if known && entry.DeletedAt == nil {
+		return false
+	}
+	if !known && s.published(ctx, name) {
+		return false
+	}
+	older, _, ok := s.olderCandidate(ctx, requested, requested.Name(), name)
+	if !ok {
+		return true
+	}
+	_, err := toolchain.ResolveTo(requested.Addons, older.Versions)
+	return err != nil
 }
 
 // imageEntry is the registry's entry for name. A failed read is treated
@@ -328,5 +389,5 @@ func (s *Service) unbuiltBase(pick variantPick, err error) error {
 	if pick.image != s.baseImage() {
 		return err
 	}
-	return fmt.Errorf("%w; the sandbox image for this OpenCode version is not on Modal: run `spov serve image build` once (it takes a few minutes)", err)
+	return fmt.Errorf("%w; the sandbox image for this OpenCode version is not on Modal: run `spov serve image build` once (it takes a few minutes; `spov init` does it for a local setup)", err)
 }

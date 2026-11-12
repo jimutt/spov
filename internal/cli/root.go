@@ -97,6 +97,12 @@ type Env struct {
 	//
 	// @decision(DL-103)
 	StderrIsTerminal func() bool
+	// StdoutIsTerminal overrides the check that decides whether a
+	// report is printed raw (to a pipe or a file) or with its control
+	// characters made visible (to a terminal); nil asks the terminal.
+	//
+	// @decision(DL-136)
+	StdoutIsTerminal func() bool
 	// ProcessAlive reports whether a pid is running. Nil means signal 0.
 	ProcessAlive func(pid int) bool
 	// StopProcess stops a server of another build. Nil means SIGTERM and
@@ -162,6 +168,16 @@ type Env struct {
 	//
 	// @decision(DL-090)
 	Confirm func(prompt string) (bool, error)
+	// Choose asks which of several options, and answers its index. Nil
+	// reads a number from the terminal.
+	//
+	// @decision(DL-123)
+	Choose func(prompt string, options []string) (int, error)
+	// RunInteractive runs another program with the terminal, as a
+	// sign-in needs. Nil runs it.
+	//
+	// @decision(DL-124)
+	RunInteractive func(ctx context.Context, name string, args ...string) error
 	// LookPath finds an executable. Nil means exec.LookPath.
 	//
 	// @decision(DL-025)
@@ -451,7 +467,9 @@ func NewRoot(env Env) *cobra.Command {
 	// group reports on them and acts on them, all over the server API.
 	//
 	// @decision(DL-045) @decision(DL-023)
+	root.AddCommand(newInitCmd(e))
 	root.AddCommand(newJobsCmd(e))
+	root.AddCommand(newTemplatesCmd(e))
 	root.AddCommand(newStopCmd(e))
 	root.AddCommand(newServeCmd(e))
 	return root

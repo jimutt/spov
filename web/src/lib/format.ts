@@ -726,9 +726,9 @@ export function verdictSummary(gates: { outcome: string }[]): { mark: Mark; word
 
 /** A routed credential's route, as the API carries it. */
 export interface RoutedRoute {
-  hosts: string[];
+  hosts?: string[] | null;
   paths?: string[] | null;
-  scheme: string;
+  scheme?: string;
   user?: string;
   header?: string;
   preset?: string;
@@ -742,7 +742,7 @@ export interface RoutedRoute {
  * @decision(DL-077)
  */
 export function routedCredentialLine(r: RoutedRoute): string {
-  let where = r.hosts.join(", ");
+  let where = (r.hosts ?? []).join(", ");
   if (r.paths && r.paths.length > 0) where += " " + r.paths.join(", ");
   const how =
     r.scheme === "basic" ? `Basic as ${r.user ?? ""}` : r.scheme === "header" ? `in ${r.header ?? "a header"}` : "as a bearer";

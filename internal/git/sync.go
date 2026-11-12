@@ -33,6 +33,23 @@ const MaxSyncBundleBytes = 16 << 20
 // @decision(DL-027)
 const MaxSyncExportBytes = 32 << 20
 
+// MaxSyncIncomingBytes bounds the total size of the git objects a sync
+// brings in, and MaxSyncIncomingBlobBytes any single blob. The bundle's
+// own bytes are small (MaxSyncExportBytes), but its deltas can expand to
+// much more at fetch or checkout; these bound what reaches the disk.
+//
+// @decision(DL-126)
+const (
+	MaxSyncIncomingBytes     = 1 << 30   // 1 GiB
+	MaxSyncIncomingBlobBytes = 256 << 20 // 256 MiB
+)
+
+// Overridable for tests; the production values are the constants above.
+var (
+	maxSyncIncomingBytes     int64 = MaxSyncIncomingBytes
+	maxSyncIncomingBlobBytes int64 = MaxSyncIncomingBlobBytes
+)
+
 // LocalCheckout describes a clean local git checkout ready to seed a
 // synced session.
 //
@@ -113,6 +130,23 @@ type SyncResult struct {
 	// DirtyCommitted is true when uncommitted sandbox edits were captured
 	// as a WIP commit on FallbackBranch.
 	DirtyCommitted bool
+	// RangeFrom and RangeTo are the short commit names bounding the
+	// commits brought back; empty when there are none.
+	RangeFrom, RangeTo string
+	// Changes lists every path the sync changed, added or deleted
+	// relative to what the checkout held before, sorted by path.
+	//
+	// @decision(DL-136)
+	Changes []PathChange
+}
+
+// PathChange is one path a sync changed: Status is 'A' (added), 'M'
+// (modified) or 'D' (deleted).
+//
+// @decision(DL-136)
+type PathChange struct {
+	Status byte
+	Path   string
 }
 
 var hexCommitRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -484,8 +518,7 @@ func bundleAhead(ctx context.Context, root, remote, branch, head, tip string) ([
 }
 
 func isAncestor(ctx context.Context, dir, ancestor, descendant string) bool {
-	cmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", ancestor, descendant)
-	cmd.Dir = dir
+	cmd := Command(ctx, dir, nil, "merge-base", "--is-ancestor", ancestor, descendant)
 	return cmd.Run() == nil
 }
 
@@ -526,18 +559,76 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 		return SyncResult{}, fmt.Errorf("git: commit %s is not present in %s after unbundling", state.HeadCommit[:12], root)
 	}
 
+	// Measure what the sync brings in before the fast-forward or the
+	// fallback landing materialises it, and refuse an expansion that
+	// would fill the disk. No ref is written yet, so refusing here
+	// leaves the checkout exactly as it was.
+	//
+	// @decision(DL-126)
+	cur, _ := gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
+	if err := boundIncomingObjects(ctx, root, strings.ToLower(cur), state.HeadCommit); err != nil {
+		return SyncResult{}, err
+	}
+
+	packed, err := archivePaths(state.WorktreeTar)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	cleanDeleted := make([]string, 0, len(state.Deleted))
+	for _, d := range state.Deleted {
+		clean, _ := cleanRepoRelPath(d)
+		cleanDeleted = append(cleanDeleted, clean)
+	}
+	if err := refuseInsideSubmodule(ctx, root, state.HeadCommit, packed, cleanDeleted); err != nil {
+		return SyncResult{}, err
+	}
+
 	commits := countCommitsBetween(ctx, root, state.BaseCommit, state.HeadCommit)
 	inPlace, reason := canApplyInPlace(ctx, root, startBranch, state.BaseCommit, state.HeadCommit)
+	// A checkout whose own config would make an in-place landing write
+	// somewhere other than where the veto looked, or hide what it must
+	// see, goes to the fallback with a clear reason, whatever
+	// canApplyInPlace concluded from the relocated tree.
+	//
+	// @decision(DL-126)
+	if u := unpredictableWorkTreeVeto(ctx, root); u != "" {
+		inPlace, reason = false, u
+	}
+	var curHead string
 	if inPlace {
-		curHead, _ := gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
-		if strings.ToLower(curHead) != state.HeadCommit {
-			if _, err := gitOutput(ctx, root, "reset", "--hard", state.HeadCommit); err != nil {
-				return SyncResult{}, fmt.Errorf("git: advance %s to %s: %w", startBranch, state.HeadCommit[:12], err)
-			}
+		curHead, _ = gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
+		curHead = strings.ToLower(curHead)
+		// Checked while the checkout is still the user's own: the
+		// ignore rules, the hooks directory and what is on disk are
+		// read before anything below can change them.
+		//
+		// @decision(DL-126)
+		veto, err := inPlaceVeto(ctx, root, curHead, state.HeadCommit, packed, cleanDeleted)
+		if err != nil {
+			return SyncResult{}, err
 		}
+		if veto != "" {
+			inPlace, reason = false, veto
+		}
+	}
+	if inPlace && curHead != state.HeadCommit {
+		refused, err := fastForward(ctx, root, curHead, state.HeadCommit)
+		if err != nil {
+			return SyncResult{}, fmt.Errorf("git: advance %s to %s: %w", startBranch, state.HeadCommit[:12], err)
+		}
+		if refused != "" {
+			inPlace, reason = false, refused
+		}
+	}
+	if inPlace {
+		before := trackedAt(ctx, root, curHead)
 		changed, err := applyWorktreeInPlace(root, state.WorktreeTar, state.Deleted)
 		if err != nil {
 			return SyncResult{}, err
+		}
+		from := state.BaseCommit
+		if !commitExists(ctx, root, from) {
+			from = curHead
 		}
 		return SyncResult{
 			InPlace:      true,
@@ -545,6 +636,9 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 			HeadCommit:   state.HeadCommit,
 			Commits:      commits,
 			FilesChanged: changed,
+			RangeFrom:    shortRange(commits, from),
+			RangeTo:      shortRange(commits, state.HeadCommit),
+			Changes:      inPlaceChanges(ctx, root, curHead, state.HeadCommit, before, state.WorktreeTar, state.Deleted),
 		}, nil
 	}
 
@@ -572,6 +666,9 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 		Commits:        commits,
 		FilesChanged:   filesChanged,
 		DirtyCommitted: dirtyCommitted,
+		RangeFrom:      shortRange(commits, state.BaseCommit),
+		RangeTo:        shortRange(commits, state.HeadCommit),
+		Changes:        commitChanges(ctx, root, state.BaseCommit, targetCommit),
 	}, nil
 }
 
@@ -600,9 +697,13 @@ func unbundleCommits(ctx context.Context, root string, bundle []byte, wantCommit
 	tempRef := "refs/spov-sync/head"
 	defer func() { _, _ = gitOutput(ctx, root, "update-ref", "-d", tempRef) }()
 
-	if _, err := gitOutput(ctx, root, "fetch", "--no-tags", "--", bundlePath, "HEAD:"+tempRef); err != nil {
+	// fsck the incoming objects: a malformed or malicious pack is
+	// refused as it is received, not after it is in the store.
+	//
+	// @decision(DL-126)
+	if _, err := gitOutput(ctx, root, "-c", "fetch.fsckObjects=true", "fetch", "--no-tags", "--", bundlePath, "HEAD:"+tempRef); err != nil {
 		// Fall back to unbundling every ref in the bundle.
-		if _, uerr := gitOutput(ctx, root, "bundle", "unbundle", bundlePath); uerr != nil {
+		if _, uerr := gitOutput(ctx, root, "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "bundle", "unbundle", bundlePath); uerr != nil {
 			return fmt.Errorf("git: unbundle sandbox commits: %w", err)
 		}
 	}
@@ -884,7 +985,7 @@ func cleanRepoRelPath(p string) (string, error) {
 	if s == "" || s == "." {
 		return "", errors.New("empty path")
 	}
-	if strings.HasPrefix(s, "/") || strings.Contains(s, "\x00") {
+	if strings.HasPrefix(s, "/") || strings.ContainsAny(s, "\x00\\") {
 		return "", errors.New("path must be relative to the repository root")
 	}
 	clean := path.Clean(s)
@@ -892,11 +993,90 @@ func cleanRepoRelPath(p string) (string, error) {
 		return "", errors.New("path escapes the repository root")
 	}
 	for _, seg := range strings.Split(clean, "/") {
-		if seg == "" || seg == "." || seg == ".." || strings.EqualFold(seg, ".git") {
+		if seg == "" || seg == "." || seg == ".." || namesGitDir(seg) {
 			return "", fmt.Errorf("disallowed path segment %q", seg)
 		}
 	}
 	return clean, nil
+}
+
+// ntfsShortGit is the 8.3 name NTFS gives `.git`.
+var ntfsShortGit = regexp.MustCompile(`^(?i)git~[0-9]+$`)
+
+// namesGitDir reports whether a path segment is `.git` on some
+// filesystem a checkout may be on: in any case, with the trailing dots
+// and spaces or the stream suffix NTFS drops, as NTFS's short name, or
+// with the code points HFS+ ignores. git refuses the same names
+// (core.protectNTFS, core.protectHFS).
+//
+// @decision(DL-126)
+func namesGitDir(seg string) bool {
+	seg = strings.TrimRight(cutStream(stripIgnorable(seg)), ". ")
+	return strings.EqualFold(seg, ".git") || ntfsShortGit.MatchString(seg)
+}
+
+// stripIgnorable drops the code points HFS+ ignores in a name.
+func stripIgnorable(seg string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 0x200c && r <= 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x206a && r <= 0x206f, r == 0xfeff:
+			return -1
+		}
+		return r
+	}, seg)
+}
+
+// cutStream drops an NTFS alternate stream suffix (`name:stream`).
+func cutStream(seg string) string {
+	if i := strings.IndexByte(seg, ':'); i >= 0 {
+		return seg[:i]
+	}
+	return seg
+}
+
+// archivePaths lists the cleaned paths a worktree archive would write.
+func archivePaths(archive []byte) ([]string, error) {
+	if len(archive) == 0 {
+		return nil, nil
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return nil, fmt.Errorf("git: read worktree archive: %w", err)
+	}
+	defer func() { _ = gz.Close() }()
+	tr := tar.NewReader(io.LimitReader(gz, MaxSyncExportBytes+(4<<20)))
+	var paths []string
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return paths, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("git: unpack worktree archive: %w", err)
+		}
+		if hdr.Typeflag == tar.TypeXGlobalHeader || hdr.Typeflag == tar.TypeXHeader || hdr.Typeflag == tar.TypeDir {
+			continue
+		}
+		clean, err := cleanRepoRelPath(hdr.Name)
+		if err != nil {
+			return nil, fmt.Errorf("git: archive entry %q: %w", hdr.Name, err)
+		}
+		// Refused here, before anything is written, as the unpacker
+		// would refuse it after the commits had landed.
+		//
+		// @decision(DL-126)
+		switch hdr.Typeflag {
+		case tar.TypeReg, '\x00':
+		case tar.TypeSymlink:
+			resolved := path.Clean(path.Join(path.Dir(clean), filepath.ToSlash(hdr.Linkname)))
+			if _, err := cleanRepoRelPath(resolved); err != nil || filepath.IsAbs(hdr.Linkname) {
+				return nil, fmt.Errorf("git: symlink %q escapes the repository (%q)", clean, hdr.Linkname)
+			}
+		default:
+			return nil, fmt.Errorf("git: unsupported tar entry type %d for %q", hdr.Typeflag, clean)
+		}
+		paths = append(paths, clean)
+	}
 }
 
 // ensureCanonicalRelParent checks that no directory component along
@@ -961,11 +1141,11 @@ func gitOutputRaw(ctx context.Context, dir string, args ...string) (string, erro
 }
 
 func gitOutputEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	if env != nil {
-		cmd.Env = env
-	}
+	return outputOf(Command(ctx, dir, env, args...))
+}
+
+// outputOf runs cmd and returns its stdout, or its stderr as the error.
+func outputOf(cmd *exec.Cmd) (string, error) {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -977,4 +1157,98 @@ func gitOutputEnv(ctx context.Context, dir string, env []string, args ...string)
 		return "", fmt.Errorf("%s", RedactAll(msg))
 	}
 	return string(out), nil
+}
+
+// shortRange is a commit's short name, or empty when no commits were
+// brought back.
+func shortRange(commits int, sha string) string {
+	if commits <= 0 || sha == "" {
+		return ""
+	}
+	return sha[:min(12, len(sha))]
+}
+
+// trackedAt is the set of paths commit tracks; nil when it cannot be
+// read.
+//
+// @decision(DL-136)
+func trackedAt(ctx context.Context, root, commit string) map[string]bool {
+	listing, err := gitOutputRaw(ctx, root, "ls-tree", "-r", "-z", "--name-only", commit)
+	if err != nil {
+		return nil
+	}
+	tracked := map[string]bool{}
+	for _, p := range strings.Split(listing, "\x00") {
+		if p != "" {
+			tracked[p] = true
+		}
+	}
+	return tracked
+}
+
+// commitChanges is `git diff --name-status` between two commits, as
+// path changes. Renames are reported as a delete and an add. An
+// unreadable range lists nothing.
+//
+// @decision(DL-136)
+func commitChanges(ctx context.Context, root, from, to string) []PathChange {
+	if from == "" || !commitExists(ctx, root, from) {
+		return nil
+	}
+	out, err := gitOutputRaw(ctx, root, "diff", "--name-status", "-z", "--no-renames", from, to)
+	if err != nil {
+		return nil
+	}
+	fields := strings.Split(out, "\x00")
+	var changes []PathChange
+	for i := 0; i+1 < len(fields); i += 2 {
+		if fields[i] == "" {
+			break
+		}
+		switch st := fields[i][0]; st {
+		case 'A', 'M', 'D':
+			changes = append(changes, PathChange{Status: st, Path: fields[i+1]})
+		default:
+			changes = append(changes, PathChange{Status: 'M', Path: fields[i+1]})
+		}
+	}
+	return changes
+}
+
+// inPlaceChanges lists what an in-place apply changed: the committed
+// difference from the checkout's old head, then the sandbox's
+// uncommitted files and deletions on top. A path the old head did not
+// track and no commit added is an added file.
+//
+// @decision(DL-136)
+func inPlaceChanges(ctx context.Context, root, oldHead, newHead string, before map[string]bool, worktreeTar []byte, deleted []string) []PathChange {
+	byPath := map[string]byte{}
+	if oldHead != newHead {
+		for _, c := range commitChanges(ctx, root, oldHead, newHead) {
+			byPath[c.Path] = c.Status
+		}
+	}
+	packed, _ := archivePaths(worktreeTar)
+	for _, p := range packed {
+		switch st, seen := byPath[p]; {
+		case seen && st == 'D':
+			byPath[p] = 'M'
+		case seen:
+		case before[p]:
+			byPath[p] = 'M'
+		default:
+			byPath[p] = 'A'
+		}
+	}
+	for _, d := range deleted {
+		if clean, err := cleanRepoRelPath(d); err == nil {
+			byPath[clean] = 'D'
+		}
+	}
+	changes := make([]PathChange, 0, len(byPath))
+	for p, st := range byPath {
+		changes = append(changes, PathChange{Status: st, Path: p})
+	}
+	slices.SortFunc(changes, func(a, b PathChange) int { return strings.Compare(a.Path, b.Path) })
+	return changes
 }

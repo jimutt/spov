@@ -109,70 +109,64 @@ func (h *hostedCredentials) tokenFor(ctx context.Context, orgID, userID string, 
 	return "", server.TierNone, addCredentialHint(p)
 }
 
-// reposByTier lists, platform by platform, the repositories each of the
-// user's tiers reaches, through that tier's own credential, every pair at
-// once. A platform neither tier has a credential for says how to add one,
-// as the single listing did.
+// reposOfTier lists, platform by platform, the repositories one of the
+// user's tiers reaches, through that tier's own credential, every
+// platform at once. A platform the tier has no credential for is named in
+// Absent, and the server says how to add one when neither tier has it. A
+// listing that met a broken credential or a forge failure is Failed, so
+// the server does not keep it.
 //
-// @decision(DL-042) @decision(DL-028)
-func (h *hostedCredentials) reposByTier(ctx context.Context, orgID, userID string) ([]server.TieredRepo, []string, error) {
-	tiers := []server.Tier{server.TierUser, server.TierOrg}
+// @decision(DL-042) @decision(DL-028) @decision(DL-134)
+func (h *hostedCredentials) reposOfTier(ctx context.Context, orgID, userID string, t server.Tier) (server.RepoListing, error) {
 	type result struct {
-		repos []server.TieredRepo
-		warn  string
-		held  bool
+		repos  []server.TieredRepo
+		warn   string
+		failed bool
+		absent bool
 	}
-	results := make([]result, len(h.cfg.Platforms)*len(tiers))
+	results := make([]result, len(h.cfg.Platforms))
 	var wg sync.WaitGroup
 	for i, p := range h.cfg.Platforms {
-		for j, t := range tiers {
-			wg.Go(func() {
-				r := &results[i*len(tiers)+j]
-				token, state, why := h.tierToken(ctx, orgID, userID, p, t)
-				switch state {
-				case tierBroken:
-					r.held, r.warn = true, fmt.Sprintf("%s, %s: %s", p.Name, tierNoun(t), why)
-					return
-				case tierAbsent:
-					return
-				}
-				r.held = true
-				scoped := *h.env
-				scoped.PlatformToken = func(context.Context, config.Platform) (string, error) { return token, nil }
-				listed, err := scoped.listRepos(ctx, p)
-				if err != nil {
-					r.warn = listFailure(p, err) + " (with " + tierNoun(t) + ")"
-					return
-				}
-				// @decision(DL-042)
-				fineGrained := t == server.TierUser && p.Kind == config.KindGitHub && git.IsFineGrainedGitHubPAT(token)
-				for _, repo := range listed.Repos {
-					r.repos = append(r.repos, server.TieredRepo{PlatformRepo: git.PlatformRepo{Platform: listed.Platform, Repo: repo}, Tier: t,
-						MaybeReadOnly: fineGrained && !repo.Private})
-				}
-			})
-		}
+		wg.Go(func() {
+			r := &results[i]
+			token, state, why := h.tierToken(ctx, orgID, userID, p, t)
+			switch state {
+			case tierBroken:
+				r.failed, r.warn = true, fmt.Sprintf("%s, %s: %s", p.Name, tierNoun(t), why)
+				return
+			case tierAbsent:
+				r.absent = true
+				return
+			}
+			scoped := *h.env
+			scoped.PlatformToken = func(context.Context, config.Platform) (string, error) { return token, nil }
+			listed, err := scoped.listRepos(ctx, p)
+			if err != nil {
+				r.failed, r.warn = true, listFailure(p, err)+" (with "+tierNoun(t)+")"
+				return
+			}
+			// @decision(DL-042)
+			fineGrained := t == server.TierUser && p.Kind == config.KindGitHub && git.IsFineGrainedGitHubPAT(token)
+			for _, repo := range listed.Repos {
+				r.repos = append(r.repos, server.TieredRepo{PlatformRepo: git.PlatformRepo{Platform: listed.Platform, Repo: repo}, Tier: t,
+					MaybeReadOnly: fineGrained && !repo.Private})
+			}
+		})
 	}
 	wg.Wait()
-	var (
-		out      []server.TieredRepo
-		warnings []string
-	)
+	var out server.RepoListing
 	for i, p := range h.cfg.Platforms {
-		held := false
-		for j := range tiers {
-			r := results[i*len(tiers)+j]
-			held = held || r.held
-			out = append(out, r.repos...)
-			if r.warn != "" {
-				warnings = append(warnings, r.warn)
-			}
+		r := results[i]
+		out.Repos = append(out.Repos, r.repos...)
+		out.Failed = out.Failed || r.failed
+		if r.warn != "" {
+			out.Warnings = append(out.Warnings, r.warn)
 		}
-		if !held {
-			warnings = append(warnings, fmt.Sprintf("no credential reaches %s: %s", p.Name, addCredentialHint(p)))
+		if r.absent {
+			out.Absent = append(out.Absent, server.AbsentPlatform{Name: p.Name, Hint: addCredentialHint(p)})
 		}
 	}
-	return out, warnings, nil
+	return out, nil
 }
 
 // tierState is what one tier holds for a platform.

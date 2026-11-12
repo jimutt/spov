@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/toolchain"
 )
@@ -25,11 +26,49 @@ const DefaultVariantBuildTimeout = 30 * time.Minute
 // @decision(DL-016)
 const DefaultMaxVariantBuilds = 2
 
+// DefaultMaxRunningPerOwner bounds the variant builds one user has
+// running at once in a server process. A second launch of theirs waits
+// for the first build to end.
+//
+// @decision(DL-134)
+const DefaultMaxRunningPerOwner = 1
+
+// DefaultMaxNewPerOwner bounds the variant builds one user's requests may
+// start in DefaultOwnerWindow, failed ones included.
+//
+// @decision(DL-134)
+const DefaultMaxNewPerOwner = 5
+
+// DefaultOwnerWindow is the span DefaultMaxNewPerOwner counts over.
+//
+// @decision(DL-134)
+const DefaultOwnerWindow = 24 * time.Hour
+
 // recordTimeout bounds recording a finished build.
 const recordTimeout = 30 * time.Second
 
 // ErrTooManyBuilds refuses a launch whose variant would exceed the bound.
 var ErrTooManyBuilds = errors.New("too many image builds in progress")
+
+// BuildLimitError refuses a launch whose user has started as many new
+// image builds as their window allows.
+//
+// @decision(DL-134)
+type BuildLimitError struct {
+	Max    int
+	Window time.Duration
+	// Until is when the user's oldest counted build leaves the window,
+	// and so when the next build is allowed.
+	Until time.Time
+	// Wait is Until less the time of the refusal.
+	Wait time.Duration
+}
+
+func (e *BuildLimitError) Error() string {
+	return fmt.Sprintf("you have started %d new image builds in the last %s, which is the limit; "+
+		"the next one is allowed in %s (at %s UTC). A launch whose image already exists is not limited",
+		e.Max, e.Window, e.Wait.Round(time.Minute), e.Until.UTC().Format("15:04 on 2 Jan"))
+}
 
 // VariantBuilder builds an add-on variant the first time a launch asks
 // for it. One build runs per image name; a launch that arrives while it
@@ -54,33 +93,74 @@ type VariantBuilder struct {
 	// Warn is told of a background build that failed.
 	Warn func(string)
 
+	// PerOwnerLimits turns the limits below on. A shared (hosted) server
+	// sets it; the zero value, which a local server keeps, is unlimited.
+	//
+	// @decision(DL-134)
+	PerOwnerLimits bool
+	// MaxRunningPerOwner, MaxNewPerOwner and OwnerWindow bound what one
+	// owner's requests start, in this process only; zero means the
+	// Default constants. An empty owner is not limited, which is how
+	// the operator's own paths build.
+	//
+	// @decision(DL-134)
+	MaxRunningPerOwner int
+	MaxNewPerOwner     int
+	OwnerWindow        time.Duration
+	// Now is the clock for the window; nil means time.Now.
+	Now func() time.Time
+
 	mu      sync.Mutex
 	running map[string]*variantBuild
+	// starts are the times each owner's builds began, newest last, kept
+	// for OwnerWindow.
+	starts map[string][]time.Time
 }
 
 type variantBuild struct {
-	done chan struct{}
-	err  error
+	done  chan struct{}
+	err   error
+	owner string
 }
 
 // Ensure returns once spec's image is published, building it if no one
 // has. rebuild builds it even though its name resolves: the registry
 // says the image was deleted (DL-016). note is told when a build starts
 // or is joined.
-func (v *VariantBuilder) Ensure(ctx context.Context, spec sandbox.ImageSpec, rebuild bool, note func(string)) error {
+//
+// owner is the user the build is for. A build the owner already has
+// running makes this one wait for it, up to ctx; a new build past the
+// owner's window is refused with a *BuildLimitError. An image that is
+// already published, or building for anyone, is neither (DL-134).
+//
+// @decision(DL-134)
+func (v *VariantBuilder) Ensure(ctx context.Context, owner string, spec sandbox.ImageSpec, rebuild bool, note func(string)) error {
 	name := spec.Name()
-	if !rebuild {
-		ok, err := v.Builder.HasImage(ctx, name)
+	var b *variantBuild
+	for {
+		if !rebuild {
+			ok, err := v.Builder.HasImage(ctx, name)
+			if err != nil {
+				return err
+			}
+			if ok {
+				return nil
+			}
+		}
+		built, wait, err := v.start(ctx, owner, spec, rebuild, true)
 		if err != nil {
 			return err
 		}
-		if ok {
-			return nil
+		if wait == nil {
+			b = built
+			break
 		}
-	}
-	b, err := v.start(ctx, spec, rebuild)
-	if err != nil {
-		return err
+		note("waiting for your earlier image build to finish; one runs at a time for each user")
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return fmt.Errorf("image %s is waiting for your earlier image build to finish: %w", name, ctx.Err())
+		}
 	}
 	note(fmt.Sprintf("building image %s (%s) on first use; this takes a few minutes and happens once", name, describeVariant(spec)))
 	select {
@@ -99,29 +179,141 @@ func (v *VariantBuilder) Ensure(ctx context.Context, spec sandbox.ImageSpec, reb
 // not started; the next launch asks again.
 //
 // @decision(DL-016)
-func (v *VariantBuilder) Start(ctx context.Context, spec sandbox.ImageSpec, rebuild bool) bool {
-	_, err := v.start(ctx, spec, rebuild)
-	return err == nil
+func (v *VariantBuilder) Start(ctx context.Context, owner string, spec sandbox.ImageSpec, rebuild bool) bool {
+	b, _, err := v.start(ctx, owner, spec, rebuild, false)
+	return err == nil && b != nil
 }
 
-// start joins the build of spec's name or begins one, within the bound.
-func (v *VariantBuilder) start(ctx context.Context, spec sandbox.ImageSpec, rebuild bool) (*variantBuild, error) {
+// Allow reports whether owner may start a new build now: nil, or a
+// *BuildLimitError saying when. It starts and counts nothing.
+//
+// @decision(DL-134)
+func (v *VariantBuilder) Allow(owner string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.limit(owner, v.now())
+}
+
+func (v *VariantBuilder) now() time.Time {
+	if v.Now != nil {
+		return v.Now()
+	}
+	return time.Now()
+}
+
+// limit is the window's refusal for owner, with v.mu held. It drops
+// every owner's starts that have left the window, so the map holds only
+// users with a build in the last day.
+func (v *VariantBuilder) limit(owner string, now time.Time) error {
+	if owner == "" || !v.PerOwnerLimits {
+		return nil
+	}
+	window, max := v.ownerWindow(), v.maxNewPerOwner()
+	for o, ts := range v.starts {
+		i := 0
+		for i < len(ts) && !ts[i].After(now.Add(-window)) {
+			i++
+		}
+		if i == len(ts) {
+			delete(v.starts, o)
+		} else if i > 0 {
+			v.starts[o] = ts[i:]
+		}
+	}
+	ts := v.starts[owner]
+	if len(ts) < max {
+		return nil
+	}
+	until := ts[len(ts)-max].Add(window)
+	return &BuildLimitError{Max: max, Window: window, Until: until, Wait: until.Sub(now)}
+}
+
+func (v *VariantBuilder) ownerWindow() time.Duration {
+	if v.OwnerWindow > 0 {
+		return v.OwnerWindow
+	}
+	return DefaultOwnerWindow
+}
+
+func (v *VariantBuilder) maxNewPerOwner() int {
+	if v.MaxNewPerOwner > 0 {
+		return v.MaxNewPerOwner
+	}
+	return DefaultMaxNewPerOwner
+}
+
+func (v *VariantBuilder) maxRunningPerOwner() int {
+	if v.MaxRunningPerOwner > 0 {
+		return v.MaxRunningPerOwner
+	}
+	return DefaultMaxRunningPerOwner
+}
+
+// start joins the build of spec's name or begins one, within the bounds.
+// A build joined is not the owner's: it is neither counted nor waited
+// for. When the owner already has a build running, start returns that
+// build's done channel to wait on if queue is set, and refuses otherwise,
+// as the background path does not queue.
+//
+// @decision(DL-134)
+func (v *VariantBuilder) start(ctx context.Context, owner string, spec sandbox.ImageSpec, rebuild, queue bool) (*variantBuild, <-chan struct{}, error) {
 	name := spec.Name()
+	if !v.PerOwnerLimits {
+		owner = ""
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.running == nil {
 		v.running = map[string]*variantBuild{}
 	}
 	if b, ok := v.running[name]; ok {
-		return b, nil
+		return b, nil, nil
+	}
+	now := v.now()
+	if err := v.limit(owner, now); err != nil {
+		return nil, nil, err
+	}
+	if owner != "" {
+		n := 0
+		var own *variantBuild
+		for _, b := range v.running {
+			if b.owner == owner {
+				n++
+				own = b
+			}
+		}
+		if n >= v.maxRunningPerOwner() {
+			if queue {
+				return nil, own.done, nil
+			}
+			return nil, nil, fmt.Errorf("%w for you; launch again once it has finished", ErrTooManyBuilds)
+		}
 	}
 	if len(v.running) >= v.maxBuilds() {
-		return nil, fmt.Errorf("%w (%d); launch again once one has finished", ErrTooManyBuilds, len(v.running))
+		return nil, nil, fmt.Errorf("%w (%d); launch again once one has finished", ErrTooManyBuilds, len(v.running))
 	}
-	b := &variantBuild{done: make(chan struct{})}
+	b := &variantBuild{done: make(chan struct{}), owner: owner}
 	v.running[name] = b
-	go v.build(context.WithoutCancel(ctx), spec, rebuild, b)
-	return b, nil
+	if owner != "" {
+		if v.starts == nil {
+			v.starts = map[string][]time.Time{}
+		}
+		v.starts[owner] = append(v.starts[owner], now)
+	}
+	// A panic in a build is logged and fails the build, so a launch
+	// waiting on it is released rather than the process ended.
+	//
+	// @decision(DL-135)
+	go func() {
+		if safego.Do("image build "+name, v.Warn, func() { v.build(context.WithoutCancel(ctx), spec, rebuild, b) }) {
+			b.err = errors.New("the image build panicked")
+			v.mu.Lock()
+			delete(v.running, name)
+			v.mu.Unlock()
+			close(b.done)
+		}
+	}()
+	return b, nil, nil
 }
 
 func (v *VariantBuilder) maxBuilds() int {

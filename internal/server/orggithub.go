@@ -333,6 +333,10 @@ func (s *Server) registerOrgGitHub() {
 			})
 		})
 		s.deps.OrgApps.Forget(p.OrgID, plat.Name)
+		// The organisation's tier reaches something else now.
+		//
+		// @decision(DL-134)
+		s.svc.ForgetOrgRepoListings(p.OrgID)
 		if err != nil {
 			return nil, toHumaError(err)
 		}
@@ -370,6 +374,8 @@ func (s *Server) registerOrgGitHub() {
 			})
 		})
 		s.deps.OrgApps.Forget(p.OrgID, plat.Name)
+		// @decision(DL-134)
+		s.svc.ForgetOrgRepoListings(p.OrgID)
 		s.checks.drop(p.OrgID + "\x00" + plat.Name)
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, huma.Error404NotFound("no App is stored for " + plat.Name)

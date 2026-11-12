@@ -258,7 +258,7 @@ type githubPullJSON struct {
 func findPullRequestWith(
 	ctx context.Context,
 	do func(ctx context.Context, method, path, auth string, body, out any) error,
-	host, authz string, repo RepoRef, branch string,
+	host, apiURL, authz string, repo RepoRef, branch string,
 ) (*PullRequest, error) {
 	if strings.TrimSpace(branch) == "" {
 		// Never a match-anything query.
@@ -271,10 +271,18 @@ func findPullRequestWith(
 	if err := do(ctx, http.MethodGet, path, authz, nil, &body); err != nil {
 		return nil, fmt.Errorf("git: find pull request on %s: %w", host, err)
 	}
+	// The web address of the forge: its host over the scheme its API is
+	// configured with.
+	//
+	// @decision(DL-135)
+	webURL := "https://" + host
+	if strings.HasPrefix(apiURL, "http://") {
+		webURL = "http://" + host
+	}
 	var best *PullRequest
 	for _, pr := range body {
 		best = bestPullRequest(best, PullRequest{
-			Number: pr.Number, URL: pr.HTMLURL, Title: pr.Title, State: pr.State,
+			Number: pr.Number, URL: OwnURL(pr.HTMLURL, webURL), Title: pr.Title, State: pr.State,
 			Open: pr.State == "open", Merged: pr.MergedAt != nil && *pr.MergedAt != "", Created: pr.CreatedAt,
 		})
 	}
@@ -302,7 +310,7 @@ func (g *GitHub) FindPullRequest(ctx context.Context, repo RepoRef, branch strin
 		defer cancel()
 		_ = token.Revoke(revokeCtx)
 	}()
-	return findPullRequestWith(ctx, g.do, g.host, "token "+token.Secret, repo, branch)
+	return findPullRequestWith(ctx, g.do, g.host, g.apiURL, "token "+token.Secret, repo, branch)
 }
 
 // RenewsTokens is true: an installation token lasts an hour and is

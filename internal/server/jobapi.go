@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -51,6 +52,8 @@ type JobRequest struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:"env,omitempty" doc:"Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session"`
+	// @decision(DL-120)
+	Template string `json:"template,omitempty" maxLength:"40" doc:"One of the caller's sandbox templates: its settings apply where the request sets none"`
 	// Sandbox is named as it is on a session create, not "session": one
 	// shape with two names would give the generated TypeScript client
 	// two names for the same thing.
@@ -237,13 +240,26 @@ type DeliverableView struct {
 	Files      int    `json:"files,omitempty" doc:"A sync's uncommitted changed files"`
 }
 
+// linkOnly is a stored address when it is an http or https one with a
+// host, and "" otherwise, so a row stored before the forge's answer was
+// checked never serves another scheme.
+//
+// @decision(DL-135)
+func linkOnly(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return ""
+	}
+	return raw
+}
+
 // deliverableViewOf projects one member.
 //
 // @decision(DL-051)
 func deliverableViewOf(d store.Deliverable) DeliverableView {
 	v := DeliverableView{
 		Kind: d.Kind, Status: d.Status, Detail: d.Detail, Platform: d.Platform, Forge: d.Forge,
-		Branch: d.Branch, Number: d.Number, URL: d.URL, Title: d.Title, Path: d.Path, Size: d.Size,
+		Branch: d.Branch, Number: d.Number, URL: linkOnly(d.URL), Title: d.Title, Path: d.Path, Size: d.Size,
 		HeadCommit: d.HeadCommit, Commits: d.Commits, Files: d.Files,
 	}
 	if d.Owner != "" || d.Name != "" {

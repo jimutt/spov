@@ -356,7 +356,7 @@ func (l *Login) RevokeSessions(ctx context.Context, orgID, email string) error {
 		if l.Sessions.GetString(ctx, auth.SessionKeyUserID) != user.ID {
 			return nil
 		}
-		if err := l.Sessions.Destroy(ctx); err != nil {
+		if err := l.destroyIterated(ctx); err != nil {
 			// One undeletable row must not strand the rest.
 			l.warn("allowlist: revoking a session for " + email + ": " + err.Error())
 		}

@@ -67,7 +67,8 @@ func LoadUser(env Env) (Result, error) {
 
 // userOnly are the top-level sections a project file may not set,
 // because they decide where a credential is sent, and where each
-// belongs instead. server holds only url.
+// belongs instead. server is named by url, the key that redirects
+// credentials; its trusted_proxies is read only by spov serve.
 //
 // @decision(DL-026)
 var userOnly = []userOnlyKey{
@@ -179,6 +180,18 @@ func loadProject(k *koanf.Koanf, path, userPath string) (bool, error) {
 		}
 		return false, fmt.Errorf("config: %s sets %s, which a project file may not set because it decides where"+
 			" your credentials are sent; set it in %s", path, u.name(), where)
+	}
+	// A template can attach credentials, so a file that comes with a
+	// repository may not choose one.
+	//
+	// @decision(DL-122)
+	if sb, ok := top["sandbox"].(map[string]any); ok {
+		for _, key := range []string{"template", "job_template"} {
+			if _, set := sb[key]; set {
+				return false, fmt.Errorf("config: %s sets sandbox.%s, which a project file may not set because a sandbox"+
+					" template can attach your credentials; set it in your user file, %s, or pass --template", path, key, userPath)
+			}
+		}
 	}
 	if _, err := loadFile(k, path); err != nil {
 		return false, err

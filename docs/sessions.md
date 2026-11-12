@@ -6,6 +6,42 @@ terminal TUI, in OpenCode's web UI, or from the dashboard. This guide covers
 everything you can do with one. For handing a goal off to run on its own,
 see [Autonomous jobs](jobs.md).
 
+## First-time setup
+
+```sh
+spov init
+```
+
+`spov init` checks, in order, what a first launch needs on this machine, and
+offers to set up each thing that is missing:
+
+| Step | Ready when | What init offers |
+|---|---|---|
+| Modal | Its credentials are found and Modal accepts them | Run `modal setup` in your terminal |
+| Git platform | A configured platform has a working credential | GitHub through `gh`: run `gh auth login` if needed, add the `platforms` entry to your user config, and use gh's login |
+| Model | A provider key is stored or exported, or OpenCode is signed in | Paste an API key, or sign in to OpenCode Go or Zen |
+| OpenCode client | A client the pinned version accepts is installed | Nothing: it prints the install command. `spov fly --web` works without one |
+| Sandbox image | The image for the pinned OpenCode version is published | Build it, which takes a few minutes |
+
+It asks before every change, and a no skips that step. If a spov server from
+an earlier command is still running idle on this machine, init stops it after
+a change, so the next command starts one that sees what you set up. It is safe to run
+again: a step that is done is left alone. It never stores a Modal token or
+copies gh's token, and it adds to your config file only by creating it or
+appending a `platforms` block; a file that already has a `platforms` list is
+yours, and init prints the lines to add instead.
+
+`spov init --check` changes nothing and exits 1 when a required step is
+missing, as a run without a terminal does. `--json` prints the same as one
+document: `{ready, steps: [{name, state, required, detail, fix}]}`, with the
+step names `modal`, `git`, `model`, `client` and `image`.
+
+Init sets up GitHub on github.com only. For Forgejo, Gitea, GitLab, GitHub
+Enterprise or a GitHub App use `spov credentials add`
+([Credentials](credentials.md)); init then reports the platform as ready.
+With a hosted server configured, init only checks that you are signed in to it
+and that your local client matches it.
+
 ## Starting one
 
 ```sh
@@ -51,6 +87,7 @@ back: what the agent does stays in the sandbox unless it pushes.
 | `--git-access repos\|all` | Whether the sandbox's git credentials reach only this session's repositories (the default) or every repository they can |
 | `--env KEY=VALUE` | An environment variable in the sandbox, over `sandbox.env`; repeatable. Not for secrets (see [The sandbox](sandbox.md#environment-variables)) |
 | `--credentials a,b`, `--no-credentials` | Which [routed credentials](credentials.md#private-registries-and-other-services) the session gets |
+| `--template name`, `--no-template` | Launch from a [sandbox template](sandbox.md#sandbox-templates), or without the one `sandbox.template` names |
 | `--sync`, `--no-sync` | Whether to seed the sandbox from your current branch and sync its changes back (below) |
 | `--allow-version-mismatch` | Attach even if the local and sandbox OpenCode versions differ |
 
@@ -77,6 +114,33 @@ quit.
 - **Nothing is overwritten.** The work lands back on your branch when the
   checkout is as you left it, and on a `spov/<session>` branch when you have
   changed it meanwhile.
+- **Only what `git status` shows.** A sync onto your branch never writes,
+  replaces or deletes a file your checkout does not track or ignores
+  (`node_modules`, `.env`), whether the session committed over it or left
+  it uncommitted. When it would, the work lands on `spov/<session>`
+  instead, and spov names the paths. The same happens when the session
+  changed what git runs or reads in your checkout: your git hooks (a
+  `core.hooksPath` inside the checkout, such as `.githooks` or husky's
+  `.husky/_`, or any directory above it), a git config file the checkout
+  includes, a `.gitattributes`, `.lfsconfig` or `.gitmodules`, or a
+  submodule. It also happens when the session left a file your own ignore
+  rules hide, and, on a Windows drive or a case-insensitive disk, when a
+  path names a file by another of its names (`GITHOO~1` for `.githooks`).
+  Read the branch before you check it out.
+- **You see what landed.** After a sync, spov prints the branch the work
+  landed on, the commits it added (how many, and the short range), and each
+  changed (`M`), added (`A`) and deleted (`D`) path, up to 30 and then "and N
+  more". A path or message the sandbox wrote is printed with any terminal
+  control character shown as an escape such as `\x1b`.
+- **Your checkout's hooks do not run.** Every git command spov runs in your
+  checkout turns off its hooks (`core.hooksPath`) and its filesystem monitor
+  (`core.fsmonitor`), uses no pager, and keeps git's own protections against
+  `.git`-lookalike names on, whatever your config says. A sparse checkout, or
+  a checkout whose work tree is set elsewhere (`core.worktree`), takes the
+  work on a `spov/<session>` branch rather than in place.
+- **A very large result is refused.** A sync that would bring in more than
+  1 GiB of git objects, or a single file over 256 MiB, stops with an error
+  and changes nothing; push the branch to the forge instead.
 - **Nothing is lost.** The sandbox is terminated only after the work is
   back; a sync that fails leaves it running and tells you how to retry.
 - **The checkout must be clean and on a branch**, or the launch stops and

@@ -2,10 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"net/http"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -49,6 +53,8 @@ type SessionView struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:"env,omitempty" doc:"The environment variables set in the sandbox beside spov's own, as name to value"`
+	// @decision(DL-120)
+	Template string `json:"template,omitempty" doc:"The sandbox template the launch took settings from"`
 	// BootedImage and InstalledAddons are what the sandbox got, which
 	// can be an older build of the same add-ons than the newest.
 	//
@@ -275,6 +281,8 @@ type SessionRequest struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:"env,omitempty" doc:"Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session"`
+	// @decision(DL-120)
+	Template string `json:"template,omitempty" maxLength:"40" doc:"One of the caller's sandbox templates: its settings apply where the request sets none"`
 	// Sync seeds the sandbox repository from a local git branch and
 	// commit (with an optional bundle of unpushed commits).
 	//
@@ -309,7 +317,7 @@ func (r SessionRequest) toStore() (store.SessionRequest, error) {
 		Routed: routedRequest(r.Credentials, r.NoCredentials, r.CredentialsPreferred, r.Needs),
 		Addons: r.Addons, Apt: r.Apt,
 		// @decision(DL-096)
-		Env: r.Env,
+		Env: r.Env, Template: r.Template,
 		// @decision(DL-027)
 		Sync: sync,
 	}, nil
@@ -349,7 +357,7 @@ func viewOf(s store.Session, now time.Time) SessionView {
 		Repos: repos, Clones: s.Clones, Landing: s.Landing, Error: s.Error,
 		Model: s.Request.Model,
 		Image: s.Request.Image, Sandbox: sandboxViewOf(s.Request.Sandbox), Egress: s.Request.Egress,
-		Addons: s.Request.Addons, Apt: s.Request.Apt, Env: s.Request.Env,
+		Addons: s.Request.Addons, Apt: s.Request.Apt, Env: s.Request.Env, Template: s.Request.Template,
 		BootedImage: s.Booted.Image, InstalledAddons: s.Booted.Addons,
 		CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt, StoppedAt: s.StoppedAt,
 		Credentials: credentialViews(s.Credentials),
@@ -765,6 +773,11 @@ func toHumaError(err error) error {
 	// @decision(DL-009)
 	case errors.Is(err, ErrQuotaExceeded):
 		return huma.Error429TooManyRequests(err.Error())
+	// A launch that reached the build limit after its create passed.
+	//
+	// @decision(DL-134)
+	case errors.As(err, new(*session.BuildLimitError)):
+		return huma.Error429TooManyRequests(err.Error())
 	case errors.Is(err, ErrPasswordUnavailable), errors.Is(err, session.ErrNoPassword):
 		// Never a fabricated password: it would authenticate nowhere and
 		// fail at the proxy with a far less obvious message.
@@ -784,11 +797,118 @@ func toHumaError(err error) error {
 			m.Type = ProblemTypeSessionStopped
 		}
 		return e
+	// A store call that ran out of time (a pool acquire, a dial) names
+	// the database as any other store error does, so it keeps its 504
+	// with the fixed message.
+	//
+	// @decision(DL-135)
+	case errors.Is(err, context.DeadlineExceeded) && unexpectedStoreError(err):
+		return huma.Error504GatewayTimeout("timed out (reference " + logInternal(err) + "); the detail is in the server log")
 	case errors.Is(err, context.DeadlineExceeded):
 		return huma.Error504GatewayTimeout(redact.Error(err))
+	// An unexpected store error names the database's host, user and
+	// statement; the client gets a fixed answer and the log the detail.
+	//
+	// @decision(DL-135)
+	case unexpectedStoreError(err):
+		return internalProblem(err)
 	default:
 		return huma.Error502BadGateway(redact.Error(err))
 	}
+}
+
+// storeSentinels are the store's own deliberate errors, which a caller
+// may show.
+var storeSentinels = []error{
+	store.ErrNotFound, store.ErrConflict, store.ErrNestedTx, store.ErrInvalidEvent,
+	store.ErrInvalidTransition, store.ErrInvalidJob, store.ErrJournalLocked,
+}
+
+// unexpectedStoreError reports whether err is one a store raised that is
+// not one of its sentinels: every store error's text begins "store: ",
+// at any depth of the wrapping.
+//
+// @decision(DL-135)
+func unexpectedStoreError(err error) bool {
+	for _, s := range storeSentinels {
+		if errors.Is(err, s) {
+			return false
+		}
+	}
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if strings.HasPrefix(e.Error(), "store: ") {
+			return true
+		}
+	}
+	return false
+}
+
+// internalLog is where the detail of an internal error goes: the
+// process's standard logger, which `spov serve` points at stderr beside
+// its own warnings.
+var internalLog = log.New(os.Stderr, "spov serve: ", log.LstdFlags)
+
+// internalProblem answers 500 with a fixed message and a reference, and
+// logs the detail under that reference.
+//
+// @decision(DL-135)
+func internalProblem(err error) error {
+	return huma.Error500InternalServerError(internalMessage(err))
+}
+
+// internalMessage is internalProblem's fixed message, for a place that
+// stores or sends it rather than answering with it.
+//
+// @decision(DL-135)
+func internalMessage(err error) string {
+	return "internal error (reference " + logInternal(err) + "); the detail is in the server log"
+}
+
+// clientText is what a client may read of err: its redacted text, or
+// internalMessage for an unexpected store error.
+//
+// @decision(DL-135)
+func clientText(err error) string {
+	if unexpectedStoreError(err) {
+		return internalMessage(err)
+	}
+	return redact.Error(err)
+}
+
+// hiddenError is an error whose text is clientText's, still unwrapping
+// to the error it hides.
+//
+// @decision(DL-135)
+type hiddenError struct {
+	text string
+	err  error
+}
+
+func (e hiddenError) Error() string { return e.text }
+func (e hiddenError) Unwrap() error { return e.err }
+
+// hideStoreError replaces an unexpected store error's text with the
+// fixed message, for an error a caller will store where a client reads
+// it.
+//
+// @decision(DL-135)
+func hideStoreError(err error) error {
+	if err == nil || !unexpectedStoreError(err) {
+		return err
+	}
+	return hiddenError{text: internalMessage(err), err: err}
+}
+
+// logInternal logs an internal error's detail under a new reference and
+// returns the reference.
+//
+// @decision(DL-135)
+func logInternal(err error) string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	ref := hex.EncodeToString(b[:])
+	internalLog.Printf("internal error %s: %s", ref, redact.Error(err))
+	return ref
 }
 
 func principal(ctx context.Context) auth.Principal {
@@ -1022,9 +1142,13 @@ func (s *Server) registerRepos() {
 		// Both tiers, each repository marked with the tiers that reach
 		// it; the platforms say which one a browser launch uses.
 		//
-		// @decision(DL-042)
+		// Each tier's listing is kept for RepoListTTL per user, so the
+		// forge is asked at most that often however often this is
+		// called.
+		//
+		// @decision(DL-042) @decision(DL-134)
 		if s.deps.UserRepos != nil && p.UserID != "" {
-			tiered, warnings, err := s.deps.UserRepos(ctx, p.OrgID, p.UserID)
+			tiered, warnings, err := s.svc.tieredListing(ctx, p)
 			if err != nil {
 				return nil, toHumaError(err)
 			}
@@ -1032,18 +1156,12 @@ func (s *Server) registerRepos() {
 			out.Body.Repos = mergeTiers(tiered)
 			return out, nil
 		}
-		repos, warnings, err := forge.ListRepos(ctx)
+		views, warnings, err := s.svc.plainListing(ctx, p, forge, tiers)
 		if err != nil {
 			return nil, toHumaError(err)
 		}
 		out.Body.Warnings = warnings
-		out.Body.Repos = make([]RepoView, 0, len(repos))
-		for _, r := range repos {
-			out.Body.Repos = append(out.Body.Repos, RepoView{
-				Platform: r.Platform.Name(), Owner: r.Repo.Owner, Name: r.Repo.Name,
-				Private: r.Repo.Private, Archived: r.Repo.Archived, UpdatedAt: r.Repo.UpdatedAt,
-			})
-		}
+		out.Body.Repos = views
 		return out, nil
 	})
 }

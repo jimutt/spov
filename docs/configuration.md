@@ -76,6 +76,8 @@ sandbox:
   credentials: [acme-npm]           # keep only these of your routed credentials for spov fly, or [none]; only narrows (or pass --credentials / --no-credentials)
   job_credentials: [none]           # the same for spov jobs create; never inherits credentials
   needs: [npm.acme.com]             # hosts the project needs; a launch says when no routed credential covers one
+  template: acme                    # user file only: the sandbox template spov fly launches from (or pass --template / --no-template)
+  job_template: acme-jobs           # user file only: the same for spov jobs create; never inherits template
   job_max_duration: 2h              # a job's wall clock when --max-duration is unset; at least 1m, clamped to your limit (quotas.max_job_duration)
   job_sync_hold: 1h                 # how long a finished sync job's sandbox is held for spov jobs apply when --hold is unset; 30m by default, at least 1m
   sync: false                       # unset (the default): a plain spov fly inside a checkout syncs it; true: always (--sync); false: never (--no-sync)
@@ -107,6 +109,7 @@ git:
 # --- The server the CLI talks to -----------------------------------------------------
 server:
   url: https://spov.example.com     # --server and SPOV_SERVER take precedence; empty means a local server
+  trusted_proxies: [10.0.0.0/8, 192.0.2.10]  # spov serve only: reverse proxies whose X-Forwarded-For the per-address limits read; default none
 
 # --- Read only by spov serve ---------------------------------------------------------
 quotas:                             # per-user defaults; 0 means the built-in default, not unlimited
@@ -124,6 +127,7 @@ snapshots:                          # exit snapshots for resume; servers under t
 
 history:                            # a local server's session history, under $XDG_DATA_HOME/spov/sessions
   retention: 720h                   # kept this long after a session stopped; 0 keeps it forever
+  max_session_mib: 1024             # any server: one session's stored events and messages; past it its recording stops
 
 metrics:                            # see docs/metrics.md; OTLP is configured by OTEL_EXPORTER_OTLP_* instead
   prometheus_listen: 127.0.0.1:9464 # serves GET /metrics on its own listener, unauthenticated; empty serves none
@@ -142,13 +146,33 @@ prep:                               # the server's own model call that prepares 
 | `platforms` | the CLI, and `spov serve`, which resolves its deployment credentials by platform name |
 | `sandbox`, `git.name`, `git.email` | the CLI, which sends them with each request; the server uses its own as defaults |
 | `opencode` | the CLI, and `spov serve`, whose pin it publishes |
-| `modal`, `quotas`, `prep`, `metrics`, `git.allow_all` | `spov serve` |
+| `modal`, `quotas`, `prep`, `metrics`, `git.allow_all`, `server.trusted_proxies` | `spov serve` |
 
 The server's own `sandbox.addons` and `sandbox.apt` apply to a request that
 names neither, such as a session started from the browser.
 
 `platforms` and `server` belong in the user file only (above). `spov serve`
 reads no project file.
+
+### Behind a reverse proxy: `server.trusted_proxies`
+
+`spov serve` limits how often one client address may start a sign-in and poll
+for a CLI token (the limits are in [`server.md`](server.md#limits)). The address
+is the connection's peer. Behind a reverse proxy or a load balancer that peer is
+the proxy, so every client shares one address, and one busy office or one
+attacker can use up everyone's sign-ins, until you name the proxy here.
+
+`server.trusted_proxies` is a list of addresses and CIDR ranges, empty by
+default. For a request whose peer is in it, spov reads `X-Forwarded-For` from
+the right and takes the first address that is not itself in the list, so a
+client cannot choose its address by sending the header itself. From any other
+peer the header is ignored, and the first such request logs one warning naming
+this setting. An entry that is not an address or a range, or a range with host
+bits set (`10.0.0.1/8`), refuses to start the server. Like every list it is set
+only in the file, not through `SPOV_*`. Name only the proxies you run: a range
+that covers the clients themselves lets them choose their address. The setting
+is read by these limits alone; cookies, redirects and the browser guard never
+read a forwarded header.
 
 ### A project file can only take routed credentials away
 
@@ -159,6 +183,20 @@ keeps none; it never attaches one you did not already get, so a repository you
 clone from someone else cannot send your credentials anywhere new. A launch's own
 `--credentials a,b` attaches exactly those, asked-only ones included, and
 `--no-credentials` attaches none.
+
+### A project file cannot name a sandbox template
+
+A [sandbox template](sandbox.md#sandbox-templates) can attach routed credentials,
+including the ones you stored with `--attach asked`, so `sandbox.template` and
+`sandbox.job_template` are read from your user file only. A project file that
+sets either is refused when it is loaded. `--template` on the command line is
+yours to give.
+
+When a launch names a template, the template takes the place of `sandbox.egress`,
+`egress_extra_domains`, `addons`, `apt`, `env` and `git_access` from every config
+file for that launch, and the launch says which ones it replaced. Only a flag
+overrides a template. `sandbox.credentials` still narrows the template's list,
+because it can only take access away.
 
 ### A project file can ask for git access `all`
 
@@ -191,7 +229,7 @@ full list, with what each one does, is in [`deploy/README.md`](../deploy/README.
 | Variable | Read by | Meaning |
 |---|---|---|
 | `SPOV_SERVER` | the CLI | The server's URL; `--server` wins over it, and it wins over `server.url`. |
-| `SPOV_SERVER_TOKEN` | the CLI, `spov serve` | The CLI sends it as its bearer token. A hosted server refuses to start without it. |
+| `SPOV_SERVER_TOKEN` | the CLI, `spov serve` | The CLI sends it as its bearer token. A hosted server refuses to start without it, or with one under 32 characters (`openssl rand -hex 32` makes a good one). |
 | `SPOV_DATABASE_URL` | `spov serve` | Postgres. Jobs and browser login need it. |
 | `SPOV_MIGRATE_ON_START` | `spov serve` | `1`, `true`, `yes` or `on` applies the migrations before listening. |
 | `SPOV_PUBLIC_URL` | `spov serve` | The externally visible origin, which the browser guard, cookies and login redirects use. |
@@ -283,6 +321,14 @@ builds a variant on its first launch, which takes seconds to a few minutes, once
 unless `modal.build_on_demand` is false. In that case an operator prebuilds it
 with `spov serve image build --addons ... --apt ...`. The default toolchain and
 the add-ons are described in [The sandbox](sandbox.md).
+
+On a shared (hosted) server, on-demand builds are limited per person; a local
+server has no such limit. The limits are one running at a time (a second launch
+waits), and five new image variants in any 24 hours, after which a launch or job
+create is refused with a 429 naming the time the next is allowed. The server
+keeps these counts in memory, so they are per replica and start again with a
+restart. They are not configurable. A deployment that does not want users to
+trigger builds at all sets `modal.build_on_demand: false`.
 
 ### Partial versions follow new releases
 

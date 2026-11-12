@@ -23,6 +23,7 @@ func recordEverything(m *Metrics) {
 	ctx := context.Background()
 	m.APIRequest(ctx, "get-session", 200, time.Millisecond)
 	m.QuotaRefused(ctx, QuotaJobs)
+	m.RequestLimited(ctx, LimitStreams)
 	m.JobEnded(ctx, store.JobKindReport, store.JobSucceeded, EndedDeclared, time.Hour)
 	m.JobQueued(ctx, time.Minute)
 	m.JobDelivered(ctx, time.Minute)

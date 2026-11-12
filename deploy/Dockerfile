@@ -20,7 +20,7 @@ RUN bun install --frozen-lockfile
 COPY web/ ./
 RUN bun run build
 
-FROM --platform=$BUILDPLATFORM golang:1.26 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.11 AS build
 WORKDIR /src
 
 # Dependencies first, so a source-only change does not re-download them.

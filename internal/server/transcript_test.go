@@ -79,7 +79,7 @@ func TestTheTranscriptComesFromTheStore(t *testing.T) {
 	seedMessage(t, f, first, "msg_a", "user", "hi", recordedAt)
 	seedMessage(t, f, second, "msg_c", "user", "elsewhere", recordedAt.Add(2*time.Second))
 
-	convs, warnings, err := f.srv.transcript(context.Background(), sess)
+	convs, warnings, _, err := f.srv.transcript(context.Background(), sess)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestASessionNobodyRecordedSaysSo(t *testing.T) {
 	f := newAPIFixture(t)
 	sess := seedSession(t, f, "01ARZ3NDEKTSV4RRFFQ69G5FAV", "alpha", store.StateRunning)
 
-	convs, warnings, err := f.srv.transcript(context.Background(), sess)
+	convs, warnings, _, err := f.srv.transcript(context.Background(), sess)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestARecorderThatGaveUpIsAWarningUntilItResumes(t *testing.T) {
 		Name: MarkerStopped, Text: "recording stopped after 5 failed reconnects", At: recordedAt,
 	})
 
-	_, warnings, err := f.srv.transcript(context.Background(), sess)
+	_, warnings, _, err := f.srv.transcript(context.Background(), sess)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestARecorderThatGaveUpIsAWarningUntilItResumes(t *testing.T) {
 		OrgID: sess.OrgID, SessionID: sess.ID, Source: store.SourceSpov,
 		Name: MarkerRenewalFailed, Text: "Could not renew the git token (x).", At: recordedAt.Add(30 * time.Second),
 	})
-	if _, warnings, err = f.srv.transcript(context.Background(), sess); err != nil {
+	if _, warnings, _, err = f.srv.transcript(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
 	if len(warnings) != 1 {
@@ -173,7 +173,7 @@ func TestARecorderThatGaveUpIsAWarningUntilItResumes(t *testing.T) {
 		OrgID: sess.OrgID, SessionID: sess.ID, ConversationID: conv.ID, Source: store.SourceOpenCode,
 		Seq: 1, Name: "session.step.started", At: recordedAt.Add(time.Minute),
 	})
-	if _, warnings, err = f.srv.transcript(context.Background(), sess); err != nil {
+	if _, warnings, _, err = f.srv.transcript(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
 	if len(warnings) != 0 {
@@ -203,7 +203,7 @@ func TestASandboxCannotForgeTheRecordersWarning(t *testing.T) {
 		OrgID: sess.OrgID, SessionID: sess.ID, ConversationID: conv.ID, Source: store.SourceOpenCode,
 		Seq: 1, Name: "session.step.started", Text: "ordinary", At: recordedAt,
 	})
-	_, warnings, err := f.srv.transcript(context.Background(), sess)
+	_, warnings, _, err := f.srv.transcript(context.Background(), sess)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestAMarkerCountsAsHavingBeenRecorded(t *testing.T) {
 		Name: MarkerGap, Text: "recording resumed", At: recordedAt,
 	})
 
-	_, warnings, err := f.srv.transcript(context.Background(), sess)
+	_, warnings, _, err := f.srv.transcript(context.Background(), sess)
 	if err != nil {
 		t.Fatal(err)
 	}

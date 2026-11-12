@@ -60,10 +60,10 @@ func TestTheFakeExecsOnlyInItsOwnSidecar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.SidecarExecInput(ctx, "proxy", []string{"set-token", "gh"}, []byte("tok")); err != nil {
+	if _, err := h.SidecarExecInput(execCtx(t), "proxy", []string{"set-token", "gh"}, []byte("tok")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.SidecarExecInput(ctx, "other", nil, nil); !errors.Is(err, ErrNoSidecar) {
+	if _, err := h.SidecarExecInput(execCtx(t), "other", nil, nil); !errors.Is(err, ErrNoSidecar) {
 		t.Errorf("an unknown sidecar: %v", err)
 	}
 	got := h.(*FakeHandle).SidecarExecs()

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -157,9 +156,7 @@ func printJob(env *Env, v server.JobView, asJSON, compact bool) error {
 
 // writeJSONLine prints v as one line.
 func writeJSONLine(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	return enc.Encode(v)
+	return encodeJSON(w, v, "")
 }
 
 // outcomeCode is the exit status for a terminal job: nil for a success.
@@ -214,13 +211,23 @@ func waitForJob(ctx context.Context, env *Env, c *client.Client, id string, time
 			if wctx.Err() != nil {
 				return view, ended()
 			}
+			// @decision(DL-133)
+			if pause, ok := slowedDown(err, poll); ok {
+				_, _ = fmt.Fprintf(env.Err, "  job %s: the server asked to slow down; reading again in %s\n", id, pause)
+				select {
+				case <-wctx.Done():
+					return view, ended()
+				case <-time.After(pause):
+				}
+				continue
+			}
 			if !transientRead(err) || failures == waitRetries {
 				return view, err
 			}
 			failures++
 			delay := min(poll<<(failures-1), maxRetryDelay)
-			_, _ = fmt.Fprintf(env.Err, "  job %s: could not read it (%v); retrying in %s (%d of %d)\n",
-				id, err, delay, failures, waitRetries)
+			_, _ = fmt.Fprintf(env.Err, "  job %s: could not read it (%s); retrying in %s (%d of %d)\n",
+				id, printableLine(err.Error()), delay, failures, waitRetries)
 			select {
 			case <-wctx.Done():
 				return view, ended()
@@ -255,6 +262,25 @@ const (
 	maxRetryDelay = time.Minute
 )
 
+// maxSlowDown is the longest a wait sleeps for one 429's Retry-After.
+//
+// @decision(DL-133)
+const maxSlowDown = time.Minute
+
+// slowedDown reports whether err is the server's 429, and how long to
+// wait before the next read: its Retry-After, at least poll and at most
+// maxSlowDown. A 429 is not a failed read and counts toward no retry
+// limit.
+//
+// @decision(DL-133)
+func slowedDown(err error, poll time.Duration) (time.Duration, bool) {
+	var e *client.Error
+	if !errors.As(err, &e) || e.Status != http.StatusTooManyRequests {
+		return 0, false
+	}
+	return min(max(e.RetryAfter, poll), maxSlowDown), true
+}
+
 // transientRead is a read error worth retrying: no answer at all, or a
 // 5xx other than 501, which is a server that has no jobs. A 4xx (no such
 // job, signed out) is final.
@@ -271,6 +297,21 @@ func (e *Env) stderrIsTerminal() bool {
 	if e.StderrIsTerminal != nil {
 		return e.StderrIsTerminal()
 	}
-	f, ok := e.Err.(interface{ Fd() uintptr })
+	return writerIsTerminal(e.Err)
+}
+
+// stdoutIsTerminal says whether stdout is a person's terminal, where a
+// report's control characters would act, and not a pipe or a file.
+//
+// @decision(DL-136)
+func (e *Env) stdoutIsTerminal() bool {
+	if e.StdoutIsTerminal != nil {
+		return e.StdoutIsTerminal()
+	}
+	return writerIsTerminal(e.Out)
+}
+
+func writerIsTerminal(w io.Writer) bool {
+	f, ok := w.(interface{ Fd() uintptr })
 	return ok && term.IsTerminal(int(f.Fd()))
 }

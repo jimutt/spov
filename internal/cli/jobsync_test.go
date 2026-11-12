@@ -157,6 +157,12 @@ func TestASyncJobIsSeededFromTheCheckout(t *testing.T) {
 	if _, _, err := runWith(t, s.env, "jobs", "create", "work", "--hold", "45m"); err == nil {
 		t.Error("--hold was accepted on a pr job")
 	}
+	// Another repository than the checkout's is refused in a job's own
+	// words: --sync and --no-sync are fly's flags.
+	_, _, err := runWith(t, s.env, "jobs", "create", "work", "--kind", "sync", "--repo", "alice/other")
+	if err == nil || !strings.Contains(err.Error(), "does not match --repo alice/other") || strings.Contains(err.Error(), "-sync") {
+		t.Errorf("a --repo that is not the checkout's: %v", err)
+	}
 }
 
 // Apply lands the held state in the checkout and releases the sandbox.

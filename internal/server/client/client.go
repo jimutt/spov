@@ -53,6 +53,10 @@ type Error struct {
 	Title  string `json:"title"`
 	Detail string `json:"detail"`
 	Type   string `json:"type"`
+	// RetryAfter is the response's Retry-After, zero when it had none.
+	//
+	// @decision(DL-133)
+	RetryAfter time.Duration `json:"-"`
 }
 
 func (e *Error) Error() string {
@@ -161,7 +165,26 @@ func problemOf(resp *http.Response) error {
 		}
 	}
 	e.Status = resp.StatusCode
+	e.RetryAfter = retryAfter(resp.Header.Get("Retry-After"), time.Now())
 	return e
+}
+
+// retryAfter reads a Retry-After header, in seconds or as a date, as
+// the wait it asks for, or zero.
+//
+// @decision(DL-133)
+func retryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return time.Duration(max(n, 0)) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return max(t.Sub(now), 0)
+	}
+	return 0
 }
 
 // redactURL strips credentials a transport error might echo from a URL.
@@ -387,6 +410,35 @@ func (c *Client) PutRoutedCredential(ctx context.Context, r routedcred.Route, se
 // @decision(DL-073)
 func (c *Client) DeleteRoutedCredential(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "me/routed-credentials/"+url.PathEscape(name), nil, nil)
+}
+
+// ListTemplates lists the caller's sandbox templates.
+//
+// @decision(DL-119)
+func (c *Client) ListTemplates(ctx context.Context) ([]server.TemplateView, error) {
+	var out struct {
+		Templates []server.TemplateView `json:"templates"`
+	}
+	if err := c.do(ctx, http.MethodGet, "me/templates", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Templates, nil
+}
+
+// GetTemplate reads one of the caller's sandbox templates.
+//
+// @decision(DL-119)
+func (c *Client) GetTemplate(ctx context.Context, name string) (server.TemplateView, error) {
+	var out server.TemplateView
+	err := c.do(ctx, http.MethodGet, "me/templates/"+url.PathEscape(name), nil, &out)
+	return out, err
+}
+
+// DeleteTemplate removes one of the caller's sandbox templates.
+//
+// @decision(DL-119)
+func (c *Client) DeleteTemplate(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "me/templates/"+url.PathEscape(name), nil, nil)
 }
 
 // ListOrgRoutedCredentials lists the organisation's routed credentials,

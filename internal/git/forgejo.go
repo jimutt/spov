@@ -211,7 +211,7 @@ func (f *Forgejo) FindPullRequest(ctx context.Context, repo RepoRef, branch stri
 			// HTMLURL is where a person goes; URL is the API's own
 			// address for it and is no use in a sidebar.
 			best = bestPullRequest(best, PullRequest{
-				Number: int(pr.Index), URL: pr.HTMLURL,
+				Number: int(pr.Index), URL: OwnURL(pr.HTMLURL, f.baseURL),
 				Title: pr.Title, State: string(pr.State),
 				Open: pr.State == forgejo.StateOpen, Merged: pr.HasMerged, Created: created,
 			})

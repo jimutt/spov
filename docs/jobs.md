@@ -31,6 +31,7 @@ spov jobs apply <id>
 | `--check <command>` | A command that verifies the work, run at `/workspace` (in the repository for a sync job). Its exit status is one of the job's gates. |
 | `--max-duration 45m` | How long the job may run unattended. When unset: `sandbox.job_max_duration` in your config, then your default from Settings, then 1 h. Never more than your limit. |
 | `--model provider/model` | Model to run on; your account's default when unset |
+| `--template name`, `--no-template` | Launch from a [sandbox template](sandbox.md#sandbox-templates). A job takes its default from `sandbox.job_template`, never `sandbox.template`. |
 | `--repo`, `--git-access`, `--env`, `--credentials`, `--no-credentials` | As for sessions. A job takes its git access from `sandbox.job_git_access` and your Settings, and its credentials from `sandbox.job_credentials`, never from the interactive defaults. |
 | `--landing <dir>` | Start in one repository's directory rather than `/workspace` |
 | `--goal-file <file>` | Read the goal from a file |
@@ -43,7 +44,7 @@ spov jobs apply <id>
 |---|---|
 | `spov jobs` (`list`) | Jobs newest first, five a page (`-n`, `--page`), plus any unfinished job older than that |
 | `spov jobs show <id>` | One job in full, with what it delivered |
-| `spov jobs report <id> [<path>]` | Print a report; `--save <dir>` writes it with its images |
+| `spov jobs report <id> [<path>]` | Print a report; `--save <dir>` writes it with its images. Printed raw to a pipe or a file; to a terminal its control characters are shown as escapes |
 | `spov attach <session>` | Join the job's conversation, waiting while it is queued and starting |
 | `spov jobs wait <id>` | Block until the job finishes, then exit by how it ended ([From a script](#from-a-script)) |
 | `spov jobs interrupt <id>` | Stop its current turn and take it over |
@@ -152,7 +153,9 @@ spov jobs release <id>   # discards it and ends the sandbox
 ```
 
 `apply` lands the work in place when the checkout is still on the branch and
-commit the job started from, else on a branch named for the job. It also
+commit the job started from, else on a branch named for the job. It then lists
+what changed, as a synced `spov fly` does ([Working from a
+checkout](sessions.md#working-from-a-checkout)). It also
 works on a job still running, steered or blocked, to take its work so far.
 A held job keeps its place in your job limit and bills until it is applied,
 released or its hold runs out; `spov jobs`, `spov ls` and the dashboard mark

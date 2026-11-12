@@ -90,6 +90,16 @@ func bundleOnlyNote(checkout git.LocalCheckout) string {
 		" its work comes back here when the session closes"
 }
 
+// repoMismatchError is a --repo that names another repository than the
+// checkout a synced launch starts from. Its text is fly's; a sync job
+// words its own.
+type repoMismatchError struct{ checkout, flag string }
+
+func (e repoMismatchError) Error() string {
+	return fmt.Sprintf("--sync uses the current git checkout (%s), which does not match --repo %s; drop --repo or pass --no-sync",
+		e.checkout, e.flag)
+}
+
 // resolveSyncLaunch inspects the local git checkout, matches its remote
 // against the configured platforms when possible (falling back to a
 // full local bundle when the repo has no remote, is on an unconfigured
@@ -112,8 +122,7 @@ func (e *Env) resolveSyncLaunch(ctx context.Context, c *client.Client, cfg confi
 			return server.RepoRef{}, nil, git.LocalCheckout{}, err
 		}
 		if !strings.EqualFold(parsed.Owner, checkout.Owner) || !strings.EqualFold(parsed.Name, checkout.Name) {
-			return server.RepoRef{}, nil, git.LocalCheckout{}, fmt.Errorf("--sync uses the current git checkout (%s/%s), which does not match --repo %s; drop --repo or pass --no-sync",
-				checkout.Owner, checkout.Name, repoFlags[0])
+			return server.RepoRef{}, nil, git.LocalCheckout{}, repoMismatchError{checkout: checkout.Owner + "/" + checkout.Name, flag: repoFlags[0]}
 		}
 		wantPlatform = parsed.Platform
 	}
@@ -375,13 +384,47 @@ func printSyncResult(env *Env, res git.SyncResult) {
 		return
 	}
 	if res.InPlace {
-		_, _ = fmt.Fprintf(env.Err, "Synced to %s (%s).\n", res.Branch, syncCountsSummary(res.Commits, res.FilesChanged, false))
-		return
+		_, _ = fmt.Fprintf(env.Err, "Synced to %s (%s).\n", printableLine(res.Branch), syncCountsSummary(res.Commits, res.FilesChanged, false))
+	} else {
+		_, _ = fmt.Fprintf(env.Err, "Synced to branch %s (%s; %s).\n",
+			printableLine(res.FallbackBranch), syncCountsSummary(res.Commits, res.FilesChanged, res.DirtyCommitted), printableLine(res.Reason))
+		_, _ = fmt.Fprintf(env.Err, "  checkout: git checkout %s\n", printableLine(res.FallbackBranch))
+		_, _ = fmt.Fprintf(env.Err, "  merge:    git merge %s\n", printableLine(res.FallbackBranch))
 	}
-	_, _ = fmt.Fprintf(env.Err, "Synced to branch %s (%s; %s).\n",
-		res.FallbackBranch, syncCountsSummary(res.Commits, res.FilesChanged, res.DirtyCommitted), res.Reason)
-	_, _ = fmt.Fprintf(env.Err, "  checkout: git checkout %s\n", res.FallbackBranch)
-	_, _ = fmt.Fprintf(env.Err, "  merge:    git merge %s\n", res.FallbackBranch)
+	for _, line := range syncChangeLines(res) {
+		_, _ = fmt.Fprintln(env.Err, line)
+	}
+}
+
+// maxSyncPaths caps the paths a sync-back lists.
+//
+// @decision(DL-136)
+const maxSyncPaths = 30
+
+// syncChangeLines says what a sync-back changed in the checkout: the
+// commits it added (count and short range), then each changed (M),
+// added (A) and deleted (D) path, at most maxSyncPaths of them, then
+// how many more there were. The paths are the sandbox's own words, so
+// each is printed with its control characters made visible.
+//
+// @decision(DL-136)
+func syncChangeLines(res git.SyncResult) []string {
+	var lines []string
+	if res.Commits > 0 && res.RangeFrom != "" && res.RangeTo != "" {
+		word := "commits"
+		if res.Commits == 1 {
+			word = "commit"
+		}
+		lines = append(lines, fmt.Sprintf("  %d %s added: %s..%s", res.Commits, word, printableLine(res.RangeFrom), printableLine(res.RangeTo)))
+	}
+	for i, c := range res.Changes {
+		if i == maxSyncPaths {
+			lines = append(lines, fmt.Sprintf("  and %d more", len(res.Changes)-maxSyncPaths))
+			break
+		}
+		lines = append(lines, fmt.Sprintf("  %c %s", c.Status, printableLine(c.Path)))
+	}
+	return lines
 }
 
 func syncCountsSummary(commits, files int, dirtyCommitted bool) string {

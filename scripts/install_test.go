@@ -133,6 +133,13 @@ func TestInstallScriptVerifiesBeforeItUnpacks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
 	}
+	// The install directory is not on this PATH, so the next command is
+	// given by its full path.
+	//
+	// @decision(DL-125)
+	if !strings.Contains(out, "next: run '"+bin+" init'") {
+		t.Errorf("the script does not say to run init next:\n%s", out)
+	}
 	if b, err := os.ReadFile(bin); err != nil || string(b) != stubSpov || !strings.Contains(out, "installed spov 1.2.3") {
 		t.Fatalf("installed %q, %v\n%s", b, err, out)
 	}
@@ -291,5 +298,110 @@ func TestAFailedSignatureCheckSaysWhy(t *testing.T) {
 		if err == nil || !strings.Contains(string(out), want) {
 			t.Errorf("output lacks %q (err %v):\n%s", want, err, out)
 		}
+	}
+}
+
+// A version reaches a URL and a directory name, so it must be N.N.N with
+// an optional -prerelease and nothing else, whether the user, the
+// releases redirect or the server named it.
+//
+// @decision(DL-136)
+func TestInstallScriptTakesOnlyAVersionAsAVersion(t *testing.T) {
+	r := newRelease(t)
+	for _, bad := range []string{
+		"1.2.3/../../evil", "1.2.3?x=/../../bin", "../1.2.3", "1.2", "1.2.3.4", "latest", "1.2.3 ", "1.2.3\n1.2.3", "1.2.3-a/b", "1.2.3-a%2fb", "1.2.3+build",
+	} {
+		home := t.TempDir()
+		out, err := r.install(t, home, nil, "SPOV_VERSION="+bad)
+		if err == nil || !strings.Contains(out, "not of the form") || strings.Contains(out, "downloading spov") {
+			t.Errorf("SPOV_VERSION=%q: %v\n%s", bad, err, out)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".local", "bin", "spov")); err == nil {
+			t.Errorf("SPOV_VERSION=%q installed something", bad)
+		}
+	}
+	// A release the server lacks is a download failure, not a bad shape.
+	if out, err := r.install(t, t.TempDir(), nil, "SPOV_VERSION=1.2.3-rc.1"); err == nil || strings.Contains(out, "not of the form") {
+		t.Errorf("a prerelease was refused as a shape: %v\n%s", err, out)
+	}
+}
+
+// @decision(DL-136)
+func TestInstallScriptRefusesAnOpenCodePinThatIsNotAVersion(t *testing.T) {
+	r := newRelease(t)
+	for name, tc := range map[string]struct {
+		pin   string
+		extra string
+	}{
+		"the server's":   {pin: "2.0.22/../../evilpkg/1.0.0?x=/../../bin/2.0.22"},
+		"a query":        {pin: "2.0.22?x=1"},
+		"the variable's": {extra: "SPOV_OPENCODE_VERSION=2.0.22/../../evil"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tc.pin != "" {
+				r.mu.Lock()
+				r.pin = tc.pin
+				r.mu.Unlock()
+			}
+			home := t.TempDir()
+			extra := []string{"SPOV_SERVER=" + r.URL}
+			if tc.extra != "" {
+				extra = append(extra, tc.extra)
+			}
+			out, err := r.install(t, home, []string{"--with-opencode"}, extra...)
+			if err == nil || !strings.Contains(out, "OpenCode version is not of the form") || strings.Contains(out, "downloading OpenCode") {
+				t.Errorf("%v\n%s", err, out)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".local", "share", "spov", "bin")); err == nil {
+				t.Error("something was installed under the data directory")
+			}
+		})
+	}
+	t.Run("a prerelease pin is a version", func(t *testing.T) {
+		r.mu.Lock()
+		r.pin = "2.0.22-beta.1"
+		r.mu.Unlock()
+		home := t.TempDir()
+		if out, err := r.install(t, home, []string{"--with-opencode"}, "SPOV_SERVER="+r.URL); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".local", "share", "spov", "bin", "2.0.22-beta.1", "opencode")); err != nil {
+			t.Errorf("a prerelease pin was not installed: %v", err)
+		}
+	})
+}
+
+// Without cosign the checksum is all that is checked, and the script says
+// so in one line with how to check more; SPOV_REQUIRE_SIGNATURE=1 makes
+// that a failure.
+//
+// @decision(DL-136)
+func TestAnInstallWithoutCosignSaysTheSignatureWasNotChecked(t *testing.T) {
+	r := newRelease(t)
+	out, err := r.install(t, t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	const line = "the checksum was verified but the signature was not"
+	if strings.Count(out, line) != 1 {
+		t.Errorf("want the line once:\n%s", out)
+	}
+	if !strings.Contains(out, "SPOV_REQUIRE_SIGNATURE=1") || !strings.Contains(out, "install cosign") {
+		t.Errorf("the line does not say how to verify:\n%s", out)
+	}
+	if strings.Index(out, line) < strings.Index(out, "downloading spov") || strings.Index(out, line) > strings.Index(out, "installed spov") {
+		t.Errorf("the line is not between the download and the install:\n%s", out)
+	}
+
+	out, err = r.install(t, t.TempDir(), nil, "SPOV_REQUIRE_SIGNATURE=1")
+	if err == nil || !strings.Contains(out, "cosign is not installed") || strings.Contains(out, "installed spov") {
+		t.Errorf("a required signature without cosign: %v\n%s", err, out)
+	}
+	// A tampered archive never reaches the line: the checksum failed.
+	r.mu.Lock()
+	r.archive = tarGz(t, map[string]string{"spov": "#!/bin/sh\n"})
+	r.mu.Unlock()
+	if out, err := r.install(t, t.TempDir(), nil); err == nil || strings.Contains(out, line) {
+		t.Errorf("a tampered archive: %v\n%s", err, out)
 	}
 }

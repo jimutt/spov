@@ -4,6 +4,23 @@
 |----|-------|--------|-----------|------|
 | DL-129 | Administrators manage the allowlist on the Settings page | proposed | web | allowlist, settings, admin, access |
 | DL-128 | An allowlist entry names an e-mail address or a GitHub account, and a user is the GitHub account, not the address | proposed | server | auth, login, allowlist, access |
+| DL-136 | The CLI runs git without the checkout hooks, lists what a sync-back changed, prints agent text safely, and the installer validates versions | accepted | cli | cli, sync, security, installer |
+| DL-135 | A group of small hardening fixes in the server and the credential proxy | accepted | server | security, server, proxy, auth |
+| DL-134 | Image builds are limited per user, and the repository listing is cached for a minute | accepted | server | images, quota, security, repos |
+| DL-133 | Request limits: sign-ins per address and per replica, and each user's rate, creates, streams and requests in progress | accepted | server | security, limits, api, auth |
+| DL-132 | Removing a person from the allowlist ends their sessions and jobs, revokes their CLI tokens and deletes their credentials | accepted | server | auth, allowlist, offboarding, security |
+| DL-131 | One session stores a bounded number of conversations and a bounded size of history, and the verdict holds a bounded size | accepted | server | recorder, storage, security, limits |
+| DL-130 | An exec reads a bounded amount of a sandbox program's output, and more is an error | accepted | sandbox | sandbox, exec, security, limits |
+| DL-127 | The session store holds a hash of a browser session token, never the token | accepted | server | auth, login, security |
+| DL-126 | Sync-back writes only what git status would show, and never lands in place over a hooks directory | accepted | cli | sync, security, cli |
+| DL-125 | Getting started is install, spov init, spov fly, and a launch that finds nothing configured points at init | accepted | cli | init, onboarding, docs |
+| DL-124 | spov init fixes a missing step only after asking: it writes the GitHub platform, opts into gh, stores a model key, and runs sign-ins and the image build | accepted | cli | init, onboarding, cli, credentials |
+| DL-123 | spov init is a re-runnable checklist that gets a local setup ready, GitHub through gh first | accepted | cli | init, onboarding, cli |
+| DL-122 | The CLI names a template with --template or the user file, never a project file, and lists and removes them | accepted | cli | sandbox-templates, cli, config |
+| DL-121 | Settings has a Sandbox templates section, and both launch forms pick a template, None by default | accepted | web | sandbox-templates, web, settings |
+| DL-120 | A launch that names a template takes its settings under the launch's own, and the session records what was resolved | accepted | server | sandbox-templates, sessions, jobs, credentials |
+| DL-119 | A sandbox template is a personal, named set of sandbox settings kept by the server | accepted | server | sandbox-templates, config, api |
+| DL-118 | Routed credentials are added and replaced from the Settings page, an admin's for the organisation too | accepted | web | sandbox-templates, routed-credentials, credentials, web |
 | DL-117 | On a phone the composer is one container: the text over a toolbar holding the model chip and a small Send, folded to one row while idle | accepted | web | web, phone, composer |
 | DL-116 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
 | DL-115 | A session's last-message preview comes from its root conversations, never from a subagent | accepted | server | subagents |

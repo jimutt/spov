@@ -59,53 +59,36 @@ curl -fsSL https://github.com/jimutt/spov/releases/latest/download/install.sh | 
 spov goes to `~/.local/bin` (the script tells you if that is not on your
 `PATH`) and OpenCode beside spov's data in `~/.local/share/spov/bin/`. The
 [script](scripts/install.sh) checks the download against the release's
-checksums, and their signature when `cosign` is installed. Running it again updates spov;
+checksums, and their signature when `cosign` is installed. Without `cosign` it
+installs after the checksum matches and says, in one line, that the signature
+was not verified; `SPOV_REQUIRE_SIGNATURE=1` makes that a failure instead, and
+is the checked path. A version (`SPOV_VERSION`, or the OpenCode version a server
+names) must be `N.N.N` or `N.N.N-prerelease`, or the script stops before it
+downloads anything. Running it again updates spov;
 `… | SPOV_VERSION=0.2.0 sh -s -- --with-opencode` pins a release. With Homebrew,
 `brew install jimutt/tap/spov` installs spov alone; install OpenCode 2 with
 its own installer (`curl -fsSL https://opencode.ai/v2/install | bash`).
 
-**2. Connect Modal**:
+**2. Set up this machine**:
 
 ```sh
-uvx modal setup        # or: pipx run modal setup, or pip install modal && python3 -m modal setup
+spov init
 ```
 
-This signs you in and writes `~/.modal.toml`; `MODAL_TOKEN_ID` and
-`MODAL_TOKEN_SECRET` work too. Then build the sandbox image once, which takes a
-few minutes and is needed again only when spov moves to a new OpenCode
-version:
+It checks what a first launch needs and offers to set up whatever is missing,
+asking before each change:
 
-```sh
-spov serve image build
-```
+- **Modal**: runs Modal's own sign-in (`modal setup`) in your terminal;
+- **GitHub**: uses the `gh` CLI's login (and runs `gh auth login` if it is
+  not signed in), and writes the `platforms` entry in
+  `~/.config/spov/config.yaml` for you;
+- **a model**: takes a pasted API key, or signs you in to OpenCode Go or Zen;
+- **the sandbox image**: builds it once, which takes a few minutes.
 
-**3. Connect GitHub.** Create `~/.config/spov/config.yaml`:
+Run it again at any time: a step that is done is left alone. `spov init
+--check` only reports, and exits 1 when something is missing.
 
-```yaml
-platforms:
-  - name: github
-    kind: github
-    account: your-username
-```
-
-and reuse `gh`'s login (`gh auth login` first if it is not signed in):
-
-```sh
-spov credentials add github --from-gh
-```
-
-A GitHub App is better still: it gives each session a token for just its own
-repositories ([credentials.md](docs/credentials.md#github)).
-
-**4. Add a model.** Store an API key:
-
-```sh
-spov credentials add ANTHROPIC_API_KEY    # or OPENROUTER_API_KEY, OPENAI_API_KEY, ...
-```
-
-or sign in to OpenCode Go or Zen with `spov login opencode`.
-
-**5. Launch a session** from a checkout of a repository on GitHub:
+**3. Launch a session** from a checkout of a repository on GitHub:
 
 ```sh
 cd your-repo
@@ -123,11 +106,59 @@ commit or stash first, or pass `--no-sync` to launch without syncing. From
 any other directory, `spov fly --repo owner/name` launches a repository's
 default branch instead.
 
+### Setting up by hand
+
+`spov init` runs these for you. Use them to script a setup, or for Forgejo,
+Gitea, GitLab or a GitHub App, which init does not set up.
+
+**Connect Modal**:
+
+```sh
+uvx modal setup        # or: pipx run modal setup, or pip install modal && python3 -m modal setup
+```
+
+This signs you in and writes `~/.modal.toml`; `MODAL_TOKEN_ID` and
+`MODAL_TOKEN_SECRET` work too. Then build the sandbox image once, which takes a
+few minutes and is needed again only when spov moves to a new OpenCode
+version:
+
+```sh
+spov serve image build
+```
+
+**Connect GitHub.** Create `~/.config/spov/config.yaml`:
+
+```yaml
+platforms:
+  - name: github
+    kind: github
+    account: your-username
+```
+
+and reuse `gh`'s login (`gh auth login` first if it is not signed in):
+
+```sh
+spov credentials add github --from-gh
+```
+
+A GitHub App is better still: it gives each session a token for just its own
+repositories ([credentials.md](docs/credentials.md#github)).
+
+**Add a model.** Store an API key:
+
+```sh
+spov credentials add ANTHROPIC_API_KEY    # or OPENROUTER_API_KEY, OPENAI_API_KEY, ...
+```
+
+or sign in to OpenCode Go or Zen with `spov login opencode`.
+
 ### When something goes wrong
 
+- **Not sure what is missing**: `spov init --check` lists what a launch needs
+  and what this machine has.
 - **"image not published"**: the sandbox image is not built yet; run
   `spov serve image build`.
-- **The agent cannot reach a model**: store a key (step 4). A key stored
+- **The agent cannot reach a model**: store a key (`spov init`, or `spov credentials add`). A key stored
   while the local server runs is seen once it restarts, which it does after a
   minute with nothing to do.
 - **An OpenCode version mismatch**: run the install command again.
@@ -189,7 +220,10 @@ the dashboard ([deploy/README.md](deploy/README.md)).
 Each sandbox has a general-purpose toolchain (Python, Node, Bun, Go, build
 tools) and takes add-ons such as Rust, Java or Postgres. What is installed,
 how credentials are kept out of it, network access and cost are in
-[The sandbox](docs/sandbox.md).
+[The sandbox](docs/sandbox.md). A
+[sandbox template](docs/sandbox.md#sandbox-templates) keeps a named set of
+those settings (network, registry credentials, variables, add-ons) to pick
+when you launch, from the dashboard or with `--template`.
 
 ## Configure it
 
@@ -220,14 +254,16 @@ them.
 - [Credentials](docs/credentials.md): GitHub, Forgejo, Gitea and GitLab, model
   providers, private registries
 - [The sandbox](docs/sandbox.md): toolchain, add-ons, environment variables,
-  security, network, cost
+  security, network, sandbox templates, cost
 - [The server and the dashboard](docs/server.md): local or hosted, signing in,
   the web dashboard
 - [Configuration reference](docs/configuration.md): every key
 - Reference: [forges](docs/forges.md), [GitHub access](docs/github-access.md),
   [local history](docs/local-history.md), [metrics](docs/metrics.md),
   [the HTTP API](docs/api/openapi.yaml)
-- Running a server: [deploy/README.md](deploy/README.md)
+- Running a server: [deploy/README.md](deploy/README.md), and what to decide
+  before you share one: [Running a shared server safely](docs/security.md)
+- Reporting a vulnerability: [SECURITY.md](SECURITY.md)
 
 ## Contributing
 

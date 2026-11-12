@@ -44,6 +44,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		access   string
 		asJSON   bool
 		routed   routedFlags
+		template templateFlags
 		envVars  []string
 		wait     bool
 		timeout  time.Duration
@@ -72,7 +73,8 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 			return createJob(cmd.Context(), env, createOptions{
 				Goal: goal, Kind: kind, Repos: repos, Landing: landing, Check: check,
 				Model: model, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
-				Env: envVars, Wait: wait, Timeout: timeout, Hold: hold,
+				Template: template,
+				Env:      envVars, Wait: wait, Timeout: timeout, Hold: hold,
 			})
 		},
 	}
@@ -108,6 +110,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 		"how far the sandbox's git credentials reach: repos (the job's) or all (every repository they can);"+
 			" sandbox.job_git_access, then your account's job default, then repos, when unset")
 	addRoutedFlags(cmd, &routed, "sandbox.job_credentials")
+	addTemplateFlags(env, cmd, &template, "sandbox.job_template")
 	addEnvFlag(cmd, &envVars)
 	// @decision(DL-103)
 	cmd.Flags().BoolVar(&wait, "wait", false,
@@ -120,6 +123,8 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 type createOptions struct {
 	// @decision(DL-075)
 	Routed routedFlags
+	// @decision(DL-122)
+	Template templateFlags
 	// Env are --env KEY=VALUE.
 	//
 	// @decision(DL-096)
@@ -191,6 +196,13 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		return err
 	}
 	cfg := res.Config
+	// A job never takes sandbox.template.
+	//
+	// @decision(DL-122)
+	template, templateKey, templateConfigured := templateFor(cfg, opts.Template, true)
+	if template != "" {
+		underTemplate(env, &cfg, template, true)
+	}
 	// @decision(DL-096)
 	vars, err := launchEnv(cfg.Sandbox.Env, opts.Env, cfg.Sandbox.Addons)
 	if err != nil {
@@ -199,6 +211,11 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 	c, err := env.client(ctx)
 	if err != nil {
 		return err
+	}
+	if templateConfigured {
+		if err := checkConfiguredTemplate(ctx, c, template, templateKey); err != nil {
+			return err
+		}
 	}
 	// A sync job is seeded from the checkout it is created in, as a
 	// synced `spov fly`, and checked before the server is asked.
@@ -211,6 +228,11 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 			return errors.New("a sync job works in one repository, the checkout's; drop the extra --repo flags")
 		}
 		ref, req, checkout, err := env.resolveSyncLaunch(ctx, c, cfg, opts.Repos)
+		var mismatch repoMismatchError
+		if errors.As(err, &mismatch) {
+			return fmt.Errorf("a sync job starts from the checkout it is created in (%s), which does not match --repo %s; drop --repo",
+				mismatch.checkout, mismatch.flag)
+		}
 		if err != nil {
 			return fmt.Errorf("a sync job starts from the checkout it is created in: %w", err)
 		}
@@ -250,8 +272,10 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		Addons: sb.Addons,
 		Apt:    sb.Apt,
 		// @decision(DL-096)
-		Env:    vars,
-		Egress: sb.Egress,
+		Env: vars,
+		// @decision(DL-122)
+		Template: template,
+		Egress:   sb.Egress,
 		// @decision(DL-068)
 		EgressExtraDomains: sb.EgressExtraDomains,
 		// No timeout and no idle timeout: the server derives both from
@@ -546,15 +570,16 @@ func writeJobTable(env *Env, jobs []server.JobView, now time.Time) error {
 	for _, j := range jobs {
 		// @decision(DL-101)
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s%s\t%s\t%s\n",
-			j.ID, j.Kind, j.State, heldMark(j.Sync), formatAge(now.Sub(j.CreatedAt)), firstLine(j.Goal, 48))
+			j.ID, j.Kind, j.State, heldMark(j.Sync), formatAge(now.Sub(j.CreatedAt)), printableLine(firstLine(j.Goal, 48)))
 	}
 	return w.Flush()
 }
 
 // writeJobDetail prints one job. The session id is shown because it is
-// how a person reaches the transcript and `spov attach`.
+// how a person reaches the transcript and `spov attach`. What an agent
+// wrote goes through Printable.
 //
-// @decision(DL-045)
+// @decision(DL-045) @decision(DL-136)
 func writeJobDetail(env *Env, j server.JobView) error {
 	// Buffered until Flush; see writeJobTable.
 	w := tabwriter.NewWriter(env.Out, 0, 0, 2, ' ', 0)
@@ -604,7 +629,7 @@ func writeJobDetail(env *Env, j server.JobView) error {
 		_, _ = fmt.Fprintf(w, "Attempt\t%d\n", j.Attempt)
 	}
 	if j.Error != "" {
-		_, _ = fmt.Fprintf(w, "Note\t%s\n", j.Error)
+		_, _ = fmt.Fprintf(w, "Note\t%s\n", Printable(j.Error))
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -618,11 +643,11 @@ func writeJobDetail(env *Env, j server.JobView) error {
 	//
 	// @decision(DL-050)
 	if strings.TrimSpace(j.Verdict) != "" {
-		if _, err := fmt.Fprintf(env.Out, "\nVerdict:\n%s\n", strings.TrimRight(j.Verdict, "\n")); err != nil {
+		if _, err := fmt.Fprintf(env.Out, "\nVerdict:\n%s\n", Printable(strings.TrimRight(j.Verdict, "\n"))); err != nil {
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(env.Out, "\nGoal:\n%s\n", j.Goal)
+	_, err := fmt.Fprintf(env.Out, "\nGoal:\n%s\n", Printable(j.Goal))
 	return err
 }
 
@@ -664,14 +689,14 @@ func writeDeliverables(env *Env, j server.JobView) error {
 		}
 		w := tabwriter.NewWriter(env.Out, 0, 0, 2, ' ', 0)
 		for _, d := range j.Deliverables {
-			_, _ = fmt.Fprintf(w, "  %s\t%s\n", d.Status, deliverableLine(d))
+			_, _ = fmt.Fprintf(w, "  %s\t%s\n", printableLine(string(d.Status)), printableLine(deliverableLine(d)))
 		}
 		if err := w.Flush(); err != nil {
 			return err
 		}
 	}
 	if j.Unfinished != "" {
-		if _, err := fmt.Fprintf(env.Out, "\nLeft unfinished:\n%s\n", j.Unfinished); err != nil {
+		if _, err := fmt.Fprintf(env.Out, "\nLeft unfinished:\n%s\n", Printable(j.Unfinished)); err != nil {
 			return err
 		}
 	}
@@ -762,7 +787,7 @@ func newJobsReportCmd(env *Env) *cobra.Command {
 			default:
 				w := tabwriter.NewWriter(env.Out, 0, 0, 2, ' ', 0)
 				for _, r := range reports {
-					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", r.Path, r.Title, formatBytes(r.Size))
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", printableLine(r.Path), printableLine(r.Title), formatBytes(r.Size))
 				}
 				if err := w.Flush(); err != nil {
 					return err
@@ -775,6 +800,13 @@ func newJobsReportCmd(env *Env) *cobra.Command {
 				return jobError(err)
 			}
 			if saveDir == "" {
+				// Raw to a pipe or a file, which is what a script wants;
+				// on a terminal its control characters would act.
+				//
+				// @decision(DL-136)
+				if env.stdoutIsTerminal() {
+					body = []byte(Printable(string(body)))
+				}
 				_, err = env.Out.Write(body)
 				return err
 			}

@@ -98,6 +98,10 @@ func (s *Supervisor) follow(ctx context.Context, job store.Job, cursor int64) (f
 	if err != nil {
 		return out, err
 	}
+	// Whether the recording stopped, for a send it cannot show.
+	//
+	// @decision(DL-131)
+	var stops unrecorded
 
 	for {
 		before := out.Cursor
@@ -143,6 +147,19 @@ func (s *Supervisor) follow(ctx context.Context, job store.Job, cursor int64) (f
 						sig = signalSteered
 					}
 				}
+			}
+			// A person's send to a job whose recording has stopped is
+			// read from spov's own record of it, since no delivery will
+			// be recorded to steer on.
+			//
+			// @decision(DL-131) @decision(DL-052)
+			stops.saw(e)
+			over, err := s.sentAfterStop(ctx, job, e, &stops)
+			if err != nil {
+				return out, err
+			}
+			if over {
+				sig = signalSteered
 			}
 			switch sig {
 			case signalGap:

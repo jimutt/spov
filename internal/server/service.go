@@ -17,6 +17,7 @@ import (
 	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
 	"github.com/jimutt/spov/internal/routedcred"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/session"
 	"github.com/jimutt/spov/internal/store"
@@ -46,6 +47,10 @@ type Service struct {
 	//
 	// @decision(DL-016)
 	imageUses map[string]time.Time
+	// repos keeps each user's repository listings for RepoListTTL.
+	//
+	// @decision(DL-134)
+	repos *repoCache
 	// renewals is each session's re-mint state: when one was last tried,
 	// and the re-minted tokens that may still be in its sandbox. Lazily
 	// made; lost on restart, when the tokens expire on their own.
@@ -118,6 +123,7 @@ func newService(deps Deps) *Service {
 	return &Service{deps: deps, live: map[string]*session.Session{}, logs: map[string]*launchLog{},
 		launches: map[string]context.CancelFunc{}, deleted: map[string]bool{},
 		imageUses: map[string]time.Time{},
+		repos:     newRepoCache(deps.Now),
 		passwords: newPasswordCache(DefaultPasswordCacheSize),
 		conns:     newConnCache(DefaultConnectionCacheSize),
 		messages:  newMessageLimiter(MessagesPerMinute)}
@@ -129,9 +135,19 @@ func newService(deps Deps) *Service {
 //
 // @decision(DL-005)
 func (s *Service) Create(ctx context.Context, p auth.Principal, req store.SessionRequest) (store.Session, error) {
+	// Before the defaults, which would make every field look set.
+	//
+	// @decision(DL-120)
+	tmpl, err := s.templateFor(ctx, p, req.Template)
+	if err != nil {
+		return store.Session{}, err
+	}
+	if tmpl != nil {
+		req = applyTemplate(req, *tmpl)
+	}
 	req = s.withDefaults(req)
 	if err := s.validateRequest(req); err != nil {
-		return store.Session{}, err
+		return store.Session{}, inTemplate(tmpl, err)
 	}
 	// One read of the profile answers both of the next two questions.
 	//
@@ -159,11 +175,11 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	}
 	// @decision(DL-075)
 	if err := s.refuseRoutedNames(ctx, p.OrgID, p.UserID, req.Routed); err != nil {
-		return store.Session{}, err
+		return store.Session{}, inTemplate(tmpl, err)
 	}
 	// @decision(DL-077)
 	if err := s.refuseRoutesWithoutProxy(ctx, p.OrgID, p.UserID, req.Routed); err != nil {
-		return store.Session{}, err
+		return store.Session{}, inTemplate(tmpl, err)
 	}
 	// The caller's own limits, checked before anything billable. The
 	// size limits refuse here; the concurrency limit is counted inside
@@ -175,6 +191,10 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	if err := quota.checkRequest(req); err != nil {
 		// @decision(DL-011)
 		s.deps.Metrics.QuotaRefused(ctx, telemetry.QuotaSize)
+		return store.Session{}, err
+	}
+	// @decision(DL-134)
+	if err := s.refuseBuildOverLimit(ctx, p.UserID, req); err != nil {
 		return store.Session{}, err
 	}
 	now := s.deps.Now()
@@ -212,15 +232,20 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	s.launches[sess.ID] = cancel
 	s.mu.Unlock()
 
-	go func() {
+	// A panic in a launch is logged and survived: the launch ends as a
+	// failed one does.
+	//
+	// @decision(DL-135)
+	go safego.Do("launch of session "+sess.ID, s.deps.Warn, func() {
 		defer func() {
 			cancel()
 			s.mu.Lock()
 			delete(s.launches, sess.ID)
 			s.mu.Unlock()
 		}()
+		defer s.launchPanicked(launchCtx, sess, log, telemetry.KindInteractive, runPlan{}, s.deps.Now())
 		s.launch(launchCtx, sess, log, telemetry.KindInteractive, runPlan{})
-	}()
+	})
 	return sess, nil
 }
 
@@ -488,6 +513,76 @@ func (s *Service) validateRequest(req store.SessionRequest) error {
 	return nil
 }
 
+// failLaunch records a launch that ended without a session: the row
+// failed with p's detail as its error (or stopped, when a delete asked
+// for it), the run ended, and the launch stream ended with p.
+//
+// @decision(DL-005) @decision(DL-135)
+func (s *Service) failLaunch(storeCtx context.Context, sess store.Session, log *launchLog, kind telemetry.SessionKind, plan runPlan, started time.Time, p ProblemView) {
+	t := s.deps.Now()
+	sess.StoppedAt = &t
+	s.mu.Lock()
+	deleted := s.deleted[sess.ID]
+	delete(s.deleted, sess.ID)
+	s.mu.Unlock()
+	// The delete may have been recorded by another replica, where
+	// this process's map says nothing.
+	//
+	// @decision(DL-003)
+	if !deleted {
+		if got, err := s.deps.Store.Sessions().CancelRequested(storeCtx, sess.OrgID, sess.ID); err == nil {
+			deleted = got
+		}
+	}
+	if deleted {
+		// The launch was cancelled by a delete; that is the outcome
+		// the user asked for, not a failure.
+		sess.State = store.StateStopped
+		sess.Error = ""
+		p.Detail = "deleted while starting"
+	} else {
+		sess.State = store.StateFailed
+		sess.Error = p.Detail
+		// @decision(DL-011)
+		log.mu.Lock()
+		step := launchStep(log.running)
+		log.mu.Unlock()
+		s.deps.Metrics.SessionLaunched(storeCtx, kind, false, step, s.deps.Now().Sub(started))
+	}
+	if uerr := s.deps.Store.Sessions().Update(storeCtx, sess); uerr != nil {
+		s.deps.Warn(fmt.Sprintf("launch %s: record failure: %v", sess.ID, uerr))
+	}
+	s.endFailedRun(storeCtx, sess, plan, t)
+	s.forgetSession(sess.ID)
+	log.fail(p)
+}
+
+// launchPanicked, deferred in a launch's goroutine, ends a launch that
+// panicked as failLaunch ends a failed one, so its stream ends and its
+// row does not stay starting, then panics again for safego.Do to log.
+// A launch that had already committed its session keeps it.
+//
+// @decision(DL-135)
+func (s *Service) launchPanicked(ctx context.Context, sess store.Session, log *launchLog, kind telemetry.SessionKind, plan runPlan, started time.Time) {
+	v := recover()
+	if v == nil {
+		return
+	}
+	storeCtx := context.WithoutCancel(ctx)
+	ref := logInternal(fmt.Errorf("launch of session %s panicked: %v", sess.ID, v))
+	p := ProblemView{Title: "Launch failed", Status: 500,
+		Detail: "internal error (reference " + ref + "); the detail is in the server log"}
+	switch current, err := s.deps.Store.Sessions().Get(storeCtx, sess.OrgID, sess.ID); {
+	case err == nil && current.State == store.StateStarting:
+		s.failLaunch(storeCtx, current, log, kind, plan, started, p)
+	case err == nil && current.State == store.StateRunning:
+		log.ready(viewOf(current, s.deps.Now()))
+	default:
+		log.fail(p)
+	}
+	panic(v)
+}
+
 // launch provisions a session's sandbox and records the outcome on the
 // row. The variadic mutators adjust the launch options just before the
 // launcher is called; a job's session uses one to attach its
@@ -501,43 +596,11 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	started := s.deps.Now()
 	fail := func(err error) {
 		s.deps.Warn(fmt.Sprintf("launch %s: %v", sess.ID, err))
-		msg := redact.Error(err)
-		t := s.deps.Now()
-		sess.StoppedAt = &t
-		s.mu.Lock()
-		deleted := s.deleted[sess.ID]
-		delete(s.deleted, sess.ID)
-		s.mu.Unlock()
-		// The delete may have been recorded by another replica, where
-		// this process's map says nothing.
+		// The row's error reaches the session's views and the launch
+		// stream, so a store failure is stored as the fixed message.
 		//
-		// @decision(DL-003)
-		if !deleted {
-			if got, err := s.deps.Store.Sessions().CancelRequested(storeCtx, sess.OrgID, sess.ID); err == nil {
-				deleted = got
-			}
-		}
-		if deleted {
-			// The launch was cancelled by a delete; that is the outcome
-			// the user asked for, not a failure.
-			sess.State = store.StateStopped
-			sess.Error = ""
-			msg = "deleted while starting"
-		} else {
-			sess.State = store.StateFailed
-			sess.Error = msg
-			// @decision(DL-011)
-			log.mu.Lock()
-			step := launchStep(log.running)
-			log.mu.Unlock()
-			s.deps.Metrics.SessionLaunched(storeCtx, kind, false, step, s.deps.Now().Sub(started))
-		}
-		if uerr := s.deps.Store.Sessions().Update(storeCtx, sess); uerr != nil {
-			s.deps.Warn(fmt.Sprintf("launch %s: record failure: %v", sess.ID, uerr))
-		}
-		s.endFailedRun(storeCtx, sess, plan, t)
-		s.forgetSession(sess.ID)
-		log.fail(ProblemView{Title: "Launch failed", Status: 502, Detail: msg})
+		// @decision(DL-135)
+		s.failLaunch(storeCtx, sess, log, kind, plan, started, ProblemView{Title: "Launch failed", Status: 502, Detail: clientText(err)})
 	}
 
 	// The session's owner, not the server, decides which credentials
@@ -630,6 +693,10 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	for _, n := range routedNotes {
 		log.Note(n)
 	}
+	// @decision(DL-120)
+	if name := sess.Request.Template; name != "" {
+		log.Note("sandbox settings are from your template " + name + ", under what this launch set itself")
+	}
 	proxied := make([]credproxy.Route, len(routed))
 	presets := make([]routedcred.Route, len(routed))
 	for i, c := range routed {
@@ -659,7 +726,7 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	}
 	pick := variantPick{image: sess.Request.Image, addons: addons}
 	if spec, ok := s.variantOf(sess.Request); ok {
-		pick = s.pickVariant(ctx, spec, log.Note)
+		pick = s.pickVariant(ctx, attributionUser(sess.OwnerID), spec, log.Note)
 		// Its name still resolves, so the launch would only meet Modal's
 		// NotFound.
 		//

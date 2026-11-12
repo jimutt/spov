@@ -63,9 +63,14 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	}
 	now := s.deps.Now()
 	jobID := store.NewID(now)
-	sreq, err := s.jobSessionRequest(req, jobID)
+	// @decision(DL-120)
+	tmpl, err := s.templateFor(ctx, p, req.Template)
 	if err != nil {
 		return store.Job{}, err
+	}
+	sreq, err := s.jobSessionRequest(req, jobID, tmpl)
+	if err != nil {
+		return store.Job{}, inTemplate(tmpl, err)
 	}
 	// One read of the profile answers both of the next two questions.
 	//
@@ -95,11 +100,11 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	}
 	// @decision(DL-075)
 	if err := s.refuseRoutedNames(ctx, p.OrgID, p.UserID, sreq.Routed); err != nil {
-		return store.Job{}, err
+		return store.Job{}, inTemplate(tmpl, err)
 	}
 	// @decision(DL-077)
 	if err := s.refuseRoutesWithoutProxy(ctx, p.OrgID, p.UserID, sreq.Routed); err != nil {
-		return store.Job{}, err
+		return store.Job{}, inTemplate(tmpl, err)
 	}
 	// The caller's own limits, checked before anything billable. The
 	// size limits refuse here; the concurrency limit is counted inside
@@ -128,6 +133,10 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	if err := quota.checkRequest(sreq); err != nil {
 		// @decision(DL-011)
 		s.deps.Metrics.QuotaRefused(ctx, telemetry.QuotaSize)
+		return store.Job{}, err
+	}
+	// @decision(DL-134)
+	if err := s.refuseBuildOverLimit(ctx, p.UserID, sreq); err != nil {
 		return store.Job{}, err
 	}
 
@@ -174,7 +183,8 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	if sreq.Sync != nil {
 		seed = sreq.Sync.Bundle
 	}
-	if err := s.createJobWithinQuota(ctx, sess, job, seed, quota.MaxConcurrentJobs); err != nil {
+	job, err = s.createJobWithinQuota(ctx, sess, job, seed, quota.MaxConcurrentJobs)
+	if err != nil {
 		return store.Job{}, err
 	}
 	// @decision(DL-013)
@@ -198,10 +208,11 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 // createJobWithinQuota counts the owner's unfinished jobs and inserts
 // the session and the job in one transaction, so the count a create
 // decides on is the count it commits against. A max of zero or less is
-// no limit.
+// no limit. It returns the job as stored, with the store's timestamps.
 //
 // @decision(DL-045) @decision(DL-009)
-func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, job store.Job, seed []byte, max int) error {
+func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, job store.Job, seed []byte, max int) (store.Job, error) {
+	stored := job
 	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
 		if max > 0 {
 			n, err := tx.Jobs().CountLive(ctx, job.OrgID, job.OwnerID)
@@ -222,25 +233,32 @@ func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, 
 		}
 		// @decision(DL-100)
 		if len(seed) > 0 {
-			return tx.Jobs().PutSeed(ctx, job.OrgID, job.ID, seed)
+			if err := tx.Jobs().PutSeed(ctx, job.OrgID, job.ID, seed); err != nil {
+				return err
+			}
 		}
-		return nil
+		var err error
+		stored, err = tx.Jobs().Get(ctx, job.OrgID, job.ID)
+		return err
 	})
 	if errors.Is(err, store.ErrConflict) {
-		return ErrNameInUse
+		return store.Job{}, ErrNameInUse
 	}
 	// @decision(DL-011)
 	if errors.Is(err, ErrQuotaExceeded) {
 		s.deps.Metrics.QuotaRefused(ctx, telemetry.QuotaJobs)
 	}
-	return err
+	if err != nil {
+		return store.Job{}, err
+	}
+	return stored, nil
 }
 
 // jobSessionRequest builds the request for the fresh session a job runs
 // in. A job never joins a live session.
 //
 // @decision(DL-045)
-func (s *Service) jobSessionRequest(req JobRequest, jobID string) (store.SessionRequest, error) {
+func (s *Service) jobSessionRequest(req JobRequest, jobID string, tmpl *store.Template) (store.SessionRequest, error) {
 	goal := strings.TrimSpace(req.Goal)
 	var problems []string
 	if goal == "" {
@@ -337,6 +355,10 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string) (store.Session
 		Apt:    req.Apt,
 		// @decision(DL-096)
 		Env: req.Env,
+	}
+	// @decision(DL-120)
+	if tmpl != nil {
+		sreq = applyTemplate(sreq, *tmpl)
 	}
 	sreq = s.withDefaults(sreq)
 	if err := s.validateRequest(sreq); err != nil {
@@ -572,6 +594,10 @@ func (s *Service) ReportImages(ctx context.Context, p auth.Principal, jobID stri
 func (s *Service) WriteReportBundle(ctx context.Context, p auth.Principal, jobID string, report store.JobFile, images []store.JobFile, w io.Writer) error {
 	zw := zip.NewWriter(w)
 	add := func(f store.JobFile) error {
+		// @decision(DL-135)
+		if !jobs.SafeEntryName(f.Path) {
+			return fmt.Errorf("%w: %q is not a file name that can be bundled", ErrInvalidRequest, f.Path)
+		}
 		zf, err := zw.CreateHeader(&zip.FileHeader{Name: f.Path, Method: zip.Deflate, Modified: f.CreatedAt})
 		if err != nil {
 			return err
@@ -670,15 +696,17 @@ func (s *Service) ResumeJob(ctx context.Context, p auth.Principal, id string) er
 // jobLoopAnnouncedStop reports whether the plugin already announced the
 // end of this job's run. It reads the transcript with the same reader
 // loopStoppedInMessages uses, because the announcement can be missing
-// from the event log.
+// from the event log: the newest messages of the job's own conversation.
 //
-// @decision(DL-054) @decision(DL-045)
+// @decision(DL-054) @decision(DL-045) @decision(DL-131)
 func (s *Service) jobLoopAnnouncedStop(ctx context.Context, job store.Job) (bool, error) {
-	msgs, err := s.deps.Store.Conversations().ListMessages(ctx, job.OrgID, job.SessionID)
+	cs := s.deps.Store.Conversations()
+	convs, err := cs.ListConversations(ctx, job.OrgID, job.SessionID)
 	if err != nil {
 		return false, err
 	}
-	return jobs.StoppedIn(msgs), nil
+	primary, _ := store.Primary(convs)
+	return jobs.LoopStoppedInRecent(ctx, cs, job, primary.ID)
 }
 
 // resumeIntoDelivery concludes a job whose loop announced its stop

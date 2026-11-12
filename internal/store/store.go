@@ -436,6 +436,12 @@ type SessionRequest struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:",omitempty"`
+	// Template names the sandbox template the launch took settings from.
+	// They are resolved into the fields above at create, and the
+	// template is never read again.
+	//
+	// @decision(DL-120)
+	Template string `json:",omitempty"`
 	// Sync records the local branch and commit a synced session started
 	// from; Bundle is passed to the launch in memory and never stored in
 	// the database.
@@ -997,15 +1003,43 @@ type ConversationStore interface {
 	// when the new one is non-empty. The stored row is returned. A session that
 	// does not exist in the org is ErrNotFound.
 	UpsertConversation(ctx context.Context, c Conversation) (Conversation, error)
+	// ListConversations leaves Info out of every row: the count and the
+	// size of it are the sandbox's, and most readers want neither.
+	// ConversationInfos reads it.
+	//
+	// @decision(DL-131)
 	ListConversations(ctx context.Context, orgID, sessionID string) ([]Conversation, error)
+	// ConversationInfos returns the stored Info of the session's
+	// conversations, keyed by conversation ID. One with none is absent.
+	//
+	// @decision(DL-131) @decision(DL-089)
+	ConversationInfos(ctx context.Context, orgID, sessionID string) (map[string][]byte, error)
+	// StoredSize measures what the session has stored: its
+	// conversations, and the rows and bytes of its events and messages.
+	//
+	// @decision(DL-131)
+	StoredSize(ctx context.Context, orgID, sessionID string) (StoredSize, error)
 	// PutMessages inserts or updates by (ConversationID, OpenCodeID) and
-	// reports how many rows changed. A message for a conversation that
-	// does not exist, or that names a different org or session than its
-	// conversation, is ErrNotFound. A batch lands whole or not at all.
-	PutMessages(ctx context.Context, msgs []Message) (int, error)
+	// reports what changed: the rows, the new ones among them, and the
+	// net change in the bytes StoredSize counts. A message for a
+	// conversation that does not exist, or that names a different org or
+	// session than its conversation, is ErrNotFound. A batch lands whole
+	// or not at all.
+	//
+	// @decision(DL-131)
+	PutMessages(ctx context.Context, msgs []Message) (MessageWrite, error)
 	// ListMessages orders by At, then ID; a message with no time sorts
-	// first.
+	// first. It reads the whole session: a reader a request or a timer
+	// reaches reads RecentMessages instead.
 	ListMessages(ctx context.Context, orgID, sessionID string) ([]Message, error)
+	// RecentMessages returns the session's newest messages, or one
+	// conversation's when conversationID is set, in ListMessages' order:
+	// at most limit of them, and only as many of the newest as fit in
+	// maxBytes of text and raw frame together (zero or less is no byte
+	// bound). More reports that older messages were left out.
+	//
+	// @decision(DL-131)
+	RecentMessages(ctx context.Context, orgID, sessionID, conversationID string, limit int, maxBytes int64) (msgs []Message, more bool, err error)
 	// LastMessages answers the list page in one query: each session's
 	// latest message, keyed by session ID. A session with none is
 	// absent from the map.
@@ -1051,6 +1085,28 @@ type ConversationStore interface {
 	//
 	// @decision(DL-052)
 	FindEvent(ctx context.Context, orgID, sessionID, name string, contains []byte) (Event, error)
+}
+
+// MessageWrite is what one PutMessages changed. Changed counts the rows
+// inserted or rewritten, Added the inserted ones, and Bytes the net
+// change in their text and raw frames: a rewrite counts its difference.
+//
+// @decision(DL-131)
+type MessageWrite struct {
+	Changed int
+	Added   int
+	Bytes   int64
+}
+
+// StoredSize is what one session's recording occupies. Bytes counts the
+// text and the raw frame of each event and message, not the row around
+// them.
+//
+// @decision(DL-131)
+type StoredSize struct {
+	Conversations int
+	Rows          int64
+	Bytes         int64
 }
 
 // ErrInvalidEvent is an Event that could not be a row: an OpenCode
