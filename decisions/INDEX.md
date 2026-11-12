@@ -2,6 +2,9 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-125 | Getting started is install, spov init, spov fly, and a launch that finds nothing configured points at init | proposed | cli | init, onboarding, docs |
+| DL-124 | spov init fixes a missing step only after asking: it writes the GitHub platform, opts into gh, stores a model key, and runs sign-ins and the image build | proposed | cli | init, onboarding, cli, credentials |
+| DL-123 | spov init is a re-runnable checklist that gets a local setup ready, GitHub through gh first | proposed | cli | init, onboarding, cli |
 | DL-122 | The CLI names a template with --template or the user file, never a project file, and lists and removes them | accepted | cli | sandbox-templates, cli, config |
 | DL-121 | Settings has a Sandbox templates section, and both launch forms pick a template, None by default | accepted | web | sandbox-templates, web, settings |
 | DL-120 | A launch that names a template takes its settings under the launch's own, and the session records what was resolved | accepted | server | sandbox-templates, sessions, jobs, credentials |
