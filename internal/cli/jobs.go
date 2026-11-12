@@ -570,15 +570,16 @@ func writeJobTable(env *Env, jobs []server.JobView, now time.Time) error {
 	for _, j := range jobs {
 		// @decision(DL-101)
 		_, _ = fmt.Fprintf(w, "%s\t%s\t%s%s\t%s\t%s\n",
-			j.ID, j.Kind, j.State, heldMark(j.Sync), formatAge(now.Sub(j.CreatedAt)), firstLine(j.Goal, 48))
+			j.ID, j.Kind, j.State, heldMark(j.Sync), formatAge(now.Sub(j.CreatedAt)), printableLine(firstLine(j.Goal, 48)))
 	}
 	return w.Flush()
 }
 
 // writeJobDetail prints one job. The session id is shown because it is
-// how a person reaches the transcript and `spov attach`.
+// how a person reaches the transcript and `spov attach`. What an agent
+// wrote goes through Printable.
 //
-// @decision(DL-045)
+// @decision(DL-045) @decision(DL-136)
 func writeJobDetail(env *Env, j server.JobView) error {
 	// Buffered until Flush; see writeJobTable.
 	w := tabwriter.NewWriter(env.Out, 0, 0, 2, ' ', 0)
@@ -628,7 +629,7 @@ func writeJobDetail(env *Env, j server.JobView) error {
 		_, _ = fmt.Fprintf(w, "Attempt\t%d\n", j.Attempt)
 	}
 	if j.Error != "" {
-		_, _ = fmt.Fprintf(w, "Note\t%s\n", j.Error)
+		_, _ = fmt.Fprintf(w, "Note\t%s\n", Printable(j.Error))
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -642,11 +643,11 @@ func writeJobDetail(env *Env, j server.JobView) error {
 	//
 	// @decision(DL-050)
 	if strings.TrimSpace(j.Verdict) != "" {
-		if _, err := fmt.Fprintf(env.Out, "\nVerdict:\n%s\n", strings.TrimRight(j.Verdict, "\n")); err != nil {
+		if _, err := fmt.Fprintf(env.Out, "\nVerdict:\n%s\n", Printable(strings.TrimRight(j.Verdict, "\n"))); err != nil {
 			return err
 		}
 	}
-	_, err := fmt.Fprintf(env.Out, "\nGoal:\n%s\n", j.Goal)
+	_, err := fmt.Fprintf(env.Out, "\nGoal:\n%s\n", Printable(j.Goal))
 	return err
 }
 
@@ -688,14 +689,14 @@ func writeDeliverables(env *Env, j server.JobView) error {
 		}
 		w := tabwriter.NewWriter(env.Out, 0, 0, 2, ' ', 0)
 		for _, d := range j.Deliverables {
-			_, _ = fmt.Fprintf(w, "  %s\t%s\n", d.Status, deliverableLine(d))
+			_, _ = fmt.Fprintf(w, "  %s\t%s\n", printableLine(string(d.Status)), printableLine(deliverableLine(d)))
 		}
 		if err := w.Flush(); err != nil {
 			return err
 		}
 	}
 	if j.Unfinished != "" {
-		if _, err := fmt.Fprintf(env.Out, "\nLeft unfinished:\n%s\n", j.Unfinished); err != nil {
+		if _, err := fmt.Fprintf(env.Out, "\nLeft unfinished:\n%s\n", Printable(j.Unfinished)); err != nil {
 			return err
 		}
 	}
@@ -786,7 +787,7 @@ func newJobsReportCmd(env *Env) *cobra.Command {
 			default:
 				w := tabwriter.NewWriter(env.Out, 0, 0, 2, ' ', 0)
 				for _, r := range reports {
-					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", r.Path, r.Title, formatBytes(r.Size))
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", printableLine(r.Path), printableLine(r.Title), formatBytes(r.Size))
 				}
 				if err := w.Flush(); err != nil {
 					return err
@@ -799,6 +800,13 @@ func newJobsReportCmd(env *Env) *cobra.Command {
 				return jobError(err)
 			}
 			if saveDir == "" {
+				// Raw to a pipe or a file, which is what a script wants;
+				// on a terminal its control characters would act.
+				//
+				// @decision(DL-136)
+				if env.stdoutIsTerminal() {
+					body = []byte(Printable(string(body)))
+				}
 				_, err = env.Out.Write(body)
 				return err
 			}

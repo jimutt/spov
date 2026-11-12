@@ -9,12 +9,13 @@
 # SPOV_VERSION=0.1.0       install that release instead of the latest
 # SPOV_INSTALL_DIR=<dir>   where spov goes (default ~/.local/bin)
 # SPOV_REQUIRE_SIGNATURE=1 refuse to install without verifying the signature
+#                          (this needs cosign)
 # --with-opencode          also install OpenCode at the pin: the server's
 #                          (SPOV_SERVER) when one is set, else spov's own
 #
 # Running it again updates spov: there is no update command.
 #
-# @decision(DL-080)
+# @decision(DL-080) @decision(DL-136)
 set -eu
 
 REPO=jimutt/spov
@@ -35,10 +36,22 @@ spov() {
   "$INSTALL_DIR/spov" "$@")
 }
 
+# A version is N.N.N with an optional -prerelease of letters, digits, dots
+# and hyphens. Anything else, a slash or a query included, never reaches a
+# URL or a path.
+#
+# @decision(DL-136)
+valid_version() {
+  case "$1" in
+    '' | *[!0-9A-Za-z.-]*) return 1 ;;
+  esac
+  printf '%s\n' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+}
+
 for arg in "$@"; do
   case "$arg" in
     --with-opencode) WITH_OPENCODE=1 ;;
-    -h | --help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h | --help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument $arg (try --help)" ;;
   esac
 done
@@ -83,6 +96,7 @@ if [ -z "$version" ]; then
   [ "$version" != "$latest" ] || die "could not read the latest release from $latest"
 fi
 version=${version#v}
+valid_version "$version" || die "the version to install is not of the form N.N.N or N.N.N-prerelease; nothing was downloaded"
 
 tmp=$(mktemp -d 2>/dev/null || mktemp -d -t spov-install)
 trap 'rm -rf "$tmp"' EXIT INT TERM
@@ -106,15 +120,22 @@ if command -v cosign >/dev/null 2>&1; then
   fi
   say "the checksums' signature verifies"
 elif [ "${SPOV_REQUIRE_SIGNATURE:-}" = 1 ]; then
-  die "SPOV_REQUIRE_SIGNATURE=1 and cosign is not installed"
+  die "SPOV_REQUIRE_SIGNATURE=1 and cosign is not installed; install cosign (https://docs.sigstore.dev/cosign/) and run this again"
 else
-  say "cosign is not installed, so only the checksums are checked"
+  unsigned=1
 fi
 
 want=$(awk -v f="$archive" '$2 == f { print $1 }' "$tmp/checksums.txt")
 [ -n "$want" ] || die "$archive is not in the release's checksums"
 got=$(sha256 "$tmp/$archive")
 [ "$got" = "$want" ] || die "$archive does not match its checksum; nothing was installed"
+# The checksums and the archive came from the same place, so this only
+# shows the download is whole. Say so once, with the way to check more.
+#
+# @decision(DL-136)
+if [ "${unsigned:-}" = 1 ]; then
+  say "the checksum was verified but the signature was not, because cosign is not installed; to verify it, install cosign (https://docs.sigstore.dev/cosign/) and run this again, or set SPOV_REQUIRE_SIGNATURE=1 to refuse an unverified install"
+fi
 
 mkdir "$tmp/unpacked"
 tar -xzf "$tmp/$archive" -C "$tmp/unpacked" spov
@@ -150,6 +171,11 @@ if [ -z "$pin" ]; then
     sed -n '/"opencode": {/,/}/s/.*"version": *"\([^"]*\)".*/\1/p' | head -1)
 fi
 [ -n "$pin" ] || die "could not tell which OpenCode version to install; set SPOV_OPENCODE_VERSION"
+# The pin may come from a server this script does not trust, and it goes
+# into a download URL and a directory name.
+#
+# @decision(DL-136)
+valid_version "$pin" || die "the OpenCode version is not of the form N.N.N or N.N.N-prerelease; nothing was downloaded"
 case "$os/$arch" in
   linux/amd64) target=linux-x64-baseline ;;
   linux/arm64) target=linux-arm64 ;;

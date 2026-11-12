@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-136 | The CLI runs git without the checkout hooks, lists what a sync-back changed, prints agent text safely, and the installer validates versions | accepted | cli | cli, sync, security, installer |
 | DL-131 | One session stores a bounded number of conversations and a bounded size of history, and the verdict holds a bounded size | accepted | server | recorder, storage, security, limits |
 | DL-130 | An exec reads a bounded amount of a sandbox program's output, and more is an error | accepted | sandbox | sandbox, exec, security, limits |
 | DL-127 | The session store holds a hash of a browser session token, never the token | accepted | server | auth, login, security |

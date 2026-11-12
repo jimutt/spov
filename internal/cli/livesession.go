@@ -137,7 +137,7 @@ func (r *launchReporter) Step(ev server.StepEvent) {
 		if r.steps != nil {
 			r.steps.Start(step)
 		} else if r.progress != nil {
-			_, _ = fmt.Fprintf(r.progress, "%s...\n", step)
+			_, _ = fmt.Fprintf(r.progress, "%s...\n", printableLine(string(step)))
 		}
 	case "done":
 		if r.steps != nil {
@@ -148,12 +148,12 @@ func (r *launchReporter) Step(ev server.StepEvent) {
 
 func (r *launchReporter) Note(ev server.NoteEvent) {
 	if r.steps != nil {
-		r.steps.Note(ev.Message)
+		r.steps.Note(Printable(ev.Message))
 		return
 	}
 	// Held rather than printed when a view is up, for the same reason
 	// every other warning is; without one this prints immediately.
-	r.env.deferWarning("spov: " + ev.Message)
+	r.env.deferWarning("spov: " + Printable(ev.Message))
 }
 
 func (r *launchReporter) Ready(ev server.ReadyEvent) { r.view = ev.Session }
@@ -182,7 +182,7 @@ func (e *Env) launchSession(ctx context.Context, c *client.Client, req server.Se
 	case errors.Is(err, client.ErrLaunchFailed):
 		// The server has already torn down whatever it created; the
 		// problem is the whole story.
-		return server.SessionView{}, fmt.Errorf("launch failed: %s", rep.problem.Detail)
+		return server.SessionView{}, fmt.Errorf("launch failed: %s", Printable(rep.problem.Detail))
 	case ctx.Err() != nil:
 		// The user gave up: a delete cancels the server's launch and
 		// terminates whatever exists. Bounded, and detached from the
@@ -218,7 +218,7 @@ func terminateSession(ctx context.Context, env *Env, c *client.Client, sess *liv
 
 	if err := env.deleteSession(closeCtx, c, sess.View); err != nil {
 		// The sandbox is still running and still billing. Say so.
-		_, _ = fmt.Fprintf(env.Err, "spov: the sandbox could NOT be terminated and is still billing: %v\n", err)
+		_, _ = fmt.Fprintf(env.Err, "spov: the sandbox could NOT be terminated and is still billing: %s\n", Printable(err.Error()))
 		printAttachHint(env, sess.Name())
 		return err
 	}
@@ -237,7 +237,7 @@ const terminateTimeout = time.Minute
 // @decision(DL-029)
 func detach(env *Env, sess *liveSession) {
 	if err := sess.Detach(); err != nil {
-		_, _ = fmt.Fprintf(env.Err, "spov: warning: %v\n", err)
+		_, _ = fmt.Fprintf(env.Err, "spov: warning: %s\n", Printable(err.Error()))
 	}
 }
 
