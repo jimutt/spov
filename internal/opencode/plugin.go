@@ -227,12 +227,12 @@ func (p Plugin) deliverableNote() string {
 		return syncEpilogue
 	case "pr":
 		// @decision(DL-051) @decision(DL-137)
-		epilogue := branchEpilogue
+		epilogue, gitlab := branchEpilogue, mergeRequestNote
 		if p.goalFlow() {
-			epilogue = goalFlowEpilogue
+			epilogue, gitlab = goalFlowEpilogue, goalFlowMergeRequestNote
 		}
 		if usesCLI(p.Workspace, CLIGlab) {
-			return epilogue + mergeRequestNote
+			return epilogue + gitlab
 		}
 		return epilogue
 	default:
@@ -368,6 +368,14 @@ const goalFlowEpilogue = "\n\nNever commit or push to the default branch. The go
 	"or updated, call the " + PullRequestTool + " tool with its repository and branch: a pull " +
 	"request you do not record is not part of this job's result. Change only the " +
 	"repositories listed above."
+
+// goalFlowMergeRequestNote is added to goalFlowEpilogue when a GitLab
+// repository is selected. It says how to record a merge request and not
+// how to open one, which is the goal's.
+//
+// @decision(DL-137)
+const goalFlowMergeRequestNote = " On GitLab a pull request is a merge request: record it with the " +
+	PullRequestTool + " tool, as above."
 
 // mergeRequestNote is added to branchEpilogue when a GitLab repository is
 // selected, where a pull request is a merge request.

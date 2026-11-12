@@ -247,8 +247,17 @@ func TestAGoalFlowJobFollowsTheGoalsBranchAndKeepsTheGuardrails(t *testing.T) {
 		t.Errorf("the policy changed the pull request tool: %+v / %+v", s.Repos, g.Repos)
 	}
 	gl := Plugin{Kind: "pr", PRPolicy: PRPolicyGoal, Workspace: []WorkspaceRepo{{Slug: "g/s/r", Dir: "r", Host: "gitlab.com", CLI: CLIGlab}}}
-	if note := gl.deliverableNote(); !strings.HasPrefix(note, goalFlowEpilogue) || !strings.HasSuffix(note, mergeRequestNote) {
+	// On GitLab it is told a pull request is a merge request and to record
+	// it, never how to open one.
+	note := gl.deliverableNote()
+	if !strings.HasPrefix(note, goalFlowEpilogue) || !strings.Contains(note, "merge request") ||
+		strings.Count(note, PullRequestTool) != 2 {
 		t.Errorf("a GitLab goal-flow note = %q", note)
+	}
+	for _, opens := range []string{"glab", "open it"} {
+		if strings.Contains(note, opens) {
+			t.Errorf("a GitLab goal-flow note says how to open the merge request (%q): %q", opens, note)
+		}
 	}
 	if got := (Plugin{Kind: "report", PRPolicy: PRPolicyGoal}).deliverableNote(); got != reportEpilogue() {
 		t.Errorf("a report job took the policy: %q", got)
