@@ -102,10 +102,39 @@ curl -H "Authorization: Bearer $TOKEN" https://spov.example.com/api/v1/allowlist
 curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"admin":false}' https://spov.example.com/api/v1/allowlist/bob@example.com
 
-# Remove someone. This also ends their browser sessions.
+# Remove someone, and end everything they have running and stored.
 curl -X DELETE -H "Authorization: Bearer $TOKEN" \
   https://spov.example.com/api/v1/allowlist/bob@example.com
 ```
+
+Removing someone who has signed in off-boards them in the same call
+(DL-132). After the entry is gone, the server:
+
+- ends their browser sessions;
+- cancels their unfinished jobs and stops their live sessions, held sync
+  jobs included, so their sandboxes are terminated and any connection
+  they saved stops working;
+- revokes every CLI token of theirs, so adding the address again does
+  not bring one back;
+- deletes every credential they stored: forge tokens, provider keys,
+  routed credentials and their OpenCode sign-in;
+- writes an audit row naming the address, you, and what was ended.
+
+Their history stays: their user row, past sessions, transcripts, reports
+and snapshots. Their sandbox templates stay too, since a template holds
+settings and credential names but no secret. Every step is done as you, so a cancelled job says who
+cancelled it. If a step fails, the others still run, and the call
+answers 500 saying the address is removed, what is left, and that the
+same `DELETE` retries. A `DELETE` of an address that is no longer on the
+allowlist, but whose person has signed in, runs the steps again and
+answers 204. One that was never used is simply removed.
+
+Two things are outside what a removal can reach. Their OpenCode sign-in
+is deleted from spov but not revoked at OpenCode; they can end it there.
+And a CLI sign-in they approved in the ten minutes before the removal
+can still issue a token, which is refused while the address is off the
+allowlist. Before adding such an address back, send the `DELETE` once
+more: it revokes any token issued since.
 
 Each replica keeps a cached copy, refreshed every 10 s, and consults it
 on every request — so removing an entry locks that person out on their
