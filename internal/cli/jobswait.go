@@ -211,6 +211,16 @@ func waitForJob(ctx context.Context, env *Env, c *client.Client, id string, time
 			if wctx.Err() != nil {
 				return view, ended()
 			}
+			// @decision(DL-133)
+			if pause, ok := slowedDown(err, poll); ok {
+				_, _ = fmt.Fprintf(env.Err, "  job %s: the server asked to slow down; reading again in %s\n", id, pause)
+				select {
+				case <-wctx.Done():
+					return view, ended()
+				case <-time.After(pause):
+				}
+				continue
+			}
 			if !transientRead(err) || failures == waitRetries {
 				return view, err
 			}
@@ -251,6 +261,25 @@ const (
 	waitRetries   = 5
 	maxRetryDelay = time.Minute
 )
+
+// maxSlowDown is the longest a wait sleeps for one 429's Retry-After.
+//
+// @decision(DL-133)
+const maxSlowDown = time.Minute
+
+// slowedDown reports whether err is the server's 429, and how long to
+// wait before the next read: its Retry-After, at least poll and at most
+// maxSlowDown. A 429 is not a failed read and counts toward no retry
+// limit.
+//
+// @decision(DL-133)
+func slowedDown(err error, poll time.Duration) (time.Duration, bool) {
+	var e *client.Error
+	if !errors.As(err, &e) || e.Status != http.StatusTooManyRequests {
+		return 0, false
+	}
+	return min(max(e.RetryAfter, poll), maxSlowDown), true
+}
 
 // transientRead is a read error worth retrying: no answer at all, or a
 // 5xx other than 501, which is a server that has no jobs. A 4xx (no such

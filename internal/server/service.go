@@ -232,8 +232,8 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	s.launches[sess.ID] = cancel
 	s.mu.Unlock()
 
-	// A panic in a launch is logged and survived: the session stays as
-	// the reconciler's recovery finds it.
+	// A panic in a launch is logged and survived: the launch ends as a
+	// failed one does.
 	//
 	// @decision(DL-135)
 	go safego.Do("launch of session "+sess.ID, s.deps.Warn, func() {
@@ -243,6 +243,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 			delete(s.launches, sess.ID)
 			s.mu.Unlock()
 		}()
+		defer s.launchPanicked(launchCtx, sess, log, telemetry.KindInteractive, runPlan{}, s.deps.Now())
 		s.launch(launchCtx, sess, log, telemetry.KindInteractive, runPlan{})
 	})
 	return sess, nil
@@ -512,6 +513,76 @@ func (s *Service) validateRequest(req store.SessionRequest) error {
 	return nil
 }
 
+// failLaunch records a launch that ended without a session: the row
+// failed with p's detail as its error (or stopped, when a delete asked
+// for it), the run ended, and the launch stream ended with p.
+//
+// @decision(DL-005) @decision(DL-135)
+func (s *Service) failLaunch(storeCtx context.Context, sess store.Session, log *launchLog, kind telemetry.SessionKind, plan runPlan, started time.Time, p ProblemView) {
+	t := s.deps.Now()
+	sess.StoppedAt = &t
+	s.mu.Lock()
+	deleted := s.deleted[sess.ID]
+	delete(s.deleted, sess.ID)
+	s.mu.Unlock()
+	// The delete may have been recorded by another replica, where
+	// this process's map says nothing.
+	//
+	// @decision(DL-003)
+	if !deleted {
+		if got, err := s.deps.Store.Sessions().CancelRequested(storeCtx, sess.OrgID, sess.ID); err == nil {
+			deleted = got
+		}
+	}
+	if deleted {
+		// The launch was cancelled by a delete; that is the outcome
+		// the user asked for, not a failure.
+		sess.State = store.StateStopped
+		sess.Error = ""
+		p.Detail = "deleted while starting"
+	} else {
+		sess.State = store.StateFailed
+		sess.Error = p.Detail
+		// @decision(DL-011)
+		log.mu.Lock()
+		step := launchStep(log.running)
+		log.mu.Unlock()
+		s.deps.Metrics.SessionLaunched(storeCtx, kind, false, step, s.deps.Now().Sub(started))
+	}
+	if uerr := s.deps.Store.Sessions().Update(storeCtx, sess); uerr != nil {
+		s.deps.Warn(fmt.Sprintf("launch %s: record failure: %v", sess.ID, uerr))
+	}
+	s.endFailedRun(storeCtx, sess, plan, t)
+	s.forgetSession(sess.ID)
+	log.fail(p)
+}
+
+// launchPanicked, deferred in a launch's goroutine, ends a launch that
+// panicked as failLaunch ends a failed one, so its stream ends and its
+// row does not stay starting, then panics again for safego.Do to log.
+// A launch that had already committed its session keeps it.
+//
+// @decision(DL-135)
+func (s *Service) launchPanicked(ctx context.Context, sess store.Session, log *launchLog, kind telemetry.SessionKind, plan runPlan, started time.Time) {
+	v := recover()
+	if v == nil {
+		return
+	}
+	storeCtx := context.WithoutCancel(ctx)
+	ref := logInternal(fmt.Errorf("launch of session %s panicked: %v", sess.ID, v))
+	p := ProblemView{Title: "Launch failed", Status: 500,
+		Detail: "internal error (reference " + ref + "); the detail is in the server log"}
+	switch current, err := s.deps.Store.Sessions().Get(storeCtx, sess.OrgID, sess.ID); {
+	case err == nil && current.State == store.StateStarting:
+		s.failLaunch(storeCtx, current, log, kind, plan, started, p)
+	case err == nil && current.State == store.StateRunning:
+		log.ready(viewOf(current, s.deps.Now()))
+	default:
+		log.fail(p)
+	}
+	panic(v)
+}
+
 // launch provisions a session's sandbox and records the outcome on the
 // row. The variadic mutators adjust the launch options just before the
 // launcher is called; a job's session uses one to attach its
@@ -525,43 +596,11 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	started := s.deps.Now()
 	fail := func(err error) {
 		s.deps.Warn(fmt.Sprintf("launch %s: %v", sess.ID, err))
-		msg := redact.Error(err)
-		t := s.deps.Now()
-		sess.StoppedAt = &t
-		s.mu.Lock()
-		deleted := s.deleted[sess.ID]
-		delete(s.deleted, sess.ID)
-		s.mu.Unlock()
-		// The delete may have been recorded by another replica, where
-		// this process's map says nothing.
+		// The row's error reaches the session's views and the launch
+		// stream, so a store failure is stored as the fixed message.
 		//
-		// @decision(DL-003)
-		if !deleted {
-			if got, err := s.deps.Store.Sessions().CancelRequested(storeCtx, sess.OrgID, sess.ID); err == nil {
-				deleted = got
-			}
-		}
-		if deleted {
-			// The launch was cancelled by a delete; that is the outcome
-			// the user asked for, not a failure.
-			sess.State = store.StateStopped
-			sess.Error = ""
-			msg = "deleted while starting"
-		} else {
-			sess.State = store.StateFailed
-			sess.Error = msg
-			// @decision(DL-011)
-			log.mu.Lock()
-			step := launchStep(log.running)
-			log.mu.Unlock()
-			s.deps.Metrics.SessionLaunched(storeCtx, kind, false, step, s.deps.Now().Sub(started))
-		}
-		if uerr := s.deps.Store.Sessions().Update(storeCtx, sess); uerr != nil {
-			s.deps.Warn(fmt.Sprintf("launch %s: record failure: %v", sess.ID, uerr))
-		}
-		s.endFailedRun(storeCtx, sess, plan, t)
-		s.forgetSession(sess.ID)
-		log.fail(ProblemView{Title: "Launch failed", Status: 502, Detail: msg})
+		// @decision(DL-135)
+		s.failLaunch(storeCtx, sess, log, kind, plan, started, ProblemView{Title: "Launch failed", Status: 502, Detail: clientText(err)})
 	}
 
 	// The session's owner, not the server, decides which credentials

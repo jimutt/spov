@@ -797,6 +797,13 @@ func toHumaError(err error) error {
 			m.Type = ProblemTypeSessionStopped
 		}
 		return e
+	// A store call that ran out of time (a pool acquire, a dial) names
+	// the database as any other store error does, so it keeps its 504
+	// with the fixed message.
+	//
+	// @decision(DL-135)
+	case errors.Is(err, context.DeadlineExceeded) && unexpectedStoreError(err):
+		return huma.Error504GatewayTimeout("timed out (reference " + logInternal(err) + "); the detail is in the server log")
 	case errors.Is(err, context.DeadlineExceeded):
 		return huma.Error504GatewayTimeout(redact.Error(err))
 	// An unexpected store error names the database's host, user and
@@ -846,11 +853,62 @@ var internalLog = log.New(os.Stderr, "spov serve: ", log.LstdFlags)
 //
 // @decision(DL-135)
 func internalProblem(err error) error {
+	return huma.Error500InternalServerError(internalMessage(err))
+}
+
+// internalMessage is internalProblem's fixed message, for a place that
+// stores or sends it rather than answering with it.
+//
+// @decision(DL-135)
+func internalMessage(err error) string {
+	return "internal error (reference " + logInternal(err) + "); the detail is in the server log"
+}
+
+// clientText is what a client may read of err: its redacted text, or
+// internalMessage for an unexpected store error.
+//
+// @decision(DL-135)
+func clientText(err error) string {
+	if unexpectedStoreError(err) {
+		return internalMessage(err)
+	}
+	return redact.Error(err)
+}
+
+// hiddenError is an error whose text is clientText's, still unwrapping
+// to the error it hides.
+//
+// @decision(DL-135)
+type hiddenError struct {
+	text string
+	err  error
+}
+
+func (e hiddenError) Error() string { return e.text }
+func (e hiddenError) Unwrap() error { return e.err }
+
+// hideStoreError replaces an unexpected store error's text with the
+// fixed message, for an error a caller will store where a client reads
+// it.
+//
+// @decision(DL-135)
+func hideStoreError(err error) error {
+	if err == nil || !unexpectedStoreError(err) {
+		return err
+	}
+	return hiddenError{text: internalMessage(err), err: err}
+}
+
+// logInternal logs an internal error's detail under a new reference and
+// returns the reference.
+//
+// @decision(DL-135)
+func logInternal(err error) string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])
 	ref := hex.EncodeToString(b[:])
 	internalLog.Printf("internal error %s: %s", ref, redact.Error(err))
-	return huma.Error500InternalServerError("internal error (reference " + ref + "); the detail is in the server log")
+	return ref
 }
 
 func principal(ctx context.Context) auth.Principal {

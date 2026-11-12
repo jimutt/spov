@@ -15,11 +15,14 @@ import (
 const nullHooksPath = "/dev/null"
 
 // guardArgs are the options placed before the subcommand of every git
-// command spov runs in a checkout: no pager, no hooks, and no
-// filesystem monitor (core.fsmonitor can name a program git runs on
-// each status or index refresh).
+// command spov runs in a checkout: no pager, no hooks, no filesystem
+// monitor (core.fsmonitor can name a program git runs on each status or
+// index refresh), and git's `.git` name protections forced on so the
+// user's config cannot turn them off (core.protectNTFS/HFS).
+//
+// @decision(DL-136) @decision(DL-126)
 func guardArgs(keepHooksPath bool) []string {
-	args := []string{"--no-pager", "-c", "core.fsmonitor=false"}
+	args := []string{"--no-pager", "-c", "core.fsmonitor=false", "-c", "core.protectNTFS=true", "-c", "core.protectHFS=true"}
 	if !keepHooksPath {
 		args = append(args, "-c", "core.hooksPath="+nullHooksPath)
 	}

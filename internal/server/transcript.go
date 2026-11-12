@@ -54,8 +54,29 @@ type messagesOutput struct {
 		// can tell a session nobody recorded from one that said
 		// nothing.
 		Warnings []string `json:"warnings,omitempty"`
+		// Truncated is set when only the newest messages are here.
+		//
+		// @decision(DL-131)
+		Truncated bool `json:"truncated,omitempty" doc:"Only the newest messages are included; older ones are left out"`
 	}
 }
+
+// MaxTranscriptMessages and MaxTranscriptBytes bound one transcript
+// response: the session's newest messages, at most this many and this
+// size of text and raw frame. Older ones are left out and the response
+// says so.
+//
+// @decision(DL-131)
+const (
+	MaxTranscriptMessages = 20_000
+	MaxTranscriptBytes    = 64 << 20
+)
+
+// transcriptTruncated is the warning a bounded transcript carries.
+//
+// @decision(DL-131)
+var transcriptTruncated = fmt.Sprintf("this transcript holds only its newest messages, at most %d of them or %d MiB; older ones are not shown",
+	MaxTranscriptMessages, MaxTranscriptBytes>>20)
 
 // notRecorded is the warning a session with no rows carries. There is
 // no fallback to the sandbox: the recorder is its only reader.
@@ -63,19 +84,21 @@ type messagesOutput struct {
 // @decision(DL-018)
 const notRecorded = "nothing has been recorded for this session"
 
-// transcript reads the session's conversation from the store. It must
-// not touch the sandbox; the recorder is the sandbox's only reader.
+// transcript reads the session's conversation from the store, its
+// newest messages within the bounds above, and reports whether older
+// ones were left out. It must not touch the sandbox; the recorder is the
+// sandbox's only reader.
 //
-// @decision(DL-018) @decision(DL-017)
-func (s *Server) transcript(ctx context.Context, sess store.Session) ([]ConversationView, []string, error) {
+// @decision(DL-018) @decision(DL-017) @decision(DL-131)
+func (s *Server) transcript(ctx context.Context, sess store.Session) ([]ConversationView, []string, bool, error) {
 	cs := s.deps.Store.Conversations()
 	convs, err := cs.ListConversations(ctx, sess.OrgID, sess.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	msgs, err := cs.ListMessages(ctx, sess.OrgID, sess.ID)
+	msgs, truncated, err := cs.RecentMessages(ctx, sess.OrgID, sess.ID, "", MaxTranscriptMessages, MaxTranscriptBytes)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	byConversation := map[string][]MessageView{}
 	for _, m := range msgs {
@@ -110,12 +133,15 @@ func (s *Server) transcript(ctx context.Context, sess store.Session) ([]Conversa
 	if !recorded {
 		warnings = append(warnings, notRecorded)
 	}
+	if truncated {
+		warnings = append(warnings, transcriptTruncated)
+	}
 	// Check the source as well as the name: a sandbox chooses event
 	// names. The store also refuses spov.-named sandbox rows.
 	if err == nil && last.Source == store.SourceSpov && last.Name == MarkerStopped {
 		warnings = append(warnings, last.Text)
 	}
-	return out, warnings, nil
+	return out, warnings, truncated, nil
 }
 
 // messageViewOf projects a stored message.

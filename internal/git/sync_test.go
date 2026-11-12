@@ -563,11 +563,11 @@ func TestSyncBackNeverTouchesAPathGitStatusHides(t *testing.T) {
 		return s
 	}
 
-	_, err := ApplySync(ctx, dir, "s", "main", state(map[string]string{
+	ignoredRes, err := ApplySync(ctx, dir, "s", "main", state(map[string]string{
 		"a.txt": "fine\n", "node_modules/.bin/tsc": "#!/bin/sh\necho planted\n",
 	}))
-	if err == nil || !strings.Contains(err.Error(), "node_modules/.bin/tsc") {
-		t.Fatalf("an ignored archive entry: err = %v", err)
+	if err != nil || ignoredRes.InPlace || !strings.Contains(ignoredRes.Reason, "node_modules/.bin/tsc") {
+		t.Fatalf("an ignored archive entry: %+v, %v", ignoredRes, err)
 	}
 	if b, _ := os.ReadFile(filepath.Join(dir, "node_modules/.bin/tsc")); !strings.Contains(string(b), "real") {
 		t.Errorf("the ignored file was overwritten: %q", b)

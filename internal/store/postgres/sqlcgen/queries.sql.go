@@ -2773,23 +2773,34 @@ func (q *Queries) PutJobSeed(ctx context.Context, arg PutJobSeedParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
-const putMessage = `-- name: PutMessage :execrows
-insert into messages (id, org_id, session_id, conversation_id, opencode_id, role, text, at, raw, created_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-on conflict (conversation_id, opencode_id) do update
-set role = excluded.role, text = excluded.text, at = excluded.at, raw = excluded.raw
-where messages.role is distinct from excluded.role
-   or messages.text is distinct from excluded.text
-   or messages.at is distinct from excluded.at
-   or messages.raw is distinct from excluded.raw
+const putMessage = `-- name: PutMessage :one
+with old as (
+    select octet_length(o.text) + octet_length(o.raw) as bytes from messages o
+    where o.conversation_id = $1 and o.opencode_id = $2
+), up as (
+    insert into messages (id, org_id, session_id, conversation_id, opencode_id, role, text, at, raw, created_at)
+    values ($3, $4, $5, $1, $2,
+            $6, $7, $8, $9, $10)
+    on conflict (conversation_id, opencode_id) do update
+    set role = excluded.role, text = excluded.text, at = excluded.at, raw = excluded.raw
+    where messages.role is distinct from excluded.role
+       or messages.text is distinct from excluded.text
+       or messages.at is distinct from excluded.at
+       or messages.raw is distinct from excluded.raw
+    returning octet_length(messages.text) + octet_length(messages.raw) as bytes
+)
+select up.bytes::bigint as new_bytes,
+       coalesce((select old.bytes from old), 0)::bigint as old_bytes,
+       not exists (select 1 from old) as inserted
+from up
 `
 
 type PutMessageParams struct {
+	ConversationID string
+	OpencodeID     string
 	ID             string
 	OrgID          string
 	SessionID      string
-	ConversationID string
-	OpencodeID     string
 	Role           string
 	Text           string
 	At             pgtype.Timestamptz
@@ -2797,25 +2808,33 @@ type PutMessageParams struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
-// The update is conditional so the count reports rows that changed,
-// not rows that were mentioned.
-func (q *Queries) PutMessage(ctx context.Context, arg PutMessageParams) (int64, error) {
-	result, err := q.db.Exec(ctx, putMessage,
+type PutMessageRow struct {
+	NewBytes int64
+	OldBytes int64
+	Inserted bool
+}
+
+// The update is conditional so a row comes back only when it changed,
+// not when it was mentioned. Every part of a WITH reads the snapshot
+// from before the statement, so old is the row the upsert replaced:
+// the write's net size is new_bytes less old_bytes.
+// @decision(DL-131)
+func (q *Queries) PutMessage(ctx context.Context, arg PutMessageParams) (PutMessageRow, error) {
+	row := q.db.QueryRow(ctx, putMessage,
+		arg.ConversationID,
+		arg.OpencodeID,
 		arg.ID,
 		arg.OrgID,
 		arg.SessionID,
-		arg.ConversationID,
-		arg.OpencodeID,
 		arg.Role,
 		arg.Text,
 		arg.At,
 		arg.Raw,
 		arg.CreatedAt,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var i PutMessageRow
+	err := row.Scan(&i.NewBytes, &i.OldBytes, &i.Inserted)
+	return i, err
 }
 
 const putOrgCredential = `-- name: PutOrgCredential :exec
@@ -2960,6 +2979,171 @@ func (q *Queries) PutUserCredential(ctx context.Context, arg PutUserCredentialPa
 		arg.Route,
 	)
 	return err
+}
+
+const recentConversationMessages = `-- name: RecentConversationMessages :many
+select t.id, t.org_id, t.session_id, t.conversation_id, t.opencode_id, t.role,
+       case when t.running <= $1::bigint then t.text else '' end as text,
+       t.at, t.created_at,
+       case when t.running <= $1::bigint then t.raw else ''::bytea end as raw,
+       t.running::bigint as running
+from (
+    select m.id, m.org_id, m.session_id, m.conversation_id, m.opencode_id, m.role, m.text, m.at, m.created_at, m.raw, sum(octet_length(m.text) + octet_length(m.raw)) over w as running,
+           octet_length(m.text) + octet_length(m.raw) as own
+    from messages m
+    where m.org_id = $2 and m.session_id = $3
+      and m.conversation_id = $4
+    window w as (order by m.at desc nulls last, m.id desc rows between unbounded preceding and current row)
+    order by m.at desc nulls last, m.id desc
+    limit $5
+) t
+where t.running - t.own <= $1::bigint
+order by t.at desc nulls last, t.id desc
+`
+
+type RecentConversationMessagesParams struct {
+	MaxBytes       int64
+	OrgID          string
+	SessionID      string
+	ConversationID string
+	RowLimit       int32
+}
+
+type RecentConversationMessagesRow struct {
+	ID             string
+	OrgID          string
+	SessionID      string
+	ConversationID string
+	OpencodeID     string
+	Role           string
+	Text           string
+	At             pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	Raw            []byte
+	Running        int64
+}
+
+// RecentSessionMessages over one conversation, by its own index.
+// @decision(DL-131)
+func (q *Queries) RecentConversationMessages(ctx context.Context, arg RecentConversationMessagesParams) ([]RecentConversationMessagesRow, error) {
+	rows, err := q.db.Query(ctx, recentConversationMessages,
+		arg.MaxBytes,
+		arg.OrgID,
+		arg.SessionID,
+		arg.ConversationID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecentConversationMessagesRow
+	for rows.Next() {
+		var i RecentConversationMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SessionID,
+			&i.ConversationID,
+			&i.OpencodeID,
+			&i.Role,
+			&i.Text,
+			&i.At,
+			&i.CreatedAt,
+			&i.Raw,
+			&i.Running,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recentSessionMessages = `-- name: RecentSessionMessages :many
+select t.id, t.org_id, t.session_id, t.conversation_id, t.opencode_id, t.role,
+       case when t.running <= $1::bigint then t.text else '' end as text,
+       t.at, t.created_at,
+       case when t.running <= $1::bigint then t.raw else ''::bytea end as raw,
+       t.running::bigint as running
+from (
+    select m.id, m.org_id, m.session_id, m.conversation_id, m.opencode_id, m.role, m.text, m.at, m.created_at, m.raw, sum(octet_length(m.text) + octet_length(m.raw)) over w as running,
+           octet_length(m.text) + octet_length(m.raw) as own
+    from messages m
+    where m.org_id = $2 and m.session_id = $3
+    window w as (order by m.at desc nulls last, m.id desc rows between unbounded preceding and current row)
+    order by m.at desc nulls last, m.id desc
+    limit $4
+) t
+where t.running - t.own <= $1::bigint
+order by t.at desc nulls last, t.id desc
+`
+
+type RecentSessionMessagesParams struct {
+	MaxBytes  int64
+	OrgID     string
+	SessionID string
+	RowLimit  int32
+}
+
+type RecentSessionMessagesRow struct {
+	ID             string
+	OrgID          string
+	SessionID      string
+	ConversationID string
+	OpencodeID     string
+	Role           string
+	Text           string
+	At             pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	Raw            []byte
+	Running        int64
+}
+
+// A session's newest messages, newest first: at most row_limit, and each
+// with the bytes of it and every newer one (running). Rows that start
+// past max_bytes are left out, so at most one row past the bound comes
+// back, and its text and raw do not: the caller learns there is more
+// without loading it. octet_length and a case not taken read no value.
+// @decision(DL-131)
+func (q *Queries) RecentSessionMessages(ctx context.Context, arg RecentSessionMessagesParams) ([]RecentSessionMessagesRow, error) {
+	rows, err := q.db.Query(ctx, recentSessionMessages,
+		arg.MaxBytes,
+		arg.OrgID,
+		arg.SessionID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecentSessionMessagesRow
+	for rows.Next() {
+		var i RecentSessionMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.SessionID,
+			&i.ConversationID,
+			&i.OpencodeID,
+			&i.Role,
+			&i.Text,
+			&i.At,
+			&i.CreatedAt,
+			&i.Raw,
+			&i.Running,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const recordImage = `-- name: RecordImage :exec

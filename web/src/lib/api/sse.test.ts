@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { MaxEventBytes, StreamProblem, launchEvents } from './sse';
+import { MaxEventBytes, StreamProblem, launchEvents, retryAfterMs } from './sse';
 import type { LaunchEvent } from './sse';
 
 /** stream turns chunks into a body, so a test can choose where the
@@ -330,5 +330,20 @@ describe('failures', () => {
     // A consumer that unmounts mid-launch must not leave the response
     // open; cancelling the reader is what locks the body.
     expect(body.bodyUsed || body.body?.locked).toBeTruthy();
+  });
+});
+
+// A refusal's Retry-After is read in seconds or as a date, so a stream
+// can wait as long as the server asked. @decision(DL-133)
+describe('retryAfterMs', () => {
+  test('reads seconds and dates, and nothing else', () => {
+    const now = Date.parse('2026-11-12T09:00:00Z');
+    expect(retryAfterMs('10', now)).toBe(10_000);
+    expect(retryAfterMs(' 0 ', now)).toBe(0);
+    expect(retryAfterMs('Thu, 12 Nov 2026 09:01:00 GMT', now)).toBe(60_000);
+    expect(retryAfterMs('Thu, 12 Nov 2026 08:00:00 GMT', now)).toBe(0);
+    expect(retryAfterMs('soon', now)).toBeUndefined();
+    expect(retryAfterMs('-5', now)).toBeUndefined();
+    expect(retryAfterMs(null, now)).toBeUndefined();
   });
 });

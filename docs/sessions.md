@@ -114,11 +114,19 @@ quit.
 - **Nothing is overwritten.** The work lands back on your branch when the
   checkout is as you left it, and on a `spov/<session>` branch when you have
   changed it meanwhile.
-- **Only what `git status` shows.** The sync never writes or deletes a
-  file your checkout ignores (`node_modules`, `.env`), and refuses a sync
-  that tries. If the session changed your repository's git hooks (a
+- **Only what `git status` shows.** A sync onto your branch never writes,
+  replaces or deletes a file your checkout does not track or ignores
+  (`node_modules`, `.env`), whether the session committed over it or left
+  it uncommitted. When it would, the work lands on `spov/<session>`
+  instead, and spov names the paths. The same happens when the session
+  changed what git runs or reads in your checkout: your git hooks (a
   `core.hooksPath` inside the checkout, such as `.githooks` or husky's
-  directory), the work lands on `spov/<session>` for you to read first.
+  `.husky/_`, or any directory above it), a git config file the checkout
+  includes, a `.gitattributes`, `.lfsconfig` or `.gitmodules`, or a
+  submodule. It also happens when the session left a file your own ignore
+  rules hide, and, on a Windows drive or a case-insensitive disk, when a
+  path names a file by another of its names (`GITHOO~1` for `.githooks`).
+  Read the branch before you check it out.
 - **You see what landed.** After a sync, spov prints the branch the work
   landed on, the commits it added (how many, and the short range), and each
   changed (`M`), added (`A`) and deleted (`D`) path, up to 30 and then "and N
@@ -126,7 +134,13 @@ quit.
   control character shown as an escape such as `\x1b`.
 - **Your checkout's hooks do not run.** Every git command spov runs in your
   checkout turns off its hooks (`core.hooksPath`) and its filesystem monitor
-  (`core.fsmonitor`), and uses no pager.
+  (`core.fsmonitor`), uses no pager, and keeps git's own protections against
+  `.git`-lookalike names on, whatever your config says. A sparse checkout, or
+  a checkout whose work tree is set elsewhere (`core.worktree`), takes the
+  work on a `spov/<session>` branch rather than in place.
+- **A very large result is refused.** A sync that would bring in more than
+  1 GiB of git objects, or a single file over 256 MiB, stops with an error
+  and changes nothing; push the branch to the forge instead.
 - **Nothing is lost.** The sandbox is terminated only after the work is
   back; a sync that fails leaves it running and tells you how to retry.
 - **The checkout must be clean and on a branch**, or the launch stops and

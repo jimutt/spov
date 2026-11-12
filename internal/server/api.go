@@ -390,11 +390,28 @@ func (s *Server) Handler() http.Handler {
 	//
 	// @decision(DL-133)
 	guardedAuthed := s.guard.Wrap(auth.Middleware(s.deps.Auth, s.deps.Warn)(s.lim.perUser(s.mux)))
-	// The login routes are how a browser gets a credential, so they run
-	// behind the guard but not behind authentication.
+	// The login and device routes are how a client gets a credential,
+	// so they run behind the guard but not behind authentication.
 	//
 	// @decision(DL-007)
-	guardedOpen := s.guard.Wrap(s.mux)
+	// Each sign-in start writes a row and nobody is signed in yet, so
+	// starts are limited by address, by network and in total, and the
+	// device flow's polls by address and network. The limits run behind
+	// the guard, so a request it refuses spends nothing.
+	//
+	// @decision(DL-133)
+	guardedSignIn := s.guard.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == LoginPath && s.deps.Login != nil && !s.lim.signIn(w, r, false) {
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == DeviceCodePath && s.deps.Device != nil && !s.lim.signIn(w, r, true) {
+			return
+		}
+		if r.Method == http.MethodPost && r.URL.Path == deviceTokenPath && s.deps.Device != nil && !s.lim.devicePoll(w, r) {
+			return
+		}
+		s.mux.ServeHTTP(w, r)
+	}))
 	// The approval page uses BrowserAuth, not Auth, so a CLI token
 	// cannot approve a device flow.
 	//
@@ -407,14 +424,7 @@ func (s *Server) Handler() http.Handler {
 	guardedOptional := s.guard.Wrap(auth.Optional(browserAuth)(s.mux))
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.deps.Login != nil && isLoginPath(r.URL.Path) {
-			// Each start writes a row and nobody is signed in yet, so
-			// starts are limited by address and in total.
-			//
-			// @decision(DL-133)
-			if r.Method == http.MethodGet && r.URL.Path == LoginPath && !s.lim.signIn(w, r, false) {
-				return
-			}
-			guardedOpen.ServeHTTP(w, r)
+			guardedSignIn.ServeHTTP(w, r)
 			return
 		}
 		// A CLI polling the device flow has no credential yet — that is
@@ -422,14 +432,7 @@ func (s *Server) Handler() http.Handler {
 		//
 		// @decision(DL-006)
 		if s.deps.Device != nil && isDevicePath(r.URL.Path) {
-			// @decision(DL-133)
-			if r.Method == http.MethodPost && r.URL.Path == DeviceCodePath && !s.lim.signIn(w, r, true) {
-				return
-			}
-			if r.Method == http.MethodPost && r.URL.Path == deviceTokenPath && !s.lim.devicePoll(w, r) {
-				return
-			}
-			guardedOpen.ServeHTTP(w, r)
+			guardedSignIn.ServeHTTP(w, r)
 			return
 		}
 		// An anonymous visitor is sent to log in rather than answered

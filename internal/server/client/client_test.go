@@ -152,6 +152,36 @@ func TestProblemsBecomeErrors(t *testing.T) {
 	}
 }
 
+// A refusal's Retry-After reaches the error, in seconds or as a date,
+// so a caller can wait as long as the server asked.
+//
+// @decision(DL-133)
+func TestARefusalCarriesItsRetryAfter(t *testing.T) {
+	c := stub(t, map[string]http.HandlerFunc{
+		"GET /api/v1/sessions/{ref}": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Retry-After", r.PathValue("ref"))
+			problem(w, 429, "Too Many Requests", "")
+		},
+	})
+	var e *Error
+	if _, err := c.GetSession(context.Background(), "7"); !errors.As(err, &e) || e.RetryAfter != 7*time.Second {
+		t.Errorf("Retry-After 7 = %v, want 7s on the error", err)
+	}
+	now := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
+	for v, want := range map[string]time.Duration{
+		"30":                            30 * time.Second,
+		"":                              0,
+		"soon":                          0,
+		"-5":                            0,
+		"Thu, 12 Nov 2026 09:01:00 GMT": time.Minute,
+		"Thu, 12 Nov 2026 08:00:00 GMT": 0,
+	} {
+		if got := retryAfter(v, now); got != want {
+			t.Errorf("retryAfter(%q) = %s, want %s", v, got, want)
+		}
+	}
+}
+
 func TestNoServerIsAnError(t *testing.T) {
 	if _, err := New("", "t").Me(context.Background()); !errors.Is(err, ErrNoServer) {
 		t.Errorf("err = %v", err)

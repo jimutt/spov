@@ -211,10 +211,12 @@ What you can do:
   `spov serve image build`.
 
 The server also limits how often each user may call the API, create sessions and
-jobs, and open live views, and how often one address may start a sign-in
-([Limits](server.md#limits)). These are fixed and kept per replica. They keep one
-user or one address from overloading the server, and do not bound what a user
-spends within them.
+jobs, and open live views, and how often one address or one network may start
+a sign-in ([Limits](server.md#limits)). These are fixed and kept per replica. They
+keep one user, one address or one network from overloading the server, and do
+not bound what a user spends within them. A source spread over 20 or more
+networks can still hold a replica's sign-ins at 503 for up to 15 minutes at a
+time.
 
 ## Before you expose a server: a checklist
 
@@ -251,6 +253,9 @@ Do each of these before a server is reachable by people you do not know.
    and TLS, restrict who can read it and its backups, and size its disk. One
    session stores at most `history.max_session_mib` (1024 MiB by default) of
    events and messages, after which its recording stops and its sandbox runs on.
+   A message sent to a job after that still reaches its supervisor: a handover
+   takes the job over at once. A transcript request returns at most the newest
+   20,000 messages or 64 MiB of a session, and says when it left older ones out.
    Hosted mode keeps sessions, events, messages and job files until you delete
    them by hand, and has no retention setting yet. (`history.retention` applies to
    a local server only.)

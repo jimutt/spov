@@ -255,10 +255,10 @@ func problemOf(err error) ProblemView {
 		status = se.GetStatus()
 	}
 	// An unexpected store error is answered with the fixed message the
-	// API gives, never its text.
+	// API gives, never its text, whether it failed or timed out.
 	//
 	// @decision(DL-135)
-	if status == http.StatusInternalServerError && unexpectedStoreError(err) {
+	if unexpectedStoreError(err) {
 		return ProblemView{Title: http.StatusText(status), Status: status, Detail: mapped.Error()}
 	}
 	return ProblemView{Title: http.StatusText(status), Status: status, Detail: redact.Error(err)}

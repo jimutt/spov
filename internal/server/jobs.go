@@ -696,15 +696,17 @@ func (s *Service) ResumeJob(ctx context.Context, p auth.Principal, id string) er
 // jobLoopAnnouncedStop reports whether the plugin already announced the
 // end of this job's run. It reads the transcript with the same reader
 // loopStoppedInMessages uses, because the announcement can be missing
-// from the event log.
+// from the event log: the newest messages of the job's own conversation.
 //
-// @decision(DL-054) @decision(DL-045)
+// @decision(DL-054) @decision(DL-045) @decision(DL-131)
 func (s *Service) jobLoopAnnouncedStop(ctx context.Context, job store.Job) (bool, error) {
-	msgs, err := s.deps.Store.Conversations().ListMessages(ctx, job.OrgID, job.SessionID)
+	cs := s.deps.Store.Conversations()
+	convs, err := cs.ListConversations(ctx, job.OrgID, job.SessionID)
 	if err != nil {
 		return false, err
 	}
-	return jobs.StoppedIn(msgs), nil
+	primary, _ := store.Primary(convs)
+	return jobs.LoopStoppedInRecent(ctx, cs, job, primary.ID)
 }
 
 // resumeIntoDelivery concludes a job whose loop announced its stop

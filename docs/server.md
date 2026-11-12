@@ -93,9 +93,12 @@ which the CLI prints and the dashboard shows.
 | Limit | Value | Refused with |
 |---|---|---|
 | Sign-ins started from one address (`GET /login` and `POST /device/code` together) | 30 a minute | 429 |
+| Sign-ins started from one network (an IPv4 /24 or an IPv6 /48) | 300 a minute | 429 |
 | CLI polls for a sign-in token from one address (`POST /device/token`) | 120 a minute | 429 `slow_down`, which makes the CLI poll less often |
+| CLI polls for a sign-in token from one network | 1,200 a minute | 429 `slow_down` |
 | Browser sign-ins in progress on one replica | 10,000 started within 15 minutes | 503 with `Retry-After` |
 | CLI sign-ins (device codes) in progress on one replica | 10,000 started within 10 minutes | 503 with `Retry-After` |
+| Of each of those two, the places one network holds | 500 | 429 with the wait until that network's oldest start ends |
 | API requests (`/api/v1/*`) per user | 600 a minute, after a burst of 100 | 429 |
 | Session creates, job creates and session resumes per user | 20 a minute | 429 |
 | Open live views (event streams) per user | 20 | 429 on the next |
@@ -105,10 +108,24 @@ which the CLI prints and the dashboard shows.
 | Time to send the headers | 10 s | the connection is closed |
 | An idle keep-alive connection | closed after 2 minutes | |
 
+An IPv6 address counts as its /64 for the per-address limits. The sign-in
+limits count a request only once the browser guard has accepted it, so a
+request it refuses (a cross-site page sending visitors to `/login`, say) uses
+up nothing. The per-network share keeps one allocation from filling a cap and
+leaving everyone else at 503, but sources spread over 20 or more networks can
+still fill a cap until their starts leave its window; the cap then answers 503
+for everyone.
+
 A user is the account a credential belongs to; the shared `SPOV_SERVER_TOKEN`
 is one user. `/livez`, `/readyz`, `/startupz`, `/opencode-pin.json`, the web
 app's own files and the Prometheus listener are not limited. A live view
 reopens every five minutes and has no time limit across reopens.
+
+`spov jobs wait` and the wait in `spov attach` sleep for a 429's `Retry-After`
+(at least their poll interval, at most a minute) and read again, so a wait over
+the request limit slows down rather than failing. The dashboard opens a live
+view refused with a 429 once more after its `Retry-After` (between one second
+and a minute) and shows the refusal only if that is refused too.
 
 Every limit is kept in memory by each replica, so N replicas allow N times as
 much, and a restart starts each count again. The two sign-in caps bound how

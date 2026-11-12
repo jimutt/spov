@@ -449,6 +449,7 @@ func (j *Journal) loadTranscript(m *Memory, id, path string) error {
 	for _, msg := range msgs {
 		m.messages[msg.ID] = msg
 		m.messageKeys[convMessage{msg.ConversationID, msg.OpenCodeID}] = msg.ID
+		m.indexMessage(msg)
 	}
 	slices.SortFunc(evs, func(a, b Event) int { return cmp.Compare(a.Pos, b.Pos) })
 	seen := map[string]bool{}
@@ -552,12 +553,12 @@ func (m *Memory) forgetSessionLocked(id string) {
 		delete(m.events, evID)
 	}
 	delete(m.eventsBySession, id)
-	for msgID, msg := range m.messages {
-		if msg.SessionID == id {
-			delete(m.messageKeys, convMessage{msg.ConversationID, msg.OpenCodeID})
-			delete(m.messages, msgID)
-		}
+	for msgID := range m.messagesBySession[id] {
+		msg := m.messages[msgID]
+		delete(m.messageKeys, convMessage{msg.ConversationID, msg.OpenCodeID})
+		delete(m.messages, msgID)
 	}
+	delete(m.messagesBySession, id)
 	for convID, c := range m.conversations {
 		if c.SessionID == id {
 			delete(m.conversations, convID)

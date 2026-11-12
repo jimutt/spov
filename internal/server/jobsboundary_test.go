@@ -27,6 +27,22 @@ func TestTheGapMarkerNamesMatch(t *testing.T) {
 	}
 }
 
+// The recorder writes MarkerStopped when it stops recording a session,
+// and the server MarkerSteered on every send; a job's supervisor reads
+// the two together, since a send after the stop has no inbox frame.
+//
+// @decision(DL-131)
+func TestTheRecordingMarkerNamesMatch(t *testing.T) {
+	if jobs.MarkerRecordingStopped != MarkerStopped {
+		t.Errorf("internal/jobs reads %q as the recording's stop; the recorder writes %q."+
+			" A person's handover to a job whose recording stopped would never be read",
+			jobs.MarkerRecordingStopped, MarkerStopped)
+	}
+	if jobs.MarkerSteered != MarkerSteered {
+		t.Errorf("internal/jobs reads %q as a send; the server writes %q", jobs.MarkerSteered, MarkerSteered)
+	}
+}
+
 // The supervisor writes MarkerEvidence at delivery and gate 1 reads it
 // back; the recorder's marker list still declares the name.
 //

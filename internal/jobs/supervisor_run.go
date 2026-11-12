@@ -896,16 +896,41 @@ func (s *Supervisor) catchUpBeforeJudging(ctx context.Context, job store.Job) {
 // @decision(DL-045)
 const SyntheticRole = "synthetic"
 
+// StopMarkerWindow and StopMarkerWindowBytes bound the read that looks
+// for the stop marker in a job's transcript: the newest messages of its
+// own conversation, where the marker is when the loop has stopped.
+//
+// @decision(DL-131) @decision(DL-048)
+const (
+	StopMarkerWindow      = 20
+	StopMarkerWindowBytes = 16 << 20
+)
+
 // loopStoppedInMessages reports whether the plugin's stop marker is in
 // the stored transcript: the recovery half of isLoopStopped. As on the
 // event, only a synthetic whose text starts with the marker counts; the
 // role stands in for the event name, which a message does not carry.
+// It reads the newest messages of the job's own conversation, never the
+// whole session, since it runs on every pass.
 //
-// @decision(DL-048) @decision(DL-045) @decision(DL-039)
+// @decision(DL-048) @decision(DL-045) @decision(DL-039) @decision(DL-131)
 func (s *Supervisor) loopStoppedInMessages(ctx context.Context, job store.Job) (bool, error) {
-	msgs, err := s.jobMessages(ctx, job)
+	own, err := s.ownConversation(ctx, job)
 	if err != nil {
 		return false, err
+	}
+	return LoopStoppedInRecent(ctx, s.Store.Conversations(), job, own)
+}
+
+// LoopStoppedInRecent is StoppedIn over the newest messages of the job's
+// conversation own (its primary, store.Primary). The resume path calls
+// it too.
+//
+// @decision(DL-131) @decision(DL-054)
+func LoopStoppedInRecent(ctx context.Context, cs store.ConversationStore, job store.Job, own string) (bool, error) {
+	msgs, _, err := cs.RecentMessages(ctx, job.OrgID, job.SessionID, own, StopMarkerWindow, StopMarkerWindowBytes)
+	if err != nil {
+		return false, fmt.Errorf("supervisor: job %s: reading the newest messages: %w", job.ID, err)
 	}
 	return StoppedIn(msgs), nil
 }

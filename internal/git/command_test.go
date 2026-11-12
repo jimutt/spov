@@ -59,7 +59,7 @@ func TestACommandRunsWithNoHooksNoMonitorNoPagerAndNoExternalDiff(t *testing.T) 
 	t.Setenv("GIT_PAGER", "evil-pager")
 	cmd := Command(context.Background(), t.TempDir(), nil, "status")
 	args := strings.Join(cmd.Args, " ")
-	for _, want := range []string{"--no-pager", "-c core.hooksPath=/dev/null", "-c core.fsmonitor=false"} {
+	for _, want := range []string{"--no-pager", "-c core.hooksPath=/dev/null", "-c core.fsmonitor=false", "-c core.protectNTFS=true", "-c core.protectHFS=true"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args %q lack %q", args, want)
 		}

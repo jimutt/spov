@@ -458,12 +458,21 @@ func judgeMechanical(job store.Job, events []store.Event) (res GateResult) {
 
 // personWrote reports whether a person put anything in the job's inbox:
 // an enqueued item of type user. The opening goal and the plugin's
-// continuations are synthetic.
+// continuations are synthetic. Once the recording has stopped, spov's
+// own record of a send stands in for the item the log can no longer
+// show.
 //
-// @decision(DL-050)
+// @decision(DL-050) @decision(DL-131)
 func personWrote(events []store.Event) bool {
+	stopped := false
 	for _, e := range events {
 		if e.Source == store.SourceOpenCode && e.Name == EventInboxEnqueued && InboxItemType(e.Raw) == "user" {
+			return true
+		}
+		if isRecordingStopped(e) {
+			stopped = true
+		}
+		if _, sent := steerRecordOf(e); sent && stopped {
 			return true
 		}
 	}
@@ -1007,13 +1016,24 @@ func (s *Supervisor) maxVerdictBytes() int64 {
 
 func eventBytes(e store.Event) int64 { return int64(len(e.Text) + len(e.Raw)) }
 
-// jobMessages reads the conversation the run produced.
+// MaxVerdictMessages bounds how many of a job's newest messages the
+// verdict reads, beside MaxVerdictBytes of them.
 //
-// @decision(DL-050)
+// @decision(DL-131)
+const MaxVerdictMessages = 20_000
+
+// jobMessages reads the conversation the run produced: its newest
+// messages, at most MaxVerdictMessages and MaxVerdictBytes of them, as
+// jobEvents keeps the newest events.
+//
+// @decision(DL-050) @decision(DL-131)
 func (s *Supervisor) jobMessages(ctx context.Context, job store.Job) ([]store.Message, error) {
-	msgs, err := s.Store.Conversations().ListMessages(ctx, job.OrgID, job.SessionID)
+	msgs, more, err := s.Store.Conversations().RecentMessages(ctx, job.OrgID, job.SessionID, "", MaxVerdictMessages, s.maxVerdictBytes())
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: job %s: reading messages for the verdict: %w", job.ID, err)
+	}
+	if more {
+		s.warn("supervisor: job %s: the verdict reads only the newest %d messages", job.ID, len(msgs))
 	}
 	return msgs, nil
 }

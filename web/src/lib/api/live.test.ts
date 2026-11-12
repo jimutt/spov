@@ -225,26 +225,63 @@ describe('refusals', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  // A limit's refusal is final like any other, so a page over its
-  // stream limit does not reopen in a loop; it keeps the server's
-  // detail for the page to show. @decision(DL-133)
-  test('a 429 is final, is not retried, and keeps the server detail', async () => {
-    const detail = 'You have 20 live views open, the most this server allows. Try again in 10 seconds.';
-    const fetchMock = serve(
-      new Response(JSON.stringify({ title: 'Too Many Requests', status: 429, detail }), {
-        status: 429,
-        headers: { 'Content-Type': 'application/problem+json', 'Retry-After': '10' },
-      }),
-    );
+  // A limit's refusal is retried once after its Retry-After, then is
+  // final like any other, so a page over its stream limit does not
+  // reopen in a loop; it keeps the server's detail for the page to show.
+  // @decision(DL-133)
+  const detail = 'You have 20 live views open, the most this server allows. Try again in 10 seconds.';
+  const tooMany = (after = '10') =>
+    new Response(JSON.stringify({ title: 'Too Many Requests', status: 429, detail }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/problem+json', 'Retry-After': after },
+    });
+
+  test('a 429 is retried once after its Retry-After, then is final with the server detail', async () => {
+    vi.useFakeTimers();
+    const fetchMock = serve(tooMany(), tooMany());
     const ctl = new AbortController();
     let caught: unknown;
-    try {
-      for await (const _ of logStream('s1', { signal: ctl.signal })) void _;
-    } catch (err) {
-      caught = err;
-    }
+    const done = (async () => {
+      try {
+        for await (const _ of logStream('s1', { signal: ctl.signal })) void _;
+      } catch (err) {
+        caught = err;
+      }
+    })();
+    await vi.advanceTimersByTimeAsync(9_000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await done;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(describeProblem(caught)).toEqual({ title: 'Too Many Requests', detail, status: 429 });
+  });
+
+  test('a 429 that clears on its retry streams as usual', async () => {
+    vi.useFakeTimers();
+    const fetchMock = serve(tooMany('3'), ok(body([frame('sessions', SESSIONS(['a']))])));
+    const gaps = vi.fn();
+    const taken = take((ctl) => sessionsStream({ signal: ctl.signal, onGap: gaps }), 1);
+    await vi.advanceTimersByTimeAsync(3_000);
+    const { got } = await taken;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(got).toHaveLength(1);
+    expect(gaps).not.toHaveBeenCalled();
+  });
+
+  test("a 429's wait is at least a second and at most a minute", async () => {
+    vi.useFakeTimers();
+    const fetchMock = serve(tooMany('900'), tooMany('900'));
+    const ctl = new AbortController();
+    const done = (async () => {
+      try {
+        for await (const _ of logStream('s1', { signal: ctl.signal })) void _;
+      } catch {
+        // The second refusal is final.
+      }
+    })();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await done;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   test('an error event ends the stream rather than reopening it', async () => {

@@ -294,21 +294,80 @@ select
     (select coalesce(sum(octet_length(m.text) + octet_length(m.raw)), 0) from messages m
       where m.org_id = $1 and m.session_id = $2)::bigint as message_bytes;
 
--- name: PutMessage :execrows
--- The update is conditional so the count reports rows that changed,
--- not rows that were mentioned.
-insert into messages (id, org_id, session_id, conversation_id, opencode_id, role, text, at, raw, created_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-on conflict (conversation_id, opencode_id) do update
-set role = excluded.role, text = excluded.text, at = excluded.at, raw = excluded.raw
-where messages.role is distinct from excluded.role
-   or messages.text is distinct from excluded.text
-   or messages.at is distinct from excluded.at
-   or messages.raw is distinct from excluded.raw;
+-- name: PutMessage :one
+-- The update is conditional so a row comes back only when it changed,
+-- not when it was mentioned. Every part of a WITH reads the snapshot
+-- from before the statement, so old is the row the upsert replaced:
+-- the write's net size is new_bytes less old_bytes.
+-- @decision(DL-131)
+with old as (
+    select octet_length(o.text) + octet_length(o.raw) as bytes from messages o
+    where o.conversation_id = sqlc.arg(conversation_id) and o.opencode_id = sqlc.arg(opencode_id)
+), up as (
+    insert into messages (id, org_id, session_id, conversation_id, opencode_id, role, text, at, raw, created_at)
+    values (sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(session_id), sqlc.arg(conversation_id), sqlc.arg(opencode_id),
+            sqlc.arg(role), sqlc.arg(text), sqlc.narg(at), sqlc.arg(raw), sqlc.arg(created_at))
+    on conflict (conversation_id, opencode_id) do update
+    set role = excluded.role, text = excluded.text, at = excluded.at, raw = excluded.raw
+    where messages.role is distinct from excluded.role
+       or messages.text is distinct from excluded.text
+       or messages.at is distinct from excluded.at
+       or messages.raw is distinct from excluded.raw
+    returning octet_length(messages.text) + octet_length(messages.raw) as bytes
+)
+select up.bytes::bigint as new_bytes,
+       coalesce((select old.bytes from old), 0)::bigint as old_bytes,
+       not exists (select 1 from old) as inserted
+from up;
 
 -- name: ListMessages :many
 select * from messages where org_id = $1 and session_id = $2
 order by at nulls first, id;
+
+-- name: RecentSessionMessages :many
+-- A session's newest messages, newest first: at most row_limit, and each
+-- with the bytes of it and every newer one (running). Rows that start
+-- past max_bytes are left out, so at most one row past the bound comes
+-- back, and its text and raw do not: the caller learns there is more
+-- without loading it. octet_length and a case not taken read no value.
+-- @decision(DL-131)
+select t.id, t.org_id, t.session_id, t.conversation_id, t.opencode_id, t.role,
+       case when t.running <= sqlc.arg(max_bytes)::bigint then t.text else '' end as text,
+       t.at, t.created_at,
+       case when t.running <= sqlc.arg(max_bytes)::bigint then t.raw else ''::bytea end as raw,
+       t.running::bigint as running
+from (
+    select m.*, sum(octet_length(m.text) + octet_length(m.raw)) over w as running,
+           octet_length(m.text) + octet_length(m.raw) as own
+    from messages m
+    where m.org_id = sqlc.arg(org_id) and m.session_id = sqlc.arg(session_id)
+    window w as (order by m.at desc nulls last, m.id desc rows between unbounded preceding and current row)
+    order by m.at desc nulls last, m.id desc
+    limit sqlc.arg(row_limit)
+) t
+where t.running - t.own <= sqlc.arg(max_bytes)::bigint
+order by t.at desc nulls last, t.id desc;
+
+-- name: RecentConversationMessages :many
+-- RecentSessionMessages over one conversation, by its own index.
+-- @decision(DL-131)
+select t.id, t.org_id, t.session_id, t.conversation_id, t.opencode_id, t.role,
+       case when t.running <= sqlc.arg(max_bytes)::bigint then t.text else '' end as text,
+       t.at, t.created_at,
+       case when t.running <= sqlc.arg(max_bytes)::bigint then t.raw else ''::bytea end as raw,
+       t.running::bigint as running
+from (
+    select m.*, sum(octet_length(m.text) + octet_length(m.raw)) over w as running,
+           octet_length(m.text) + octet_length(m.raw) as own
+    from messages m
+    where m.org_id = sqlc.arg(org_id) and m.session_id = sqlc.arg(session_id)
+      and m.conversation_id = sqlc.arg(conversation_id)
+    window w as (order by m.at desc nulls last, m.id desc rows between unbounded preceding and current row)
+    order by m.at desc nulls last, m.id desc
+    limit sqlc.arg(row_limit)
+) t
+where t.running - t.own <= sqlc.arg(max_bytes)::bigint
+order by t.at desc nulls last, t.id desc;
 
 -- name: LastMessages :many
 -- Root conversations only: a subagent's message is never a session's

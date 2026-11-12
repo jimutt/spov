@@ -33,6 +33,23 @@ const MaxSyncBundleBytes = 16 << 20
 // @decision(DL-027)
 const MaxSyncExportBytes = 32 << 20
 
+// MaxSyncIncomingBytes bounds the total size of the git objects a sync
+// brings in, and MaxSyncIncomingBlobBytes any single blob. The bundle's
+// own bytes are small (MaxSyncExportBytes), but its deltas can expand to
+// much more at fetch or checkout; these bound what reaches the disk.
+//
+// @decision(DL-126)
+const (
+	MaxSyncIncomingBytes     = 1 << 30   // 1 GiB
+	MaxSyncIncomingBlobBytes = 256 << 20 // 256 MiB
+)
+
+// Overridable for tests; the production values are the constants above.
+var (
+	maxSyncIncomingBytes     int64 = MaxSyncIncomingBytes
+	maxSyncIncomingBlobBytes int64 = MaxSyncIncomingBlobBytes
+)
+
 // LocalCheckout describes a clean local git checkout ready to seed a
 // synced session.
 //
@@ -542,35 +559,69 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 		return SyncResult{}, fmt.Errorf("git: commit %s is not present in %s after unbundling", state.HeadCommit[:12], root)
 	}
 
+	// Measure what the sync brings in before the fast-forward or the
+	// fallback landing materialises it, and refuse an expansion that
+	// would fill the disk. No ref is written yet, so refusing here
+	// leaves the checkout exactly as it was.
+	//
+	// @decision(DL-126)
+	cur, _ := gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
+	if err := boundIncomingObjects(ctx, root, strings.ToLower(cur), state.HeadCommit); err != nil {
+		return SyncResult{}, err
+	}
+
+	packed, err := archivePaths(state.WorktreeTar)
+	if err != nil {
+		return SyncResult{}, err
+	}
+	cleanDeleted := make([]string, 0, len(state.Deleted))
+	for _, d := range state.Deleted {
+		clean, _ := cleanRepoRelPath(d)
+		cleanDeleted = append(cleanDeleted, clean)
+	}
+	if err := refuseInsideSubmodule(ctx, root, state.HeadCommit, packed, cleanDeleted); err != nil {
+		return SyncResult{}, err
+	}
+
 	commits := countCommitsBetween(ctx, root, state.BaseCommit, state.HeadCommit)
 	inPlace, reason := canApplyInPlace(ctx, root, startBranch, state.BaseCommit, state.HeadCommit)
+	// A checkout whose own config would make an in-place landing write
+	// somewhere other than where the veto looked, or hide what it must
+	// see, goes to the fallback with a clear reason, whatever
+	// canApplyInPlace concluded from the relocated tree.
+	//
+	// @decision(DL-126)
+	if u := unpredictableWorkTreeVeto(ctx, root); u != "" {
+		inPlace, reason = false, u
+	}
+	var curHead string
 	if inPlace {
+		curHead, _ = gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
+		curHead = strings.ToLower(curHead)
 		// Checked while the checkout is still the user's own: the
-		// ignore rules and the hooks directory are read before the
-		// reset below can change either.
+		// ignore rules, the hooks directory and what is on disk are
+		// read before anything below can change them.
 		//
 		// @decision(DL-126)
-		packed, err := archivePaths(state.WorktreeTar)
+		veto, err := inPlaceVeto(ctx, root, curHead, state.HeadCommit, packed, cleanDeleted)
 		if err != nil {
 			return SyncResult{}, err
 		}
-		if err := refuseUnseenPaths(ctx, root, state.HeadCommit, packed, state.Deleted); err != nil {
-			return SyncResult{}, err
+		if veto != "" {
+			inPlace, reason = false, veto
 		}
-		if hooks := touchedHooksDir(ctx, root, state.HeadCommit, packed, state.Deleted); hooks != "" {
-			inPlace = false
-			reason = fmt.Sprintf("the session changed files under %s, which git runs as hooks in this checkout; read them before you check the branch out", hooks)
+	}
+	if inPlace && curHead != state.HeadCommit {
+		refused, err := fastForward(ctx, root, curHead, state.HeadCommit)
+		if err != nil {
+			return SyncResult{}, fmt.Errorf("git: advance %s to %s: %w", startBranch, state.HeadCommit[:12], err)
+		}
+		if refused != "" {
+			inPlace, reason = false, refused
 		}
 	}
 	if inPlace {
-		curHead, _ := gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
-		curHead = strings.ToLower(curHead)
 		before := trackedAt(ctx, root, curHead)
-		if curHead != state.HeadCommit {
-			if _, err := gitOutput(ctx, root, "reset", "--hard", state.HeadCommit); err != nil {
-				return SyncResult{}, fmt.Errorf("git: advance %s to %s: %w", startBranch, state.HeadCommit[:12], err)
-			}
-		}
 		changed, err := applyWorktreeInPlace(root, state.WorktreeTar, state.Deleted)
 		if err != nil {
 			return SyncResult{}, err
@@ -646,9 +697,13 @@ func unbundleCommits(ctx context.Context, root string, bundle []byte, wantCommit
 	tempRef := "refs/spov-sync/head"
 	defer func() { _, _ = gitOutput(ctx, root, "update-ref", "-d", tempRef) }()
 
-	if _, err := gitOutput(ctx, root, "fetch", "--no-tags", "--", bundlePath, "HEAD:"+tempRef); err != nil {
+	// fsck the incoming objects: a malformed or malicious pack is
+	// refused as it is received, not after it is in the store.
+	//
+	// @decision(DL-126)
+	if _, err := gitOutput(ctx, root, "-c", "fetch.fsckObjects=true", "fetch", "--no-tags", "--", bundlePath, "HEAD:"+tempRef); err != nil {
 		// Fall back to unbundling every ref in the bundle.
-		if _, uerr := gitOutput(ctx, root, "bundle", "unbundle", bundlePath); uerr != nil {
+		if _, uerr := gitOutput(ctx, root, "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "bundle", "unbundle", bundlePath); uerr != nil {
 			return fmt.Errorf("git: unbundle sandbox commits: %w", err)
 		}
 	}
@@ -956,18 +1011,27 @@ var ntfsShortGit = regexp.MustCompile(`^(?i)git~[0-9]+$`)
 //
 // @decision(DL-126)
 func namesGitDir(seg string) bool {
-	seg = strings.Map(func(r rune) rune {
+	seg = strings.TrimRight(cutStream(stripIgnorable(seg)), ". ")
+	return strings.EqualFold(seg, ".git") || ntfsShortGit.MatchString(seg)
+}
+
+// stripIgnorable drops the code points HFS+ ignores in a name.
+func stripIgnorable(seg string) string {
+	return strings.Map(func(r rune) rune {
 		switch {
 		case r >= 0x200c && r <= 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x206a && r <= 0x206f, r == 0xfeff:
 			return -1
 		}
 		return r
 	}, seg)
+}
+
+// cutStream drops an NTFS alternate stream suffix (`name:stream`).
+func cutStream(seg string) string {
 	if i := strings.IndexByte(seg, ':'); i >= 0 {
-		seg = seg[:i]
+		return seg[:i]
 	}
-	seg = strings.TrimRight(seg, ". ")
-	return strings.EqualFold(seg, ".git") || ntfsShortGit.MatchString(seg)
+	return seg
 }
 
 // archivePaths lists the cleaned paths a worktree archive would write.
@@ -997,110 +1061,22 @@ func archivePaths(archive []byte) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("git: archive entry %q: %w", hdr.Name, err)
 		}
+		// Refused here, before anything is written, as the unpacker
+		// would refuse it after the commits had landed.
+		//
+		// @decision(DL-126)
+		switch hdr.Typeflag {
+		case tar.TypeReg, '\x00':
+		case tar.TypeSymlink:
+			resolved := path.Clean(path.Join(path.Dir(clean), filepath.ToSlash(hdr.Linkname)))
+			if _, err := cleanRepoRelPath(resolved); err != nil || filepath.IsAbs(hdr.Linkname) {
+				return nil, fmt.Errorf("git: symlink %q escapes the repository (%q)", clean, hdr.Linkname)
+			}
+		default:
+			return nil, fmt.Errorf("git: unsupported tar entry type %d for %q", hdr.Typeflag, clean)
+		}
 		paths = append(paths, clean)
 	}
-}
-
-// refuseUnseenPaths refuses an in-place apply that would touch a file
-// `git status` never shows: an archive entry the checkout ignores, or a
-// deletion of a path the sandbox's commit does not track. An honest
-// export holds neither, since it is built from `git status`.
-//
-// @decision(DL-126)
-func refuseUnseenPaths(ctx context.Context, root, headCommit string, packed, deleted []string) error {
-	if len(packed) == 0 && len(deleted) == 0 {
-		return nil
-	}
-	listing, err := gitOutputRaw(ctx, root, "ls-tree", "-r", "-z", "--name-only", headCommit)
-	if err != nil {
-		return fmt.Errorf("git: list %s: %w", headCommit[:12], err)
-	}
-	tracked := map[string]bool{}
-	for _, p := range strings.Split(listing, "\x00") {
-		tracked[p] = true
-	}
-	for _, d := range deleted {
-		clean, err := cleanRepoRelPath(d)
-		if err != nil {
-			return fmt.Errorf("git: deleted path %q: %w", d, err)
-		}
-		if !tracked[clean] {
-			return fmt.Errorf("git: the sandbox's export deletes %q, which its commit does not track; nothing was applied", clean)
-		}
-	}
-	var untracked []string
-	for _, p := range packed {
-		if !tracked[p] {
-			untracked = append(untracked, p)
-		}
-	}
-	if len(untracked) == 0 {
-		return nil
-	}
-	cmd := Command(ctx, root, nil, "check-ignore", "--no-index", "-z", "--stdin")
-	cmd.Stdin = strings.NewReader(strings.Join(untracked, "\x00") + "\x00")
-	out, err := cmd.Output()
-	var exit *exec.ExitError
-	switch {
-	case errors.As(err, &exit) && exit.ExitCode() == 1:
-		return nil // nothing is ignored
-	case err != nil:
-		return fmt.Errorf("git: check the export against this checkout's ignore rules: %w", err)
-	}
-	ignored := strings.Split(strings.TrimRight(string(out), "\x00"), "\x00")
-	shown := ignored
-	if len(shown) > 5 {
-		shown = shown[:5]
-	}
-	return fmt.Errorf("git: the sandbox's export writes %d path(s) this checkout ignores (%s); nothing was applied",
-		len(ignored), strings.Join(shown, ", "))
-}
-
-// touchedHooksDir names the checkout's hooks directory, relative to
-// root, when it lies in the working tree and the sandbox's commits or
-// uncommitted state change a file under it. Empty otherwise.
-//
-// @decision(DL-126)
-func touchedHooksDir(ctx context.Context, root, headCommit string, packed, deleted []string) string {
-	hooks, err := outputOf(commandReadingHooksPath(ctx, root, "rev-parse", "--git-path", "hooks"))
-	hooks = strings.TrimSpace(hooks)
-	if err != nil || hooks == "" {
-		return ""
-	}
-	if !filepath.IsAbs(hooks) {
-		hooks = filepath.Join(root, hooks)
-	}
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return ""
-	}
-	if real, err := filepath.EvalSymlinks(hooks); err == nil {
-		hooks = real
-	}
-	rel, err := filepath.Rel(realRoot, hooks)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return ""
-	}
-	prefix := strings.ToLower(filepath.ToSlash(rel))
-	if prefix == ".git" || strings.HasPrefix(prefix, ".git/") {
-		return ""
-	}
-	touched := append(slices.Clone(packed), deleted...)
-	if cur, err := gitOutput(ctx, root, "rev-parse", "--verify", "HEAD"); err == nil && !strings.EqualFold(cur, headCommit) {
-		if diff, err := gitOutputRaw(ctx, root, "diff", "--name-only", "-z", cur, headCommit); err == nil {
-			touched = append(touched, strings.Split(diff, "\x00")...)
-		}
-	}
-	for _, p := range touched {
-		p = strings.ToLower(strings.TrimPrefix(filepath.ToSlash(p), "./"))
-		if p == "" {
-			continue
-		}
-		if prefix == "." || p == prefix || strings.HasPrefix(p, prefix+"/") {
-			return filepath.ToSlash(rel)
-		}
-	}
-	return ""
 }
 
 // ensureCanonicalRelParent checks that no directory component along

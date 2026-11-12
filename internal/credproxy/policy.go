@@ -67,6 +67,14 @@ func (p Platform) allows(host string, r *http.Request) bool {
 	if (p.Kind == KindForgejo || p.Kind == KindGitea) && carriesQueryNamed(r.URL.RawQuery, forgejoCredentialQuery) {
 		return false
 	}
+	// Forgejo, Gitea and GitLab read the same names from a form body,
+	// which no request the forge CLIs, git or LFS make on an allowed
+	// endpoint has, so a form body gets no credential there.
+	//
+	// @decision(DL-135)
+	if (p.Kind == KindForgejo || p.Kind == KindGitea || p.Kind == KindGitLab) && carriesForm(r) {
+		return false
+	}
 	// The forge's package registry reads its own escapes.
 	//
 	// @decision(DL-078)
@@ -93,6 +101,21 @@ func (p Platform) allows(host string, r *http.Request) bool {
 	// A kind without a policy gets no credential anywhere.
 	//
 	// @decision(DL-041)
+	return false
+}
+
+// carriesForm reports whether any Content-Type of r is a form a forge
+// would read parameters from: urlencoded, or any multipart type.
+//
+// @decision(DL-135)
+func carriesForm(r *http.Request) bool {
+	for _, v := range r.Header.Values("Content-Type") {
+		mt, _, _ := strings.Cut(v, ";")
+		mt = strings.ToLower(strings.TrimSpace(mt))
+		if mt == "application/x-www-form-urlencoded" || strings.HasPrefix(mt, "multipart/") {
+			return true
+		}
+	}
 	return false
 }
 
