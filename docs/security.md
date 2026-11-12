@@ -100,7 +100,8 @@ call. Once the entry is gone, the server:
 - writes an audit row naming the address, the admin and what was ended.
 
 Their history stays: their user row, past sessions, transcripts, reports and
-snapshots. If a step fails the others still run, and the call answers 500 saying
+snapshots. So do their sandbox templates, which hold settings and credential
+names but no secret. If a step fails the others still run, and the call answers 500 saying
 what is left; sending the same `DELETE` again retries. See
 [deploy/README.md](../deploy/README.md#the-allowlist).
 
