@@ -670,6 +670,12 @@ func runProcess(ctx context.Context, proc *modal.ContainerProcess, stdin []byte,
 	if err := proc.Stdin.Close(); err != nil {
 		return ExecResult{}, fmt.Errorf("sandbox: exec stdin close: %w", err)
 	}
+	// A read that stops at its bound leaves the SDK's reader blocked on
+	// the rest; closing the stream ends it.
+	defer func() {
+		_ = proc.Stdout.Close()
+		_ = proc.Stderr.Close()
+	}()
 	code, err := proc.Wait(ctx, nil)
 	if err != nil {
 		return ExecResult{}, fmt.Errorf("sandbox: exec wait: %w", err)
