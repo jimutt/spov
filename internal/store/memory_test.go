@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -55,6 +56,16 @@ func TestNewIDIsAULIDThatSortsByTime(t *testing.T) {
 
 func TestMemoryImages(t *testing.T) {
 	storetest.RunImages(t, func(*testing.T) store.ImageStore { return store.NewMemoryImages() })
+}
+
+// Both forms of the file store meet the template contract.
+//
+// @decision(DL-119)
+func TestFileTemplatesMeetTheContract(t *testing.T) {
+	storetest.RunTemplates(t, "org", func(*testing.T) store.TemplateStore { return &store.FileTemplates{} })
+	storetest.RunTemplates(t, "org", func(t *testing.T) store.TemplateStore {
+		return &store.FileTemplates{Path: filepath.Join(t.TempDir(), store.TemplatesName)}
+	})
 }
 
 // TestMemoryIndexesFollowARolledBackTransaction: a failed transaction's

@@ -120,6 +120,11 @@ type Deps struct {
 	//
 	// @decision(DL-016)
 	Images store.ImageStore
+	// Templates keeps each user's sandbox templates. Nil keeps none, and
+	// the endpoints answer 501.
+	//
+	// @decision(DL-119)
+	Templates store.TemplateStore
 	// Resolver resolves partial add-on versions to exact ones. Nil
 	// resolves none.
 	//

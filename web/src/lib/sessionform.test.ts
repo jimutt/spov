@@ -13,6 +13,24 @@ describe("the session form", () => {
     expect(toSessionRequest([repo])).toEqual({ repos: [repo] });
   });
 
+  // @decision(DL-121)
+  it("sends a template only when one is chosen", async () => {
+    expect(toSessionRequest([repo], "", "")).toEqual({ repos: [repo] });
+    expect(toSessionRequest([repo], "", "acme")).toEqual({ repos: [repo], template: "acme" });
+    let sent: unknown;
+    await startAndGo(
+      [repo],
+      async (body) => {
+        sent = body;
+        return { response: { ok: true, status: 202 }, data: { id: "01ABC" } };
+      },
+      () => {},
+      "",
+      "acme",
+    );
+    expect(sent).toEqual({ repos: [repo], template: "acme" });
+  });
+
   it("goes to the new session's page", async () => {
     let went = "";
     let sent: unknown;

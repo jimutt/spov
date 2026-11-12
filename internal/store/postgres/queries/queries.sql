@@ -703,3 +703,18 @@ set ended_at = null,
     snapshot_state = case when u.snapshot_state = 'failed' then 'pending' else u.snapshot_state end
 where u.session_id = $1 and u.org_id = $2
   and u.n = (select max(r.n) from session_runs r where r.session_id = u.session_id);
+
+-- name: PutSandboxTemplate :exec
+insert into sandbox_templates (org_id, user_id, name, settings, created_at, updated_at)
+values ($1, $2, $3, $4, $5, $5)
+on conflict (org_id, user_id, name) do update
+set settings = excluded.settings, updated_at = excluded.updated_at;
+
+-- name: GetSandboxTemplate :one
+select * from sandbox_templates where org_id = $1 and user_id = $2 and name = $3;
+
+-- name: ListSandboxTemplates :many
+select * from sandbox_templates where org_id = $1 and user_id = $2 order by name collate "C";
+
+-- name: DeleteSandboxTemplate :execrows
+delete from sandbox_templates where org_id = $1 and user_id = $2 and name = $3;

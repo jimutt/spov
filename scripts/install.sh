@@ -143,12 +143,21 @@ mkdir -p "$INSTALL_DIR"
 mv -f "$tmp/unpacked/spov" "$INSTALL_DIR/spov"
 chmod 755 "$INSTALL_DIR/spov"
 say "installed $(spov version)"
+# What to run next, by the name that works in this shell.
+next_cmd=spov
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
-  *) say "$INSTALL_DIR is not on your PATH; add it, for example: export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
+  *)
+    say "$INSTALL_DIR is not on your PATH; add it, for example: export PATH=\"$INSTALL_DIR:\$PATH\""
+    next_cmd="$INSTALL_DIR/spov"
+    ;;
 esac
+next_step() { say "next: run '$next_cmd init' to check this machine and set up what is missing"; }
 
-[ "$WITH_OPENCODE" = 1 ] || exit 0
+if [ "$WITH_OPENCODE" != 1 ]; then
+  next_step
+  exit 0
+fi
 
 # OpenCode at the pin: the server's when one is configured, else the new
 # binary's own default. It goes where spov's locator looks first.
@@ -189,3 +198,4 @@ mkdir -p "$dest"
 mv -f "$tmp/opencode/package/bin/opencode" "$dest/opencode"
 chmod 755 "$dest/opencode"
 say "installed OpenCode $pin at $dest/opencode, where spov looks for it"
+next_step

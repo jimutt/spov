@@ -571,6 +571,24 @@ func (q *Queries) DeleteOrgCredential(ctx context.Context, arg DeleteOrgCredenti
 	return result.RowsAffected(), nil
 }
 
+const deleteSandboxTemplate = `-- name: DeleteSandboxTemplate :execrows
+delete from sandbox_templates where org_id = $1 and user_id = $2 and name = $3
+`
+
+type DeleteSandboxTemplateParams struct {
+	OrgID  string
+	UserID string
+	Name   string
+}
+
+func (q *Queries) DeleteSandboxTemplate(ctx context.Context, arg DeleteSandboxTemplateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSandboxTemplate, arg.OrgID, arg.UserID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSessionProxyCA = `-- name: DeleteSessionProxyCA :exec
 delete from session_proxy_cas where session_id = $1 and org_id = $2
 `
@@ -1111,6 +1129,30 @@ func (q *Queries) GetOrgCredential(ctx context.Context, arg GetOrgCredentialPara
 		&i.KeyVersion,
 		&i.Meta,
 		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSandboxTemplate = `-- name: GetSandboxTemplate :one
+select org_id, user_id, name, settings, created_at, updated_at from sandbox_templates where org_id = $1 and user_id = $2 and name = $3
+`
+
+type GetSandboxTemplateParams struct {
+	OrgID  string
+	UserID string
+	Name   string
+}
+
+func (q *Queries) GetSandboxTemplate(ctx context.Context, arg GetSandboxTemplateParams) (SandboxTemplate, error) {
+	row := q.db.QueryRow(ctx, getSandboxTemplate, arg.OrgID, arg.UserID, arg.Name)
+	var i SandboxTemplate
+	err := row.Scan(
+		&i.OrgID,
+		&i.UserID,
+		&i.Name,
+		&i.Settings,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -2284,6 +2326,42 @@ func (q *Queries) ListRuns(ctx context.Context, arg ListRunsParams) ([]SessionRu
 	return items, nil
 }
 
+const listSandboxTemplates = `-- name: ListSandboxTemplates :many
+select org_id, user_id, name, settings, created_at, updated_at from sandbox_templates where org_id = $1 and user_id = $2 order by name collate "C"
+`
+
+type ListSandboxTemplatesParams struct {
+	OrgID  string
+	UserID string
+}
+
+func (q *Queries) ListSandboxTemplates(ctx context.Context, arg ListSandboxTemplatesParams) ([]SandboxTemplate, error) {
+	rows, err := q.db.Query(ctx, listSandboxTemplates, arg.OrgID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SandboxTemplate
+	for rows.Next() {
+		var i SandboxTemplate
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.UserID,
+			&i.Name,
+			&i.Settings,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserCredentials = `-- name: ListUserCredentials :many
 select id, org_id, user_id, platform, ciphertext, nonce, key_version, verified_as, created_at, updated_at, scopes, expires_at, route from user_credentials where org_id = $1 and user_id = $2 order by platform
 `
@@ -2794,6 +2872,32 @@ func (q *Queries) PutOrgCredential(ctx context.Context, arg PutOrgCredentialPara
 		arg.UpdatedBy,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+	)
+	return err
+}
+
+const putSandboxTemplate = `-- name: PutSandboxTemplate :exec
+insert into sandbox_templates (org_id, user_id, name, settings, created_at, updated_at)
+values ($1, $2, $3, $4, $5, $5)
+on conflict (org_id, user_id, name) do update
+set settings = excluded.settings, updated_at = excluded.updated_at
+`
+
+type PutSandboxTemplateParams struct {
+	OrgID     string
+	UserID    string
+	Name      string
+	Settings  []byte
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) PutSandboxTemplate(ctx context.Context, arg PutSandboxTemplateParams) error {
+	_, err := q.db.Exec(ctx, putSandboxTemplate,
+		arg.OrgID,
+		arg.UserID,
+		arg.Name,
+		arg.Settings,
+		arg.CreatedAt,
 	)
 	return err
 }

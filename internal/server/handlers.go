@@ -53,6 +53,8 @@ type SessionView struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:"env,omitempty" doc:"The environment variables set in the sandbox beside spov's own, as name to value"`
+	// @decision(DL-120)
+	Template string `json:"template,omitempty" doc:"The sandbox template the launch took settings from"`
 	// BootedImage and InstalledAddons are what the sandbox got, which
 	// can be an older build of the same add-ons than the newest.
 	//
@@ -279,6 +281,8 @@ type SessionRequest struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:"env,omitempty" doc:"Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session"`
+	// @decision(DL-120)
+	Template string `json:"template,omitempty" maxLength:"40" doc:"One of the caller's sandbox templates: its settings apply where the request sets none"`
 	// Sync seeds the sandbox repository from a local git branch and
 	// commit (with an optional bundle of unpushed commits).
 	//
@@ -313,7 +317,7 @@ func (r SessionRequest) toStore() (store.SessionRequest, error) {
 		Routed: routedRequest(r.Credentials, r.NoCredentials, r.CredentialsPreferred, r.Needs),
 		Addons: r.Addons, Apt: r.Apt,
 		// @decision(DL-096)
-		Env: r.Env,
+		Env: r.Env, Template: r.Template,
 		// @decision(DL-027)
 		Sync: sync,
 	}, nil
@@ -353,7 +357,7 @@ func viewOf(s store.Session, now time.Time) SessionView {
 		Repos: repos, Clones: s.Clones, Landing: s.Landing, Error: s.Error,
 		Model: s.Request.Model,
 		Image: s.Request.Image, Sandbox: sandboxViewOf(s.Request.Sandbox), Egress: s.Request.Egress,
-		Addons: s.Request.Addons, Apt: s.Request.Apt, Env: s.Request.Env,
+		Addons: s.Request.Addons, Apt: s.Request.Apt, Env: s.Request.Env, Template: s.Request.Template,
 		BootedImage: s.Booted.Image, InstalledAddons: s.Booted.Addons,
 		CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt, StoppedAt: s.StoppedAt,
 		Credentials: credentialViews(s.Credentials),
