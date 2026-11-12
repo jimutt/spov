@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io/fs"
+	"net/netip"
 	"time"
 
 	"github.com/jimutt/spov/internal/auth"
@@ -171,6 +172,16 @@ type Deps struct {
 	//
 	// @decision(DL-003)
 	StorePoll time.Duration
+	// TrustedProxies are the peers whose X-Forwarded-For the per-address
+	// limits read (server.trusted_proxies). Empty trusts no peer's.
+	//
+	// @decision(DL-133)
+	TrustedProxies []netip.Prefix
+	// Limits replaces DefaultLimits, for a test that needs a limit it
+	// can reach or a clock it can move. Nil means DefaultLimits.
+	//
+	// @decision(DL-133)
+	Limits *Limits
 	// PublicURL is the externally visible origin, when the server sits
 	// behind a proxy. Empty means the listen address is the origin.
 	//

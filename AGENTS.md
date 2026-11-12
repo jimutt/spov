@@ -111,6 +111,14 @@ The Modal SDK is pre-1.0 and ships breaking minor releases. Keep its exact pin i
   SPOV_DATABASE_URL=$SPOV_TEST_DATABASE_URL go run ./cmd/spov serve migrate up
   ```
 
+## Request limits
+
+- Every limit is a constant in `internal/server/limits.go`, in memory per replica; `Deps.Limits` (with its own clock, never `Deps.Now`) is a test seam, and `server.trusted_proxies` the only setting. A value changes only with its decision (DL-133; `TestTheDefaultLimitsAreTheDecidedValues`).
+- Sign-in starts (`GET /login`, `POST /device/code`) and device-token polls are limited per client address in `Server.Handler`, before the routes, plus a per-replica cap on starts within a row's life. A device refusal is an RFC 8628 `slow_down` or `temporarily_unavailable` body, which the CLI's x/oauth2 client and `deviceStartError` read (DL-133, DL-006; `TestOneAddressStartsThirtySignInsAMinute`, `TestSignInsInProgressAreCappedPerReplica`, `TestServerLoginPrintsTheServersRefusalToStart`).
+- The client address is the peer, or behind a peer in `server.trusted_proxies` the right-most untrusted `X-Forwarded-For` entry. Only these limits read it; never use it for cookies, redirects or the browser guard (DL-133; `TestAnUntrustedPeersForwardedHeaderIsIgnored`, `TestATrustedProxysForwardedHeaderNamesTheClient`).
+- The per-user limits are middleware between authentication and the mux. Streams and creates are classified from the API document (`routeClasses`), so a stream registered through `registerSSE` is counted as one with nothing to update; a new route that starts a sandbox joins `createOperations` (DL-133; `TestEveryStreamAndCreateRouteIsClassified`).
+- A request with a body gets a per-request read deadline (30 s, 5 minutes on the bundle routes); a stream has no body and gets none, and `keepReadDeadline` stops huma's five-second default replacing it. Keep `http.Server`'s `ReadTimeout` and `WriteTimeout` unset: the first would cut the bundle routes' five minutes, the second a long download (DL-133; `TestABodyMustArriveWithinItsReadTimeout`, `TestAStreamOutlivesTheReadDeadline`).
+
 ## Web app areas
 
 ### A job is shown on its session's page

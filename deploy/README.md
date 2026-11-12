@@ -27,6 +27,12 @@ set as `SPOV_<PATH>` (for example `SPOV_SANDBOX_TIMEOUT`); the server reads its
 user file and the environment only, never a `.spov.yaml`. See
 [`docs/configuration.md`](../docs/configuration.md).
 
+Behind a reverse proxy, also name the proxy in `server.trusted_proxies` in the
+server's config file. Until then every client shares the proxy's address for
+the per-address sign-in limits, so one client can use up everyone's sign-ins.
+The limits, and what each refusal looks like, are in
+[`docs/server.md`](../docs/server.md#limits).
+
 ## The credential proxy
 
 Forge tokens and model provider keys reach a sandbox through a proxy sidecar

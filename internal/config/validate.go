@@ -47,6 +47,10 @@ func Validate(c Config) error {
 	if err := ValidServerURL(c.Server.URL); err != nil {
 		return fmt.Errorf("config: server.url: %w", err)
 	}
+	// @decision(DL-133)
+	if _, err := TrustedProxyPrefixes(c.Server.TrustedProxies); err != nil {
+		return err
+	}
 	// @decision(DL-043)
 	for _, kv := range [][2]string{{"sandbox.git_access", c.Sandbox.GitAccess}, {"sandbox.job_git_access", c.Sandbox.JobGitAccess}} {
 		if v := kv[1]; v != "" && v != "repos" && v != "all" {
