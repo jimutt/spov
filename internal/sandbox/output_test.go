@@ -57,10 +57,10 @@ func TestTheFakeRefusesOutputOverTheBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.ExecResults["big"] = ExecResult{Stdout: strings.Repeat("x", MaxExecOutput+1)}
-	if _, err := h.Exec(t.Context(), []string{"big"}); !errors.Is(err, ErrOutputTooLarge) {
+	if _, err := h.Exec(execCtx(t), []string{"big"}); !errors.Is(err, ErrOutputTooLarge) {
 		t.Errorf("Exec over the default bound: err = %v", err)
 	}
-	res, err := h.ExecBounded(t.Context(), []string{"big"}, nil, MaxExecOutput+1)
+	res, err := h.ExecBounded(execCtx(t), []string{"big"}, nil, MaxExecOutput+1)
 	if err != nil || len(res.Stdout) != MaxExecOutput+1 {
 		t.Errorf("ExecBounded with room: len %d, %v", len(res.Stdout), err)
 	}

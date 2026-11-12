@@ -361,6 +361,27 @@ func (h *FakeHandle) AddTags(ctx context.Context, tags map[string]string) error 
 	return nil
 }
 
+// ErrExecNoDeadline is what the fake answers an exec whose context has no
+// deadline: a program in the sandbox that never exits would hold such a
+// call forever, so every caller bounds its own.
+//
+// @decision(DL-135)
+var ErrExecNoDeadline = errors.New("sandbox: exec without a deadline on its context")
+
+func requireDeadline(ctx context.Context, command []string) error {
+	if _, ok := ctx.Deadline(); ok {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrExecNoDeadline, strings.Join(command, " "))
+}
+
+// DropTag removes a tag, as anything that replaced the tag set would.
+func (h *FakeHandle) DropTag(key string) {
+	h.provider.mu.Lock()
+	defer h.provider.mu.Unlock()
+	delete(h.info.Tags, key)
+}
+
 // SidecarExecs returns every SidecarExecInput call, in order.
 func (h *FakeHandle) SidecarExecs() []SidecarExec {
 	h.provider.mu.Lock()
@@ -374,6 +395,10 @@ func (h *FakeHandle) SidecarExecs() []SidecarExec {
 // @decision(DL-034)
 func (h *FakeHandle) SidecarExecInput(ctx context.Context, sidecar string, command []string, stdin []byte) (ExecResult, error) {
 	if err := ctx.Err(); err != nil {
+		return ExecResult{}, err
+	}
+	// @decision(DL-135)
+	if err := requireDeadline(ctx, command); err != nil {
 		return ExecResult{}, err
 	}
 	h.provider.mu.Lock()
@@ -573,6 +598,10 @@ func (h *FakeHandle) ExecInput(ctx context.Context, command []string, stdin []by
 // @decision(DL-130)
 func (h *FakeHandle) ExecBounded(ctx context.Context, command []string, stdin []byte, maxOutput int) (ExecResult, error) {
 	if err := ctx.Err(); err != nil {
+		return ExecResult{}, err
+	}
+	// @decision(DL-135)
+	if err := requireDeadline(ctx, command); err != nil {
 		return ExecResult{}, err
 	}
 	h.provider.mu.Lock()

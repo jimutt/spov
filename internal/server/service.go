@@ -17,6 +17,7 @@ import (
 	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
 	"github.com/jimutt/spov/internal/routedcred"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/session"
 	"github.com/jimutt/spov/internal/store"
@@ -222,7 +223,11 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	s.launches[sess.ID] = cancel
 	s.mu.Unlock()
 
-	go func() {
+	// A panic in a launch is logged and survived: the session stays as
+	// the reconciler's recovery finds it.
+	//
+	// @decision(DL-135)
+	go safego.Do("launch of session "+sess.ID, s.deps.Warn, func() {
 		defer func() {
 			cancel()
 			s.mu.Lock()
@@ -230,7 +235,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 			s.mu.Unlock()
 		}()
 		s.launch(launchCtx, sess, log, telemetry.KindInteractive, runPlan{})
-	}()
+	})
 	return sess, nil
 }
 

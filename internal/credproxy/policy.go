@@ -60,6 +60,13 @@ func (p Platform) allows(host string, r *http.Request) bool {
 		return true
 	}
 	read := r.Method == http.MethodGet || r.Method == http.MethodHead
+	// A Forgejo or Gitea request that names a user or a token in its
+	// query gets no credential.
+	//
+	// @decision(DL-135)
+	if (p.Kind == KindForgejo || p.Kind == KindGitea) && carriesQueryNamed(r.URL.RawQuery, forgejoCredentialQuery) {
+		return false
+	}
 	// The forge's package registry reads its own escapes.
 	//
 	// @decision(DL-078)
@@ -174,10 +181,20 @@ func (p Platform) allowsAPI(segs []string, read bool) bool {
 		return read
 	}
 	anyMethod, listed := repoSections[segs[3]]
-	if segs[3] == "pulls" && len(segs) > 5 && segs[5] == "merge" {
+	if segs[3] == "pulls" && len(segs) > 5 && isMergeSegment(segs[5]) {
 		anyMethod = false
 	}
 	return listed && (anyMethod || read)
+}
+
+// isMergeSegment reports a path segment a forge may route to the merge of
+// a pull request: the word in any case, with a servlet-style parameter
+// dropped.
+//
+// @decision(DL-135)
+func isMergeSegment(seg string) bool {
+	name, _, _ := strings.Cut(seg, ";")
+	return strings.EqualFold(name, "merge")
 }
 
 // allowsGit checks a git smart HTTP path: <owner>/<repo>[.git]/<service>.

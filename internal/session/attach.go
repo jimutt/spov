@@ -134,6 +134,11 @@ func (a *Attacher) Attach(ctx context.Context, opts AttachOptions) (*Session, er
 	}, nil
 }
 
+// PasswordReadTimeout bounds reading the password back out of a sandbox.
+//
+// @decision(DL-135)
+const PasswordReadTimeout = 30 * time.Second
+
 // maxPasswordOutput is far above any password spov generates.
 //
 // @decision(DL-130)
@@ -146,6 +151,9 @@ const maxPasswordOutput = 4 << 10
 //
 // @decision(DL-025) @decision(DL-036)
 func PasswordFromSandbox(ctx context.Context, h sandbox.Handle) (string, error) {
+	// @decision(DL-135)
+	ctx, cancel := context.WithTimeout(ctx, PasswordReadTimeout)
+	defer cancel()
 	res, err := h.ExecBounded(ctx, []string{"printenv", opencode.PasswordEnvVar}, nil, maxPasswordOutput)
 	if err != nil {
 		return "", fmt.Errorf("session: reading the password from the sandbox: %w", err)

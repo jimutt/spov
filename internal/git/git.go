@@ -170,6 +170,27 @@ type PullRequest struct {
 	Created time.Time
 }
 
+// OwnURL is raw when it is an address of the forge at forgeURL: https,
+// or http when the forge itself is configured with http, on the forge's
+// own host, with no user information. Anything else is "" so a forge's
+// answer cannot put another scheme or site in a link.
+//
+// @decision(DL-135)
+func OwnURL(raw, forgeURL string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User != nil {
+		return ""
+	}
+	f, err := url.Parse(forgeURL)
+	if err != nil || f.Host == "" || !strings.EqualFold(u.Host, f.Host) {
+		return ""
+	}
+	if u.Scheme == "https" || (u.Scheme == "http" && f.Scheme == "http") {
+		return raw
+	}
+	return ""
+}
+
 // rank orders a branch's pull requests for gate 2: open, then merged,
 // then closed.
 //

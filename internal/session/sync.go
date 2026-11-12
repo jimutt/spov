@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/opencode"
@@ -92,6 +93,8 @@ git checkout -B "$branch" "$base"
 	if seed.AllowMissingBase {
 		allowMissing = "1"
 	}
+	ctx, cancel := context.WithTimeout(ctx, SeedTimeout)
+	defer cancel()
 	res, err := h.ExecInput(ctx, []string{"bash", "-c", script, "spov-seed", repoPath, seed.Branch, commit, hasBundle, allowMissing}, seed.Bundle)
 	if err != nil {
 		return fmt.Errorf("session: seed local branch %s: %w", seed.Branch, err)
@@ -113,6 +116,17 @@ git checkout -B "$branch" "$base"
 	return nil
 }
 
+// The deadlines of the commands a sync runs in the sandbox, which a
+// program that never exits would otherwise hold for ever: seeding a
+// clone, packaging its state, and measuring it.
+//
+// @decision(DL-135)
+const (
+	SeedTimeout    = 10 * time.Minute
+	ExportTimeout  = 10 * time.Minute
+	InspectTimeout = 5 * time.Minute
+)
+
 // maxExportOutput is how much an export may print: the state at its
 // limit in base64, and room for the JSON around it and the deleted
 // paths.
@@ -131,6 +145,8 @@ func ExportSync(ctx context.Context, h sandbox.Handle, dir, baseCommit string) (
 		return git.ExportedState{}, fmt.Errorf("session: invalid base commit %q", baseCommit)
 	}
 	repoPath := path.Join(opencode.WorkspaceRoot, dir)
+	ctx, cancel := context.WithTimeout(ctx, ExportTimeout)
+	defer cancel()
 	res, err := h.ExecBounded(ctx, []string{"bash", "-c", syncStateScript, "spov-export", repoPath, base, "export"}, nil, maxExportOutput)
 	if err != nil {
 		return git.ExportedState{}, fmt.Errorf("session: export sandbox repository state: %w", err)
@@ -203,6 +219,8 @@ func InspectSync(ctx context.Context, h sandbox.Handle, dir, baseCommit string) 
 	if base != "" && !git.ValidCommitSHA(base) {
 		return SyncSummary{}, fmt.Errorf("session: invalid base commit %q", baseCommit)
 	}
+	ctx, cancel := context.WithTimeout(ctx, InspectTimeout)
+	defer cancel()
 	res, err := h.Exec(ctx, []string{"bash", "-c", syncStateScript, "spov-inspect",
 		path.Join(opencode.WorkspaceRoot, dir), base, "inspect"})
 	if err != nil {

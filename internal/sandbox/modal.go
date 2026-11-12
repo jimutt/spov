@@ -579,6 +579,8 @@ func (h *modalHandle) ExecInput(ctx context.Context, command []string, stdin []b
 
 // @decision(DL-130)
 func (h *modalHandle) ExecBounded(ctx context.Context, command []string, stdin []byte, maxOutput int) (ExecResult, error) {
+	ctx, cancel := execContext(ctx)
+	defer cancel()
 	proc, err := h.sb.Exec(ctx, command, nil)
 	if err != nil {
 		return ExecResult{}, fmt.Errorf("sandbox: exec: %w", err)
@@ -586,11 +588,35 @@ func (h *modalHandle) ExecBounded(ctx context.Context, command []string, stdin [
 	return runProcess(ctx, proc, stdin, maxOutput)
 }
 
+// DefaultExecTimeout bounds an exec whose caller set no deadline. Every
+// caller sets its own; this is the net under one that did not.
+//
+// @decision(DL-135)
+const DefaultExecTimeout = 15 * time.Minute
+
+// proxyBinaryWriteTimeout bounds writing the proxy binary into the bake
+// sandbox.
+//
+// @decision(DL-135)
+const proxyBinaryWriteTimeout = 5 * time.Minute
+
+// execContext is ctx with a deadline: its own, or DefaultExecTimeout.
+//
+// @decision(DL-135)
+func execContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, DefaultExecTimeout)
+}
+
 // SidecarExecInput runs a command in a sidecar, as ExecInput does in
 // the main container.
 //
 // @decision(DL-034) @decision(DL-021)
 func (h *modalHandle) SidecarExecInput(ctx context.Context, sidecar string, command []string, stdin []byte) (ExecResult, error) {
+	ctx, cancel := execContext(ctx)
+	defer cancel()
 	c, err := h.sb.ExperimentalSidecars.Get(ctx, sidecar, nil)
 	if err != nil {
 		if isNotFound(err) {

@@ -44,8 +44,15 @@ const DefaultAllowlistFile = "/etc/spov/allowlist"
 const (
 	WebSessionLifetime = 7 * 24 * time.Hour
 	WebSessionIdle     = 24 * time.Hour
-	// WebSessionCookie is the cookie carrying the opaque scs token.
+	// WebSessionCookie is the cookie carrying the opaque scs token on
+	// plain http; a Secure cookie is named WebSessionCookieSecure.
 	WebSessionCookie = "spov_session"
+	// WebSessionCookieSecure is the name when the cookie is Secure. The
+	// __Host- prefix makes a browser refuse one set by a sibling
+	// subdomain, or with a Domain or another Path.
+	//
+	// @decision(DL-135)
+	WebSessionCookieSecure = "__Host-spov_session"
 	// WebSessionTable is where scs keeps its rows. Not the library's
 	// default "sessions": that name is spov's own sessions table.
 	WebSessionTable = "web_sessions"
@@ -138,6 +145,9 @@ func newSessionManager(publicURL string, warn func(string)) *scs.SessionManager 
 	//
 	// @decision(DL-007)
 	sessions.Cookie.Secure = strings.HasPrefix(publicURL, "https://")
+	if sessions.Cookie.Secure {
+		sessions.Cookie.Name = WebSessionCookieSecure
+	}
 	if !sessions.Cookie.Secure && warn != nil {
 		warn("login: " + PublicURLEnvVar + " is not https, so the session cookie is not marked Secure")
 	}

@@ -590,6 +590,10 @@ func (s *Service) ReportImages(ctx context.Context, p auth.Principal, jobID stri
 func (s *Service) WriteReportBundle(ctx context.Context, p auth.Principal, jobID string, report store.JobFile, images []store.JobFile, w io.Writer) error {
 	zw := zip.NewWriter(w)
 	add := func(f store.JobFile) error {
+		// @decision(DL-135)
+		if !jobs.SafeEntryName(f.Path) {
+			return fmt.Errorf("%w: %q is not a file name that can be bundled", ErrInvalidRequest, f.Path)
+		}
 		zf, err := zw.CreateHeader(&zip.FileHeader{Name: f.Path, Method: zip.Deflate, Modified: f.CreatedAt})
 		if err != nil {
 			return err
