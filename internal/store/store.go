@@ -1003,7 +1003,22 @@ type ConversationStore interface {
 	// when the new one is non-empty. The stored row is returned. A session that
 	// does not exist in the org is ErrNotFound.
 	UpsertConversation(ctx context.Context, c Conversation) (Conversation, error)
+	// ListConversations leaves Info out of every row: the count and the
+	// size of it are the sandbox's, and most readers want neither.
+	// ConversationInfos reads it.
+	//
+	// @decision(DL-131)
 	ListConversations(ctx context.Context, orgID, sessionID string) ([]Conversation, error)
+	// ConversationInfos returns the stored Info of the session's
+	// conversations, keyed by conversation ID. One with none is absent.
+	//
+	// @decision(DL-131) @decision(DL-089)
+	ConversationInfos(ctx context.Context, orgID, sessionID string) (map[string][]byte, error)
+	// StoredSize measures what the session has stored: its
+	// conversations, and the rows and bytes of its events and messages.
+	//
+	// @decision(DL-131)
+	StoredSize(ctx context.Context, orgID, sessionID string) (StoredSize, error)
 	// PutMessages inserts or updates by (ConversationID, OpenCodeID) and
 	// reports how many rows changed. A message for a conversation that
 	// does not exist, or that names a different org or session than its
@@ -1057,6 +1072,17 @@ type ConversationStore interface {
 	//
 	// @decision(DL-052)
 	FindEvent(ctx context.Context, orgID, sessionID, name string, contains []byte) (Event, error)
+}
+
+// StoredSize is what one session's recording occupies. Bytes counts the
+// text and the raw frame of each event and message, not the row around
+// them.
+//
+// @decision(DL-131)
+type StoredSize struct {
+	Conversations int
+	Rows          int64
+	Bytes         int64
 }
 
 // ErrInvalidEvent is an Event that could not be a row: an OpenCode

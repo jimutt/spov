@@ -1193,6 +1193,7 @@ func (s memConversations) ListConversations(_ context.Context, orgID, sessionID 
 	var out []Conversation
 	for _, c := range s.m.conversations {
 		if c.OrgID == orgID && c.SessionID == sessionID {
+			c.Info = nil
 			out = append(out, c)
 		}
 	}
@@ -1206,6 +1207,46 @@ func (s memConversations) ListConversations(_ context.Context, orgID, sessionID 
 		return strings.Compare(a.ID, b.ID)
 	})
 	return out, nil
+}
+
+// ConversationInfos implements ConversationStore.
+//
+// @decision(DL-131)
+func (s memConversations) ConversationInfos(_ context.Context, orgID, sessionID string) (map[string][]byte, error) {
+	defer s.m.lock()()
+	out := map[string][]byte{}
+	for _, c := range s.m.conversations {
+		if c.OrgID == orgID && c.SessionID == sessionID && len(c.Info) > 0 {
+			out[c.ID] = slices.Clone(c.Info)
+		}
+	}
+	return out, nil
+}
+
+// StoredSize implements ConversationStore.
+//
+// @decision(DL-131)
+func (s memConversations) StoredSize(_ context.Context, orgID, sessionID string) (StoredSize, error) {
+	defer s.m.lock()()
+	var size StoredSize
+	for _, c := range s.m.conversations {
+		if c.OrgID == orgID && c.SessionID == sessionID {
+			size.Conversations++
+		}
+	}
+	for _, id := range s.sessionEvents(sessionID) {
+		if e := s.m.events[id]; e.OrgID == orgID {
+			size.Rows++
+			size.Bytes += int64(len(e.Text) + len(e.Raw))
+		}
+	}
+	for _, m := range s.m.messages {
+		if m.OrgID == orgID && m.SessionID == sessionID {
+			size.Rows++
+			size.Bytes += int64(len(m.Text) + len(m.Raw))
+		}
+	}
+	return size, nil
 }
 
 // belongsTo reports whether the conversation exists and carries the

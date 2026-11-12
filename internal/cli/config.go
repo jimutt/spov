@@ -173,7 +173,8 @@ type shownSnapshots struct {
 //
 // @decision(DL-093)
 type shownHistory struct {
-	Retention string `json:"retention" yaml:"retention"`
+	Retention     string `json:"retention" yaml:"retention"`
+	MaxSessionMiB int    `json:"max_session_mib" yaml:"max_session_mib"`
 }
 
 type shownSources struct {
@@ -239,7 +240,7 @@ func newShownConfig(res config.Result, credentialBackend string, stored *shownSt
 			MaxCPU:                c.Quotas.MaxCPU,
 			MaxMemoryMiB:          c.Quotas.MaxMemoryMiB,
 		},
-		History: shownHistory{Retention: c.History.Retention.String()},
+		History: shownHistory{Retention: c.History.Retention.String(), MaxSessionMiB: c.History.MaxSessionMiB},
 		Snapshots: shownSnapshots{
 			Enabled: c.Snapshots.Enabled, Retention: c.Snapshots.Retention.String(), MaxPerUser: c.Snapshots.MaxPerUser,
 		},

@@ -37,6 +37,42 @@ func (q *Queries) AppendAdminEvent(ctx context.Context, arg AppendAdminEventPara
 	return err
 }
 
+const conversationInfos = `-- name: ConversationInfos :many
+select id, info from conversations
+where org_id = $1 and session_id = $2 and info is not null and octet_length(info) > 0
+`
+
+type ConversationInfosParams struct {
+	OrgID     string
+	SessionID string
+}
+
+type ConversationInfosRow struct {
+	ID   string
+	Info []byte
+}
+
+// @decision(DL-131)
+func (q *Queries) ConversationInfos(ctx context.Context, arg ConversationInfosParams) ([]ConversationInfosRow, error) {
+	rows, err := q.db.Query(ctx, conversationInfos, arg.OrgID, arg.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConversationInfosRow
+	for rows.Next() {
+		var i ConversationInfosRow
+		if err := rows.Scan(&i.ID, &i.Info); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countAllowlistAdmins = `-- name: CountAllowlistAdmins :one
 select count(*) from allowlist_entries where org_id = $1 and admin
 `
@@ -1766,7 +1802,8 @@ func (q *Queries) ListAllowlist(ctx context.Context, orgID string) ([]AllowlistE
 }
 
 const listConversations = `-- name: ListConversations :many
-select id, org_id, session_id, opencode_id, title, created_at, updated_at, info, seq_base, seq_after, parent_opencode_id from conversations where org_id = $1 and session_id = $2 order by created_at, id
+select id, org_id, session_id, opencode_id, title, created_at, updated_at, parent_opencode_id, seq_base, seq_after
+from conversations where org_id = $1 and session_id = $2 order by created_at, id
 `
 
 type ListConversationsParams struct {
@@ -1774,19 +1811,36 @@ type ListConversationsParams struct {
 	SessionID string
 }
 
+type ListConversationsRow struct {
+	ID               string
+	OrgID            string
+	SessionID        string
+	OpencodeID       string
+	Title            string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	ParentOpencodeID *string
+	SeqBase          int64
+	SeqAfter         int64
+}
+
 // Oldest first, by created_at rather than by id: a ULID is only
 // monotonic across milliseconds, so two conversations minted in the same
 // one sort by their random suffix. Id breaks the tie so the order is
 // total and stable.
-func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]Conversation, error) {
+//
+// Without info: a reader of a session's conversations is not made to
+// load what its sandbox chose to store there.
+// @decision(DL-131)
+func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsParams) ([]ListConversationsRow, error) {
 	rows, err := q.db.Query(ctx, listConversations, arg.OrgID, arg.SessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Conversation
+	var items []ListConversationsRow
 	for rows.Next() {
-		var i Conversation
+		var i ListConversationsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -1795,10 +1849,9 @@ func (q *Queries) ListConversations(ctx context.Context, arg ListConversationsPa
 			&i.Title,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.Info,
+			&i.ParentOpencodeID,
 			&i.SeqBase,
 			&i.SeqAfter,
-			&i.ParentOpencodeID,
 		); err != nil {
 			return nil, err
 		}
@@ -3255,6 +3308,45 @@ func (q *Queries) SnapshotRuns(ctx context.Context, dollar_1 []string) ([]Sessio
 		return nil, err
 	}
 	return items, nil
+}
+
+const storedSize = `-- name: StoredSize :one
+select
+    (select count(*) from conversations c where c.org_id = $1 and c.session_id = $2)::bigint as conversations,
+    (select count(*) from events e where e.org_id = $1 and e.session_id = $2)::bigint as event_rows,
+    (select coalesce(sum(octet_length(e.text) + octet_length(e.raw)), 0) from events e
+      where e.org_id = $1 and e.session_id = $2)::bigint as event_bytes,
+    (select count(*) from messages m where m.org_id = $1 and m.session_id = $2)::bigint as message_rows,
+    (select coalesce(sum(octet_length(m.text) + octet_length(m.raw)), 0) from messages m
+      where m.org_id = $1 and m.session_id = $2)::bigint as message_bytes
+`
+
+type StoredSizeParams struct {
+	OrgID     string
+	SessionID string
+}
+
+type StoredSizeRow struct {
+	Conversations int64
+	EventRows     int64
+	EventBytes    int64
+	MessageRows   int64
+	MessageBytes  int64
+}
+
+// octet_length reads a stored value's size without fetching it.
+// @decision(DL-131)
+func (q *Queries) StoredSize(ctx context.Context, arg StoredSizeParams) (StoredSizeRow, error) {
+	row := q.db.QueryRow(ctx, storedSize, arg.OrgID, arg.SessionID)
+	var i StoredSizeRow
+	err := row.Scan(
+		&i.Conversations,
+		&i.EventRows,
+		&i.EventBytes,
+		&i.MessageRows,
+		&i.MessageBytes,
+	)
+	return i, err
 }
 
 const touchAPIToken = `-- name: TouchAPIToken :execrows

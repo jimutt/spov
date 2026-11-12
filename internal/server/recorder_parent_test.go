@@ -34,8 +34,14 @@ func (f *recorderFixture) conversationOf(t *testing.T, opencodeID string) (store
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The listing leaves Info out (DL-131); a test reads the row whole.
+	infos, err := f.st.Conversations().ConversationInfos(context.Background(), "org", f.sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range convs {
 		if c.OpenCodeID == opencodeID {
+			c.Info = infos[c.ID]
 			return c, true
 		}
 	}

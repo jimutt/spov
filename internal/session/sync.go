@@ -113,6 +113,13 @@ git checkout -B "$branch" "$base"
 	return nil
 }
 
+// maxExportOutput is how much an export may print: the state at its
+// limit in base64, and room for the JSON around it and the deleted
+// paths.
+//
+// @decision(DL-130)
+const maxExportOutput = git.MaxSyncExportBytes/3*4 + 1<<20
+
 // ExportSync packages the current git commits and uncommitted
 // working-tree changes from a running sandbox's repository at
 // `/workspace/<dir>`.
@@ -124,7 +131,7 @@ func ExportSync(ctx context.Context, h sandbox.Handle, dir, baseCommit string) (
 		return git.ExportedState{}, fmt.Errorf("session: invalid base commit %q", baseCommit)
 	}
 	repoPath := path.Join(opencode.WorkspaceRoot, dir)
-	res, err := h.Exec(ctx, []string{"bash", "-c", syncStateScript, "spov-export", repoPath, base, "export"})
+	res, err := h.ExecBounded(ctx, []string{"bash", "-c", syncStateScript, "spov-export", repoPath, base, "export"}, nil, maxExportOutput)
 	if err != nil {
 		return git.ExportedState{}, fmt.Errorf("session: export sandbox repository state: %w", err)
 	}

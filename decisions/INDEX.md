@@ -2,6 +2,8 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-131 | One session stores a bounded number of conversations and a bounded size of history, and the verdict holds a bounded size | accepted | server | recorder, storage, security, limits |
+| DL-130 | An exec reads a bounded amount of a sandbox program's output, and more is an error | accepted | sandbox | sandbox, exec, security, limits |
 | DL-127 | The session store holds a hash of a browser session token, never the token | accepted | server | auth, login, security |
 | DL-126 | Sync-back writes only what git status would show, and never lands in place over a hooks directory | accepted | cli | sync, security, cli |
 | DL-125 | Getting started is install, spov init, spov fly, and a launch that finds nothing configured points at init | accepted | cli | init, onboarding, docs |
