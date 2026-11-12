@@ -227,7 +227,9 @@ them.
 - Reference: [forges](docs/forges.md), [GitHub access](docs/github-access.md),
   [local history](docs/local-history.md), [metrics](docs/metrics.md),
   [the HTTP API](docs/api/openapi.yaml)
-- Running a server: [deploy/README.md](deploy/README.md)
+- Running a server: [deploy/README.md](deploy/README.md), and what to decide
+  before you share one: [Running a shared server safely](docs/security.md)
+- Reporting a vulnerability: [SECURITY.md](SECURITY.md)
 
 ## Contributing
 

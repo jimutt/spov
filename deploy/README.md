@@ -17,6 +17,13 @@ Recorded in [DL-010](../decisions/records/server/DL-010.md).
 
 Optional: `SPOV_LISTEN`, `ANTHROPIC_API_KEY` and other model provider keys.
 
+> **Before you share this server:** a model provider key set here is given to
+> every signed-in user's sessions, not only to the server, and spend is limited
+> per user as a rate, with no total cap. Read
+> [Shared model keys](../docs/security.md#shared-model-keys),
+> [Cost](../docs/security.md#cost) and the
+> [checklist](../docs/security.md#before-you-expose-a-server-a-checklist) first.
+
 `SPOV_LISTEN` is the address to bind, used when `--listen` is not given. The
 default is `127.0.0.1:8080`, loopback, so a server is reachable from the
 network only when its deployment says so (DL-010). That is unreachable from
@@ -355,7 +362,9 @@ the fallback.
 
 Each is looked for in the server's environment **and** in the serving
 machine's own credential store, never in a user's stored keys. Set it in
-the deployment's environment; an exported key wins over a stored one.
+the deployment's environment; an exported key wins over a stored one. A key set
+there is also every user's sessions' key; to give this call a key of its own, see
+[Shared model keys](../docs/security.md#shared-model-keys).
 `spov credentials add` from a CLI pointed at the server stores a key for
 that user's sessions, which the prep pass does not read.
 
