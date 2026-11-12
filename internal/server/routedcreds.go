@@ -249,6 +249,10 @@ func checkRoutedCredential(r routedcred.Route, secret string) error {
 	if r.Name == NoCredentials {
 		return fmt.Errorf("%w: %s is reserved: it is how a configuration attaches no routed credential", errInvalidRoute, NoCredentials)
 	}
+	// @decision(DL-118)
+	if r.Name == PlatformGitHub {
+		return fmt.Errorf("%w: %s names a platform's credential, so it cannot name a routed one", errInvalidRoute, r.Name)
+	}
 	if err := r.Validate(); err != nil {
 		return fmt.Errorf("%w: %w", errInvalidRoute, err)
 	}
@@ -322,6 +326,11 @@ func (s *Server) registerRoutedCredentials() {
 		}
 		if r.Name != in.Name {
 			return nil, huma.Error422UnprocessableEntity("the route names " + r.Name + ", not " + in.Name)
+		}
+		// @decision(DL-118)
+		r, err = r.Expanded()
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity(err.Error())
 		}
 		p := principal(ctx)
 		secret := strings.TrimSpace(in.Body.Secret)

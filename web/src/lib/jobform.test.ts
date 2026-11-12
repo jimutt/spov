@@ -252,6 +252,29 @@ describe("where a created job goes", () => {
   });
 });
 
+// @decision(DL-121)
+describe("a job's sandbox template", () => {
+  const base = (): JobDraft => ({
+    ...emptyDraft(),
+    goal: "g",
+    repos: [{ platform: "gh", owner: "acme", name: "app" }],
+  });
+
+  it("opens on None and sends no template", () => {
+    expect(emptyDraft().template).toBe("");
+    expect("template" in toJobRequest(base())).toBe(false);
+  });
+
+  it("is sent when chosen, beside a control the person set", () => {
+    expect(toJobRequest({ ...base(), template: "acme", access: "repos" })).toMatchObject({
+      template: "acme",
+      git_access: "repos",
+    });
+    // Unset, the control sends nothing, so the template's value stands.
+    expect("git_access" in toJobRequest({ ...base(), template: "acme" })).toBe(false);
+  });
+});
+
 describe("submitting", () => {
   const ready = (): JobDraft => ({
     ...emptyDraft(),

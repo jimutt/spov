@@ -52,6 +52,8 @@ type JobRequest struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:"env,omitempty" doc:"Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session"`
+	// @decision(DL-120)
+	Template string `json:"template,omitempty" maxLength:"40" doc:"One of the caller's sandbox templates: its settings apply where the request sets none"`
 	// Sandbox is named as it is on a session create, not "session": one
 	// shape with two names would give the generated TypeScript client
 	// two names for the same thing.
