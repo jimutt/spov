@@ -402,6 +402,7 @@ func (s *Service) startResume(ctx context.Context, sess store.Session, plan runP
 			delete(s.launches, sess.ID)
 			s.mu.Unlock()
 		}()
+		defer s.launchPanicked(launchCtx, sess, log, telemetry.KindInteractive, plan, s.deps.Now())
 		s.launch(launchCtx, sess, log, telemetry.KindInteractive, plan, func(opts *session.Options) {
 			opts.SandboxName = fmt.Sprintf("%s-run%d", sess.Name, plan.N)
 			opts.SnapshotImage = plan.From

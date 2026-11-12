@@ -210,10 +210,12 @@ What you can do:
   `spov serve image build`.
 
 The server also limits how often each user may call the API, create sessions and
-jobs, and open live views, and how often one address may start a sign-in
-([Limits](server.md#limits)). These are fixed and kept per replica. They keep one
-user or one address from overloading the server, and do not bound what a user
-spends within them.
+jobs, and open live views, and how often one address or one network may start
+a sign-in ([Limits](server.md#limits)). These are fixed and kept per replica. They
+keep one user, one address or one network from overloading the server, and do
+not bound what a user spends within them. A source spread over 20 or more
+networks can still hold a replica's sign-ins at 503 for up to 15 minutes at a
+time.
 
 ## Before you expose a server: a checklist
 

@@ -29,6 +29,14 @@ const (
 	// address's polls of the device token endpoint.
 	DevicePollsPerMinute = 120
 	DevicePollBurst      = 120
+	// NetworkSignInsPerMinute and NetworkDevicePollsPerMinute bound the
+	// same for one network (netKey), burst equal to the rate, so one
+	// allocation's many addresses cannot multiply the per-address rate.
+	NetworkSignInsPerMinute     = 300
+	NetworkDevicePollsPerMinute = 1_200
+	// MaxPendingPerNetwork is the most places one network holds in
+	// each of the two caps below.
+	MaxPendingPerNetwork = 500
 	// MaxPendingLogins and MaxPendingDeviceCodes bound the sign-ins
 	// this replica starts within a row's life (FlowLifetime and
 	// DeviceCodeLifetime), whoever starts them.
@@ -96,7 +104,9 @@ type Rate struct {
 // @decision(DL-133)
 type Limits struct {
 	SignIns, DevicePolls             Rate
+	NetworkSignIns, NetworkPolls     Rate
 	PendingLogins, PendingDeviceCode int
+	PendingPerNetwork                int
 	Requests, Creates                Rate
 	Streams, InFlight                int
 	ReadTimeout, BundleReadTimeout   time.Duration
@@ -113,8 +123,11 @@ func DefaultLimits() Limits {
 	return Limits{
 		SignIns:           Rate{SignInsPerMinute, SignInBurst},
 		DevicePolls:       Rate{DevicePollsPerMinute, DevicePollBurst},
+		NetworkSignIns:    Rate{NetworkSignInsPerMinute, NetworkSignInsPerMinute},
+		NetworkPolls:      Rate{NetworkDevicePollsPerMinute, NetworkDevicePollsPerMinute},
 		PendingLogins:     MaxPendingLogins,
 		PendingDeviceCode: MaxPendingDeviceCodes,
+		PendingPerNetwork: MaxPendingPerNetwork,
 		Requests:          Rate{RequestsPerMinute, RequestBurst},
 		Creates:           Rate{CreatesPerMinute, CreateBurst},
 		Streams:           MaxStreamsPerUser,
@@ -130,6 +143,7 @@ func DefaultLimits() Limits {
 type limiter struct {
 	l                        Limits
 	signIns, polls           *buckets
+	netSignIns, netPolls     *buckets
 	requests, creates        *buckets
 	logins, deviceCodes      *window
 	streams, inFlight        *counts
@@ -153,10 +167,12 @@ func newLimiter(l Limits, trusted []netip.Prefix, warn func(string), m *telemetr
 		l:           l,
 		signIns:     newBuckets(l.SignIns),
 		polls:       newBuckets(l.DevicePolls),
+		netSignIns:  newBuckets(l.NetworkSignIns),
+		netPolls:    newBuckets(l.NetworkPolls),
 		requests:    newBuckets(l.Requests),
 		creates:     newBuckets(l.Creates),
-		logins:      &window{max: l.PendingLogins, life: FlowLifetime},
-		deviceCodes: &window{max: l.PendingDeviceCode, life: DeviceCodeLifetime},
+		logins:      newWindow(l.PendingLogins, l.PendingPerNetwork, FlowLifetime),
+		deviceCodes: newWindow(l.PendingDeviceCode, l.PendingPerNetwork, DeviceCodeLifetime),
 		streams:     &counts{max: l.Streams, m: map[string]int{}},
 		inFlight:    &counts{max: l.InFlight, m: map[string]int{}},
 		trusted:     trusted,
@@ -222,45 +238,71 @@ func tooLarge(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // signIn admits the start of a browser login or a device code: the
-// client address's bucket first, then the replica's count of starts
-// still within their row's life. A refusal is already written.
+// client address's bucket, then its network's, then the network's
+// share of the replica's count of starts still within their row's
+// life, then that count. It runs behind the browser guard, so a request
+// the guard refuses spends nothing. A refusal is already written.
 //
 // @decision(DL-133)
 func (l *limiter) signIn(w http.ResponseWriter, r *http.Request, device bool) bool {
 	refuse := l.loginDeny
-	pending, limit := l.logins, telemetry.LimitSignInCap
+	pending, limit, share := l.logins, telemetry.LimitSignInCap, telemetry.LimitSignInShare
 	if device {
-		refuse, pending, limit = l.deviceRefusal, l.deviceCodes, telemetry.LimitDeviceCodeCap
+		refuse, pending, limit, share = l.deviceRefusal, l.deviceCodes, telemetry.LimitDeviceCodeCap, telemetry.LimitDeviceCodeShare
 	}
 	now := l.l.Now()
-	if ok, wait := l.signIns.take(l.clientKey(r), now); !ok {
+	addr, network := l.clientKeys(r)
+	if ok, wait, from := take2(l.signIns, l.netSignIns, addr, network, now); !ok {
 		l.refused(r, telemetry.LimitSignInRate)
 		w.Header().Set("Retry-After", retryAfter(wait))
-		refuse(w, http.StatusTooManyRequests, "Too many sign-ins were started from your address. Try again in "+retryAfter(wait)+" seconds.")
+		refuse(w, http.StatusTooManyRequests, "Too many sign-ins were started from your "+from+". Try again in "+retryAfter(wait)+" seconds.")
 		return false
 	}
-	if ok, wait := pending.admit(now); !ok {
+	switch ok, wait, ours := pending.admit(network, now); {
+	case ok:
+		return true
+	case ours:
+		l.refused(r, share)
+		w.Header().Set("Retry-After", retryAfter(wait))
+		refuse(w, http.StatusTooManyRequests, "Too many of this server's sign-ins in progress were started from your network. Try again in "+retryAfter(wait)+" seconds.")
+	default:
 		l.refused(r, limit)
 		w.Header().Set("Retry-After", retryAfter(wait))
 		refuse(w, http.StatusServiceUnavailable, "This server has too many sign-ins in progress. Try again in "+retryAfter(wait)+" seconds.")
-		return false
 	}
-	return true
+	return false
 }
 
-// devicePoll admits one poll of the device token endpoint. A refusal is
-// RFC 8628's slow_down, which the CLI's client answers by polling less
-// often.
+// take2 takes a token from the address's bucket and then the network's,
+// giving the address's back when the network's is empty, and names
+// which one refused.
+//
+// @decision(DL-133)
+func take2(byAddr, byNet *buckets, addr, network string, now time.Time) (bool, time.Duration, string) {
+	if ok, wait := byAddr.take(addr, now); !ok {
+		return false, wait, "address"
+	}
+	if ok, wait := byNet.take(network, now); !ok {
+		byAddr.give(addr)
+		return false, wait, "network"
+	}
+	return true, 0, ""
+}
+
+// devicePoll admits one poll of the device token endpoint, by the
+// address's bucket and the network's. A refusal is RFC 8628's
+// slow_down, which the CLI's client answers by polling less often.
 //
 // @decision(DL-133) @decision(DL-006)
 func (l *limiter) devicePoll(w http.ResponseWriter, r *http.Request) bool {
-	ok, wait := l.polls.take(l.clientKey(r), l.l.Now())
+	addr, network := l.clientKeys(r)
+	ok, wait, from := take2(l.polls, l.netPolls, addr, network, l.l.Now())
 	if ok {
 		return true
 	}
 	l.refused(r, telemetry.LimitDevicePollRate)
 	w.Header().Set("Retry-After", retryAfter(wait))
-	oauthError(w, http.StatusTooManyRequests, "slow_down", "too many polls from this address")
+	oauthError(w, http.StatusTooManyRequests, "slow_down", "too many polls from this "+from)
 	return false
 }
 
@@ -322,22 +364,32 @@ func (l *limiter) refused(r *http.Request, limit telemetry.RequestLimit) {
 //
 // @decision(DL-133)
 func (l *limiter) clientKey(r *http.Request) string {
+	addr, _ := l.clientKeys(r)
+	return addr
+}
+
+// clientKeys is clientKey and the network that address is in (netKey).
+// A peer that does not parse is its own address and network.
+//
+// @decision(DL-133)
+func (l *limiter) clientKeys(r *http.Request) (addr, network string) {
 	peer, err := netip.ParseAddrPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		return r.RemoteAddr, r.RemoteAddr
 	}
-	addr := peer.Addr().Unmap()
+	client := peer.Addr().Unmap()
 	forwarded := r.Header.Values("X-Forwarded-For")
-	if !l.isTrusted(addr) {
+	if !l.isTrusted(client) {
 		if len(forwarded) > 0 {
 			l.forwardedWarned.Do(func() {
-				l.warn("a request from " + addr.String() + " carried X-Forwarded-For, which is ignored because that address is not in server.trusted_proxies;" +
+				l.warn("a request from " + client.String() + " carried X-Forwarded-For, which is ignored because that address is not in server.trusted_proxies;" +
 					" behind a reverse proxy every client shares the proxy's address for the sign-in limits until the setting names it")
 			})
 		}
-		return addrKey(addr)
+	} else {
+		client = l.forwardedClient(client, forwarded)
 	}
-	return addrKey(l.forwardedClient(addr, forwarded))
+	return addrKey(client), netKey(client)
 }
 
 // forwardedClient walks X-Forwarded-For from the right, past the
@@ -387,6 +439,18 @@ func addrKey(a netip.Addr) string {
 		return netip.PrefixFrom(a, 64).Masked().String()
 	}
 	return a.String()
+}
+
+// netKey is the network an address counts in for the coarser limits:
+// an IPv4 address's /24, an IPv6 address's /48.
+//
+// @decision(DL-133)
+func netKey(a netip.Addr) string {
+	bits := 24
+	if a.Is6() {
+		bits = 48
+	}
+	return netip.PrefixFrom(a, bits).Masked().String()
 }
 
 // retryAfter renders a wait as Retry-After's whole seconds, at least 1.
@@ -455,6 +519,16 @@ func (b *buckets) take(key string, now time.Time) (bool, time.Duration) {
 	return false, time.Duration((1 - k.tokens) / b.perSec * float64(time.Second))
 }
 
+// give returns a token take spent, for a request a later limit
+// refused. A key take sent to the overflow bucket gets nothing back.
+func (b *buckets) give(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if k := b.m[key]; k != nil {
+		k.tokens = min(b.burst, k.tokens+1)
+	}
+}
+
 func (b *buckets) refill(k *bucket, now time.Time) {
 	if elapsed := now.Sub(k.at); elapsed > 0 {
 		k.tokens = min(b.burst, k.tokens+elapsed.Seconds()*b.perSec)
@@ -478,30 +552,62 @@ func (b *buckets) len() int {
 	return len(b.m)
 }
 
-// window counts the starts within life of now, up to max. Its slice
-// never holds more than max of them.
+// window counts the starts within life of now, up to max, and up to
+// share of them from one network. Its slice never holds more than max
+// starts, and byNet holds a key only while that network has one in it.
 //
 // @decision(DL-133)
 type window struct {
-	mu   sync.Mutex
-	max  int
-	life time.Duration
-	at   []time.Time
+	mu    sync.Mutex
+	max   int
+	share int
+	life  time.Duration
+	at    []start
+	byNet map[string][]time.Time
 }
 
-func (w *window) admit(now time.Time) (bool, time.Duration) {
+type start struct {
+	at      time.Time
+	network string
+}
+
+func newWindow(max, share int, life time.Duration) *window {
+	return &window{max: max, share: share, life: life, byNet: map[string][]time.Time{}}
+}
+
+// admit takes a place for network, or reports how long until one is
+// free and whether it was the network's share that refused.
+func (w *window) admit(network string, now time.Time) (ok bool, wait time.Duration, share bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	gone := 0
-	for gone < len(w.at) && !now.Before(w.at[gone].Add(w.life)) {
+	for gone < len(w.at) && !now.Before(w.at[gone].at.Add(w.life)) {
+		n := w.at[gone].network
+		if rest := w.byNet[n][1:]; len(rest) > 0 {
+			w.byNet[n] = rest
+		} else {
+			delete(w.byNet, n)
+		}
 		gone++
 	}
 	w.at = w.at[gone:]
-	if len(w.at) >= w.max {
-		return false, w.at[0].Add(w.life).Sub(now)
+	if held := w.byNet[network]; len(held) >= w.share {
+		return false, held[0].Add(w.life).Sub(now), true
 	}
-	w.at = append(w.at, now)
-	return true, 0
+	if len(w.at) >= w.max {
+		return false, w.at[0].at.Add(w.life).Sub(now), false
+	}
+	w.at = append(w.at, start{now, network})
+	w.byNet[network] = append(w.byNet[network], now)
+	return true, 0, false
+}
+
+// networks is how many networks the window holds a start for, for a
+// test.
+func (w *window) networks() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.byNet)
 }
 
 // counts is how many of something each key holds at once. A key is

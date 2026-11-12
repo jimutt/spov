@@ -53,6 +53,10 @@ type Error struct {
 	Title  string `json:"title"`
 	Detail string `json:"detail"`
 	Type   string `json:"type"`
+	// RetryAfter is the response's Retry-After, zero when it had none.
+	//
+	// @decision(DL-133)
+	RetryAfter time.Duration `json:"-"`
 }
 
 func (e *Error) Error() string {
@@ -161,7 +165,26 @@ func problemOf(resp *http.Response) error {
 		}
 	}
 	e.Status = resp.StatusCode
+	e.RetryAfter = retryAfter(resp.Header.Get("Retry-After"), time.Now())
 	return e
+}
+
+// retryAfter reads a Retry-After header, in seconds or as a date, as
+// the wait it asks for, or zero.
+//
+// @decision(DL-133)
+func retryAfter(v string, now time.Time) time.Duration {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(v); err == nil {
+		return time.Duration(max(n, 0)) * time.Second
+	}
+	if t, err := http.ParseTime(v); err == nil {
+		return max(t.Sub(now), 0)
+	}
+	return 0
 }
 
 // redactURL strips credentials a transport error might echo from a URL.

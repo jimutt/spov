@@ -32,6 +32,15 @@ const FirstRetry = 1_000;
 const MaxRetry = 30_000;
 
 /**
+ * A 429 on opening a stream is retried once, after its Retry-After
+ * bounded to these, before it is shown like any other refusal.
+ *
+ * @decision(DL-133)
+ */
+const MinLimitWait = 1_000;
+const MaxLimitWait = 60_000;
+
+/**
  * StableAfter is how long a connection must last, in ms, before it
  * counts as healthy and the backoff is forgiven. Keyed on connection
  * lifetime rather than on open alone, or a server that accepts and
@@ -92,8 +101,9 @@ interface Resume<T> {
  * server's lifetime boundary for as long as the caller keeps reading.
  * Unlike `launchEvents`, which replays a finished launch and reopens
  * exactly once, these have no end of their own: the caller stops them
- * by aborting. A refusal is still final, and a 401 goes through the
- * app's one login funnel.
+ * by aborting. A refusal is still final, except that a 429 is asked
+ * once more after its Retry-After, and a 401 goes through the app's one
+ * login funnel.
  *
  * @decision(DL-058) @decision(DL-018)
  */
@@ -113,6 +123,11 @@ async function* liveStream<T>(
   // the stream is back up — not once per attempt, so a server that is
   // refusing connections costs one re-read rather than one per retry.
   let missed = false;
+  // Whether this run of refusals has had its one retry: a 429 is
+  // retried once, and an open that succeeds earns the next one.
+  //
+  // @decision(DL-133)
+  let limitRetried = false;
 
   for (;;) {
     if (opts.signal.aborted) return;
@@ -124,6 +139,7 @@ async function* liveStream<T>(
         opts.signal,
       );
       opts.onConnected?.(true);
+      limitRetried = false;
       if (missed) {
         missed = false;
         opts.onGap?.();
@@ -176,6 +192,16 @@ async function* liveStream<T>(
         opts.onConnected?.(false);
         redirectToLogin();
         throw err;
+      }
+      // A limit says when to come back, so it is asked once more then;
+      // nothing is missed meanwhile that the cursor does not resume.
+      //
+      // @decision(DL-133)
+      if (err instanceof StreamProblem && err.status === 429 && !limitRetried) {
+        limitRetried = true;
+        opts.onConnected?.(false);
+        await sleep(Math.min(Math.max(err.retryAfter ?? MinLimitWait, MinLimitWait), MaxLimitWait), opts.signal);
+        continue;
       }
       if (err instanceof StreamProblem && err.final) {
         opts.onConnected?.(false);
