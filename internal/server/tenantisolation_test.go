@@ -47,6 +47,9 @@ const (
 	aReportBody       = "# A's private report\nthe numbers are A's"
 	aVerifiedAs       = "owner-of-" + aSecretCredential
 	aEmail            = "a-private@example.com"
+	aTemplateText     = "A's private template for the roadmap work"
+	aTemplateEnv      = "a-private-template-value"
+	aTemplate         = "a-tmpl"
 	strangerOrg       = "org-stranger"
 )
 
@@ -128,6 +131,7 @@ type tenantWorld struct {
 func (w *tenantWorld) markers() []string {
 	return []string{
 		aSecretCredential, aSecretRouted, aMessageText, aReportBody, aVerifiedAs, aEmail,
+		aTemplateText, aTemplateEnv,
 		w.webSessionID, w.tokenID, w.attempt,
 		w.run.SandboxID, w.askID, w.formID,
 	}
@@ -168,6 +172,8 @@ func newTenantWorld(t *testing.T) *tenantWorld {
 		d.OrgApps = &OrgApps{Store: d.Store, Sealer: sealer}
 		d.OrgGitHub = &fakeOrgGitHub{}
 		d.OrgRoutedCredentials = &SealedOrgRoutedCredentials{Store: d.Store, Sealer: sealer}
+		// @decision(DL-119)
+		d.Templates = &store.FileTemplates{}
 		// The sweep sends every route as each user in quick succession;
 		// the request limits (DL-133) are not what it tests, so they are
 		// set far above what it sends, and a 429 would hide the answer
@@ -263,6 +269,9 @@ func newTenantWorld(t *testing.T) *tenantWorld {
 	// Credentials: a stored one, a routed one, an OpenCode sign-in.
 	w.put("/api/v1/me/credentials/github", map[string]string{"token": aSecretCredential})
 	w.put("/api/v1/me/routed-credentials/acme-npm", map[string]any{"secret": aSecretRouted, "route": acmeNPM})
+	// A sandbox template that lists that routed credential.
+	w.put("/api/v1/me/templates/"+aTemplate, map[string]any{"description": aTemplateText,
+		"credentials": []string{"acme-npm"}, "env": map[string]string{"A_STAGE": aTemplateEnv}})
 	resp, body := f.do(http.MethodPost, "/api/v1/me/opencode/connect", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("A's OpenCode sign-in: %d %s", resp.StatusCode, body)
@@ -396,6 +405,11 @@ func (w *tenantWorld) snapshot() string {
 	}
 	sort.Strings(crows)
 	out["credentials"] = crows
+	tmpls, err := w.f.srv.svc.deps.Templates.List(ctx, auth.LocalID, w.a.UserID)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	out["templates"] = tmpls
 	toks, _ := st.Tokens().ListByUser(ctx, auth.LocalID, w.a.UserID)
 	var trows []string
 	for _, tk := range toks {
@@ -484,6 +498,9 @@ func (w *tenantWorld) byOtherID() []route {
 		{op: "DELETE /api/v1/me/tokens/{id}", ids: map[string]string{"id": w.tokenID}},
 		{op: "DELETE /api/v1/me/sessions/{id}", ids: map[string]string{"id": w.webSessionID}},
 		{op: "GET /api/v1/me/opencode/connect/{id}", ids: map[string]string{"id": w.attempt}},
+		// A template is named by the caller's own name for it: A's
+		// name, sent by anyone else, is one they do not hold.
+		{op: "GET /api/v1/me/templates/{name}", ids: map[string]string{"name": aTemplate}},
 	}
 }
 
@@ -506,6 +523,10 @@ func (w *tenantWorld) ownNamespace() []route {
 		{op: "PUT /api/v1/me/routed-credentials/{name}", ids: map[string]string{"name": "acme-npm"},
 			body: map[string]any{"secret": "npm_B_OWN", "route": acmeNPM}},
 		{op: "DELETE /api/v1/me/routed-credentials/{name}", ids: map[string]string{"name": "acme-npm"}},
+		{op: "GET /api/v1/me/templates"},
+		{op: "PUT /api/v1/me/templates/{name}", ids: map[string]string{"name": aTemplate},
+			body: map[string]any{"description": "B's own", "env": map[string]string{"A_STAGE": "b"}}},
+		{op: "DELETE /api/v1/me/templates/{name}", ids: map[string]string{"name": aTemplate}},
 		{op: "GET /api/v1/me/opencode"},
 		{op: "DELETE /api/v1/me/opencode"},
 		{op: "POST /api/v1/me/opencode/connect"},
@@ -845,5 +866,54 @@ func (w *tenantWorld) requireSandboxesUntouched() {
 	w.t.Helper()
 	if n := w.sandboxHits.Load() - w.hitsBase; n != 0 {
 		w.t.Errorf("%d requests reached A's sandboxes on someone else's behalf", n)
+	}
+}
+
+// TestALaunchCannotNameAnotherUsersTemplate: a session or job create
+// that names A's sandbox template, by B or by a user of another
+// organisation, is refused word for word as one naming a template
+// nobody holds, so it neither applies A's settings nor says A's exists,
+// and it starts nothing.
+//
+// @decision(DL-120) @decision(DL-006)
+func TestALaunchCannotNameAnotherUsersTemplate(t *testing.T) {
+	w := newTenantWorld(t)
+	before := w.snapshot()
+	const nobodys = "nobody-holds-this"
+	for _, p := range []auth.Principal{w.b, w.c} {
+		for _, r := range w.creations() {
+			answers := map[string]string{}
+			for _, name := range []string{aTemplate, nobodys} {
+				var body any
+				switch req := r.body.(type) {
+				case SessionRequest:
+					req.Template = name
+					body = req
+				case JobRequest:
+					req.Template = name
+					body = req
+				default:
+					t.Fatalf("%s: a creation body of type %T", r.op, r.body)
+				}
+				status, out := w.send(p, r.method(), r.path(""), body)
+				if status != http.StatusUnprocessableEntity {
+					t.Errorf("%s: %s naming template %s = %d, want 422\n%s", p.UserID, r.op, name, status, out)
+				}
+				if l := w.leaks(out); len(l) > 0 {
+					t.Errorf("%s: %s carries what only A holds: %q\n%s", p.UserID, r.op, l, out)
+				}
+				answers[name] = strings.ReplaceAll(out, name, "NAME")
+			}
+			if answers[aTemplate] != answers[nobodys] {
+				t.Errorf("%s: %s tells A's template from one nobody holds:\n%s\n%s", p.UserID, r.op, answers[aTemplate], answers[nobodys])
+			}
+		}
+		sessions, _ := w.f.store.Sessions().List(context.Background(), p.OrgID, store.SessionFilter{OwnerID: p.UserID, Limit: 50})
+		if len(sessions) != 0 {
+			t.Errorf("%s owns %d sessions after creates that were refused", p.UserID, len(sessions))
+		}
+	}
+	if after := w.snapshot(); after != before {
+		t.Errorf("launches naming A's template changed A's world:\nbefore %s\nafter  %s", before, after)
 	}
 }

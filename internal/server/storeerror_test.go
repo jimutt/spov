@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -185,6 +187,37 @@ func TestAJobsProvisioningStoreFailureIsHidden(t *testing.T) {
 		t.Errorf("no error became one")
 	}
 	if !strings.Contains(logged.String(), "get session") {
+		t.Errorf("the detail was not logged: %q", logged.String())
+	}
+}
+
+// TestABrokenTemplateFileIsNotShownToTheClient: the local template
+// store's errors are the store's, so a file it cannot read is a fixed
+// 500 and its path stays in the log.
+//
+// @decision(DL-135) @decision(DL-119)
+func TestABrokenTemplateFileIsNotShownToTheClient(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secret-dir", store.TemplatesName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := newAPIFixtureWith(t, func(d *Deps) { d.Templates = &store.FileTemplates{Path: path} })
+	var logged strings.Builder
+	was := internalLog
+	internalLog = log.New(&logged, "", 0)
+	t.Cleanup(func() { internalLog = was })
+
+	resp, body := f.do(http.MethodGet, "/api/v1/me/templates", nil)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("a broken template file answered %d, want 500: %s", resp.StatusCode, body)
+	}
+	if strings.Contains(string(body), "secret-dir") {
+		t.Errorf("the response carries the file's path: %s", body)
+	}
+	if !strings.Contains(logged.String(), "secret-dir") {
 		t.Errorf("the detail was not logged: %q", logged.String())
 	}
 }
