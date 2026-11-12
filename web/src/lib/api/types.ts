@@ -31,13 +31,13 @@ export interface paths {
         get?: never;
         /**
          * Allow an address or a GitHub account to log in, or change its admin rights
-         * @description The entry is an address, or a GitHub account written @login. A new account entry is resolved with GitHub and stored by its numeric ID; an existing one is matched by its stored login without asking GitHub.
+         * @description The entry is an address, a GitHub account written @login, or an existing account entry written id:<github_id>. A new account entry is always resolved with GitHub and stored by its numeric ID; an existing one is matched by its stored login, or by its ID, without asking GitHub.
          */
         put: operations["put-allowlist-entry"];
         post?: never;
         /**
          * Stop an address or a GitHub account logging in, and end what it has running and stored
-         * @description Removes the entry. For each user it covered whom no other entry still covers, it ends their browser sessions, cancels their unfinished jobs, stops their live sessions (a held sync job's included), revokes their CLI tokens and deletes their stored credentials, then writes an audit row. Their history is kept. Deleting an address or @login that is no longer on the allowlist, but names a user who signed in and whom no entry covers, runs those steps again.
+         * @description Removes the entry. For each user it covered whom no other entry still covers, it ends their browser sessions, cancels their unfinished jobs, stops their live sessions (a held sync job's included), revokes their CLI tokens and deletes their stored credentials, then writes an audit row. Their history is kept. Deleting an address or @login that is no longer on the allowlist, but names a user who signed in and whom no entry covers, runs those steps again. An account entry may be named id:<github_id>, which a retry matches against the user's account.
          */
         delete: operations["delete-allowlist-entry"];
         options?: never;
@@ -807,6 +807,8 @@ export interface components {
             last_login_at?: string;
             /** @description The account's display name, or the name of the user an address entry covers */
             name?: string;
+            /** @description An address entry covering a user who has not signed in since accounts were recorded; removing it ends everything of theirs even if their account has an entry */
+            unbound?: boolean;
             /** @description Whether this entry covers the caller */
             you: boolean;
         };
@@ -2184,7 +2186,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description An address, or a GitHub account written @login */
+                /** @description An address, a GitHub account written @login, or an existing account entry written id:<github_id> */
                 entry: string;
             };
             cookie?: never;
@@ -2274,7 +2276,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The address, or the GitHub account written @login, to remove */
+                /** @description The address, the GitHub account written @login, or the account entry written id:<github_id>, to remove */
                 entry: string;
             };
             cookie?: never;

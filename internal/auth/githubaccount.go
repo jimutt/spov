@@ -12,8 +12,6 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/jimutt/spov/internal/store"
 )
 
 // GitHubAccount is one GitHub account as an allowlist entry records it.
@@ -209,23 +207,16 @@ func sameHostRedirect(root *url.URL) func(*http.Request, []*http.Request) error 
 	}
 }
 
-// ResolveAccount is who an "@login" entry admits: the account a user row
-// already records under that login when exactly one does, else what
-// GitHub answers. A row is asked first so a person who has signed in is
-// added without a call to GitHub.
+// ResolveAccount is who a new "@login" entry admits: what GitHub answers
+// for the login now. A login stored on a user row is never used for it,
+// since a renamed account leaves its old login there and someone else
+// may have registered it since.
 //
 // @decision(DL-128)
-func ResolveAccount(ctx context.Context, users store.UserStore, orgID string, lookup AccountLookup, login string) (GitHubAccount, error) {
+func ResolveAccount(ctx context.Context, lookup AccountLookup, login string) (GitHubAccount, error) {
 	login, err := ParseGitHubLogin(login)
 	if err != nil {
 		return GitHubAccount{}, err
-	}
-	rows, err := users.ByGithubLogin(ctx, orgID, login)
-	if err != nil {
-		return GitHubAccount{}, err
-	}
-	if len(rows) == 1 {
-		return GitHubAccount{ID: rows[0].GithubID, Login: rows[0].GithubLogin, Name: rows[0].Name}, nil
 	}
 	if lookup == nil {
 		return GitHubAccount{}, fmt.Errorf("%w: this server cannot look up GitHub accounts", ErrGitHubUnavailable)

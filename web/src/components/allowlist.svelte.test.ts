@@ -66,7 +66,8 @@ const root = { kind: "github", email: "", github_login: "root", github_id: 1, ad
   created_at: "2026-11-01T00:00:00Z" };
 const bob = { kind: "github", email: "", github_login: "bob", github_id: 42, name: "<b>Bob</b>", admin: false,
   you: false, created_at: "2026-11-01T00:00:00Z", last_login_at: "2026-11-09T09:00:00Z" };
-const never = { kind: "email", email: "new@example.com", admin: false, you: false, created_at: "2026-11-01T00:00:00Z" };
+const never = { kind: "email", email: "new@example.com", admin: false, you: false, created_at: "2026-11-01T00:00:00Z",
+  unbound: true };
 
 async function mounted() {
   const target = document.createElement("div");
@@ -109,6 +110,8 @@ describe("the People section", () => {
     expect(rows[2].querySelector("b")).toBeNull();
     expect(rows[2].textContent).toContain("Last signed in");
     expect(rows[3].textContent).toContain("Never signed in");
+    expect(rows[3].querySelector('[data-testid="allowlist-unbound"]')?.textContent).toContain("since accounts were added");
+    expect(rows[2].querySelector('[data-testid="allowlist-unbound"]')).toBeNull();
     // The caller's only admin entry can be neither removed nor demoted.
     expect((rows[0].querySelector('[data-testid="allowlist-remove"]') as HTMLButtonElement).disabled).toBe(true);
     expect((rows[0].querySelector('[data-testid="allowlist-demote"]') as HTMLButtonElement).disabled).toBe(true);
@@ -178,7 +181,8 @@ describe("the People section", () => {
     await settle();
     await settle();
     const deletes = stub.sent.filter((s) => s.method === "DELETE").map((s) => s.path);
-    expect(deletes).toEqual(["/api/v1/allowlist/%40bob", "/api/v1/allowlist/%40bob"]);
+    // By ID, both times: the label could be another entry's too.
+    expect(deletes).toEqual(["/api/v1/allowlist/id%3A42", "/api/v1/allowlist/id%3A42"]);
     expect(p.q("allowlist-retry")).toBeNull();
     expect(p.q("allowlist-row-failure")).toBeNull();
     p.done();

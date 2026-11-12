@@ -166,26 +166,45 @@ func TestAnAccountGitHubCannotResolveIsNotStored(t *testing.T) {
 	}
 }
 
-// A user row that records the login is used, and GitHub is not asked.
+// A PUT that creates an entry always asks GitHub and stores the ID
+// GitHub returns, even when a user row carries the login: a removed
+// former member who renamed away leaves the old login there, and the
+// person who registered it since is the one being added. With GitHub
+// down nothing is stored, however sure the row looks.
 //
 // @decision(DL-128)
-func TestAUserRowThatRecordsTheLoginIsUsedWithoutAskingGitHub(t *testing.T) {
+func TestANewEntryIsAlwaysResolvedWithGitHub(t *testing.T) {
 	f, gh := accountFixture(t, map[string]bool{"me@example.com": true})
 	if err := f.store.Users().Create(context.Background(), store.User{
-		ID: store.NewID(time.Now()), OrgID: auth.LocalID, Email: "dana@example.com", GithubID: 9001,
-		GithubLogin: "Dana", Name: "Dana D",
+		ID: store.NewID(time.Now()), OrgID: auth.LocalID, Email: "former@example.com", GithubID: 1,
+		GithubLogin: "jsmith", Name: "Former",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	resp, out := f.do(http.MethodPut, "/api/v1/allowlist/@dana", map[string]any{"admin": false})
+	gh.accounts["jsmith"] = auth.GitHubAccount{ID: 2, Login: "jsmith", Name: "New Person"}
+	gh.err = auth.ErrGitHubUnavailable
+	if resp, out := f.do(http.MethodPut, "/api/v1/allowlist/@jsmith", map[string]any{"admin": false}); resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("PUT with GitHub down = %d: %s", resp.StatusCode, out)
+	}
+	if entries := allowlistOf(t, f); len(entries) != 1 {
+		t.Fatalf("a stale user row's login was stored as an entry: %+v", entries)
+	}
+	gh.err = nil
+	resp, out := f.do(http.MethodPut, "/api/v1/allowlist/@jsmith", map[string]any{"admin": false})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("PUT = %d: %s", resp.StatusCode, out)
 	}
-	if got := entryOf(t, out); got.GithubID != 9001 || got.Name != "Dana D" || got.GithubLogin != "Dana" {
-		t.Errorf("entry = %+v", got)
+	if got := entryOf(t, out); got.GithubID != 2 || got.Name != "New Person" {
+		t.Errorf("entry = %+v, want the account GitHub names now", got)
 	}
-	if gh.asked() != 0 {
-		t.Errorf("GitHub was asked %d times", gh.asked())
+	if _, err := f.store.Allowlist().GetAccount(context.Background(), auth.LocalID, 1); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("the former member's account got an entry: %v", err)
+	}
+	// An existing entry is matched by its stored login without a lookup.
+	asked := gh.asked()
+	if resp, out := f.do(http.MethodPut, "/api/v1/allowlist/@JSMITH", map[string]any{"admin": true}); resp.StatusCode != http.StatusOK ||
+		gh.asked() != asked {
+		t.Errorf("PUT of an existing entry = %d after %d lookups: %s", resp.StatusCode, gh.asked()-asked, out)
 	}
 }
 
@@ -255,28 +274,72 @@ func TestTheListSaysWhenAnEntrysPeopleLastSignedIn(t *testing.T) {
 	}
 }
 
-// Two entries carrying one stale login are not guessed between.
+// Two entries carrying one stale login are not guessed between: the
+// 409 names each by its id: form and display name, and that form
+// reaches each of them for a change or a removal, without GitHub.
 //
 // @decision(DL-128)
 func TestTwoEntriesWithOneLoginAreNotGuessedBetween(t *testing.T) {
 	f, gh := accountFixture(t, map[string]bool{"me@example.com": true})
 	ctx := context.Background()
-	for _, id := range []int64{1, 2} {
-		if err := f.store.Allowlist().Put(ctx, store.AllowlistEntry{OrgID: auth.LocalID, GithubID: id, GithubLogin: "same"}); err != nil {
+	for _, e := range []store.AllowlistEntry{
+		{OrgID: auth.LocalID, GithubID: 1, GithubLogin: "carol", GithubName: "Carol Old"},
+		{OrgID: auth.LocalID, GithubID: 2, GithubLogin: "carol", GithubName: "Carol New"},
+	} {
+		if err := f.store.Allowlist().Put(ctx, e); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, method := range []string{http.MethodPut, http.MethodDelete} {
-		resp, out := f.do(method, "/api/v1/allowlist/@same", map[string]any{"admin": true})
-		if resp.StatusCode != http.StatusConflict {
-			t.Errorf("%s = %d, want 409: %s", method, resp.StatusCode, out)
+		resp, out := f.do(method, "/api/v1/allowlist/@carol", map[string]any{"admin": true})
+		body := string(out)
+		if resp.StatusCode != http.StatusConflict || !strings.Contains(body, "id:1 (Carol Old)") ||
+			!strings.Contains(body, "id:2 (Carol New)") || !strings.Contains(body, "id: form") {
+			t.Errorf("%s = %d, want a 409 naming both by id: %s", method, resp.StatusCode, out)
 		}
 	}
 	if entries := allowlistOf(t, f); len(entries) != 3 || entries[0].Admin || entries[1].Admin {
 		t.Errorf("entries = %+v", entries)
 	}
+	// The id: form reaches each one, keeping its labels.
+	resp, out := f.do(http.MethodPut, "/api/v1/allowlist/id:2", map[string]any{"admin": true})
+	if got := entryOf(t, out); resp.StatusCode != http.StatusOK || got.GithubID != 2 || !got.Admin || got.Name != "Carol New" {
+		t.Errorf("PUT id:2 = %d: %s", resp.StatusCode, out)
+	}
+	if resp, out := f.do(http.MethodDelete, "/api/v1/allowlist/id%3A1", nil); resp.StatusCode != http.StatusNoContent {
+		t.Errorf("DELETE id:1 = %d: %s", resp.StatusCode, out)
+	}
+	if _, err := f.store.Allowlist().GetAccount(ctx, auth.LocalID, 1); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("id:1 is still there: %v", err)
+	}
 	if gh.asked() != 0 {
 		t.Errorf("GitHub was asked %d times", gh.asked())
+	}
+}
+
+// The id: form names only an existing account entry, by digits alone:
+// a PUT by ID never creates one, and anything else after id: is a 422.
+//
+// @decision(DL-128)
+func TestTheIDFormNamesOnlyAnExistingAccountEntry(t *testing.T) {
+	f, gh := accountFixture(t, map[string]bool{"me@example.com": true})
+	resp, out := f.do(http.MethodPut, "/api/v1/allowlist/id:77", map[string]any{"admin": false})
+	if resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(string(out), "@login") {
+		t.Errorf("PUT of a new id: = %d: %s", resp.StatusCode, out)
+	}
+	for _, bad := range []string{"id:", "id:0", "id:-1", "id:1x", "id:%2B5", "id:1%2F..", "id:99999999999999999999"} {
+		for _, method := range []string{http.MethodPut, http.MethodDelete} {
+			if resp, out := f.do(method, "/api/v1/allowlist/"+bad, map[string]any{"admin": true}); resp.StatusCode != http.StatusUnprocessableEntity &&
+				resp.StatusCode != http.StatusNotFound {
+				t.Errorf("%s %s = %d: %s", method, bad, resp.StatusCode, out)
+			}
+		}
+	}
+	if resp, _ := f.do(http.MethodDelete, "/api/v1/allowlist/id:77", nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("DELETE of an unknown id: = %d", resp.StatusCode)
+	}
+	if entries := allowlistOf(t, f); len(entries) != 1 || gh.asked() != 0 {
+		t.Errorf("entries = %+v after %d lookups", entries, gh.asked())
 	}
 }
 
@@ -534,6 +597,72 @@ func TestARetryByLoginOffboardsAgain(t *testing.T) {
 	if resp, out := o.f.do(http.MethodDelete, "/api/v1/allowlist/@nobody-here", nil); resp.StatusCode != http.StatusNotFound ||
 		!strings.Contains(string(out), "@nobody-here is not on the allowlist") {
 		t.Errorf("a login nobody carries = %d: %s", resp.StatusCode, out)
+	}
+}
+
+// A half-finished removal of an account entry is retried by its id:
+// form, which the retry matches against the user's account: the entry's
+// login and the user row's can differ after a rename, and a retry by the
+// entry's login would find no one.
+//
+// @decision(DL-128) @decision(DL-132)
+func TestARetryByIDFindsARenamedPerson(t *testing.T) {
+	var fail atomic.Bool
+	o := newOffboarded(t, func(d *Deps) { d.Store = failingStore{Store: d.Store, fail: &fail} })
+	bindThem(t, o)
+	ctx := context.Background()
+	if err := o.f.store.Allowlist().Delete(ctx, auth.LocalID, theirEmail); err != nil {
+		t.Fatal(err)
+	}
+	u, _ := o.f.store.Users().Get(ctx, auth.LocalID, theirID)
+	u.GithubLogin = "them-renamed"
+	if err := o.f.store.Users().Update(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	fail.Store(true)
+	if resp, out := o.f.do(http.MethodDelete, "/api/v1/allowlist/id:4242", nil); resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("a failed step = %d: %s", resp.StatusCode, out)
+	}
+	fail.Store(false)
+	if resp, _ := o.f.do(http.MethodDelete, "/api/v1/allowlist/@them-gh", nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("a retry by the entry's old login = %d, want 404", resp.StatusCode)
+	}
+	if resp, out := o.f.do(http.MethodDelete, "/api/v1/allowlist/id:4242", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("the retry by id = %d: %s", resp.StatusCode, out)
+	}
+	o.assertEnded(t)
+}
+
+// An address entry that covers a row not yet bound to an account says
+// so, since removing it off-boards that person even when their account
+// has an entry: the account entry cannot admit an unbound row.
+//
+// @decision(DL-128)
+func TestAnAddressEntryOverAnUnboundRowSaysSo(t *testing.T) {
+	o := newOffboarded(t, nil)
+	ctx := context.Background()
+	if err := o.f.store.Allowlist().Put(ctx, store.AllowlistEntry{OrgID: auth.LocalID, GithubID: 4242,
+		GithubLogin: "them-gh"}); err != nil {
+		t.Fatal(err)
+	}
+	unbound := map[string]bool{}
+	for _, e := range allowlistOf(t, o.f) {
+		unbound[e.Email+e.GithubLogin] = e.Unbound
+	}
+	if !unbound[theirEmail] || unbound["them-gh"] || unbound["me@example.com"] {
+		t.Errorf("unbound = %v, want only their address entry", unbound)
+	}
+	// The behaviour it warns of: removing the address ends everything.
+	if resp, out := o.f.do(http.MethodDelete, "/api/v1/allowlist/"+theirEmail, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE = %d: %s", resp.StatusCode, out)
+	}
+	o.assertEnded(t)
+	// Once bound, the address entry no longer says so.
+	bindThem(t, o)
+	for _, e := range allowlistOf(t, o.f) {
+		if e.Unbound {
+			t.Errorf("%+v is unbound after the bind", e)
+		}
 	}
 }
 

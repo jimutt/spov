@@ -22,6 +22,7 @@
     refusalText,
     removalQuestion,
     sortEntries,
+    unboundNote,
   } from '../lib/allowlist';
   import { day } from '../lib/format';
   import ConfirmAct from './ConfirmAct.svelte';
@@ -187,6 +188,9 @@
         <p class="m-0 mt-0.5 text-sm text-soft" data-testid="allowlist-seen">
           {e.last_login_at ? `Last signed in ${day(e.last_login_at, now)}` : 'Never signed in'}
         </p>
+        {#if e.unbound}
+          <p class="m-0 mt-0.5 text-sm text-gold-t" data-testid="allowlist-unbound">{unboundNote(e)}</p>
+        {/if}
         <div class="mt-2 flex flex-wrap items-start gap-2">
           {#if e.admin}
             <button

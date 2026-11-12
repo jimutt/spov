@@ -14,6 +14,7 @@ import {
   refusalText,
   removalQuestion,
   sortEntries,
+  unboundNote,
 } from "./allowlist";
 
 /**
@@ -63,9 +64,15 @@ describe("refProblem", () => {
 });
 
 describe("naming an entry", () => {
-  it("names an account entry by its stored login and an address entry by the address", () => {
-    expect(entryPath(acct("Octo"))).toBe("@Octo");
+  it("shows an account entry by its login and addresses it by its ID", () => {
+    const octo = acct("Octo", { github_id: 583231 });
+    expect(entryLabel(octo)).toBe("@Octo");
+    expect(entryPath(octo)).toBe("id:583231");
     expect(entryLabel(addr("bob@example.com"))).toBe("bob@example.com");
+    expect(entryPath(addr("bob@example.com"))).toBe("bob@example.com");
+  });
+  it("tells two entries with one stale login apart", () => {
+    expect(entryPath(acct("carol", { github_id: 1 }))).not.toBe(entryPath(acct("carol", { github_id: 2 })));
   });
 });
 
@@ -78,15 +85,15 @@ describe("sortEntries", () => {
       acct("ann", { admin: true }),
       acct("carl", { name: "alice" }),
     ];
-    const before = list.map(entryPath);
-    expect(sortEntries(list).map(entryPath)).toEqual([
+    const before = list.map(entryLabel);
+    expect(sortEntries(list).map(entryLabel)).toEqual([
       "@ann",
       "root@example.com",
       "@carl",
       "@bob",
       "zed@example.com",
     ]);
-    expect(list.map(entryPath)).toEqual(before);
+    expect(list.map(entryLabel)).toEqual(before);
   });
 });
 
@@ -150,6 +157,15 @@ describe("removalQuestion", () => {
     expect(q).toContain("keep their access through @bob");
     expect(q).toContain("nothing of theirs is ended");
     expect(q).not.toContain("revokes");
+  });
+  it("warns that an address entry over an unbound row ends everything, and says to sign in first", () => {
+    const e = addr("alice@corp.example", { last_login_at: "x", unbound: true });
+    const q = removalQuestion(e);
+    expect(q).toContain("even if their GitHub account has an entry");
+    expect(q).toContain("revokes their CLI tokens");
+    expect(q).toContain("sign in once first");
+    expect(unboundNote(e)).toContain("Has not signed in since accounts were added");
+    expect(unboundNote(addr("b@example.com"))).toBe("");
   });
   it("says nothing else ends for an entry nobody used", () => {
     expect(removalQuestion(addr("new@example.com"))).toContain("Nobody has signed in");

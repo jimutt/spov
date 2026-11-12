@@ -54,14 +54,31 @@ export function refPath(ref: EntryRef): string {
   return ref.kind === "github" ? `@${ref.login}` : ref.email;
 }
 
-/** entryPath is the {entry} that names a listed entry: its stored login, or its address. */
+/**
+ * entryPath is the {entry} that names a listed entry: an account entry by
+ * its numeric ID (`id:<github_id>`), since two entries can carry one
+ * stale login, and an address entry by its address. `@login` is used
+ * only to add one.
+ *
+ * @decision(DL-129) @decision(DL-128)
+ */
 export function entryPath(e: AllowlistEntryView): string {
-  return e.kind === "github" ? `@${e.github_login ?? ""}` : e.email;
+  return e.kind === "github" ? `id:${e.github_id ?? 0}` : e.email;
 }
 
 /** entryLabel is how a row names its entry: "@login" or the address. */
 export function entryLabel(e: AllowlistEntryView): string {
-  return entryPath(e);
+  return e.kind === "github" ? `@${e.github_login ?? ""}` : e.email;
+}
+
+/**
+ * unboundNote marks an address entry whose person has not signed in
+ * since accounts were recorded: an account entry cannot admit them yet.
+ *
+ * @decision(DL-129) @decision(DL-128)
+ */
+export function unboundNote(e: AllowlistEntryView): string {
+  return e.unbound ? "Has not signed in since accounts were added" : "";
 }
 
 /** sortName is what the list sorts by after admin rights. */
@@ -79,7 +96,7 @@ export function sortEntries(entries: readonly AllowlistEntryView[]): AllowlistEn
   return [...entries].sort((a, b) => {
     if (a.admin !== b.admin) return a.admin ? -1 : 1;
     const by = sortName(a).localeCompare(sortName(b));
-    return by !== 0 ? by : entryPath(a).localeCompare(entryPath(b));
+    return by !== 0 ? by : entryLabel(a).localeCompare(entryLabel(b));
   });
 }
 
@@ -137,10 +154,17 @@ export function removalQuestion(e: AllowlistEntryView): string {
     return `Remove ${who}? They keep their access through ${others.join(" and ")}, so nothing of theirs is ended.`;
   }
   if (!e.last_login_at) return `Remove ${who}? Nobody has signed in through it, so nothing else is ended.`;
-  return (
-    `Remove ${who}? This ends their browser sessions, cancels their jobs, stops their sessions, ` +
-    `revokes their CLI tokens and deletes their stored credentials. Their history and templates are kept.`
-  );
+  const ends =
+    `This ends their browser sessions, cancels their jobs, stops their sessions, ` +
+    `revokes their CLI tokens and deletes their stored credentials. Their history and templates are kept.`;
+  if (e.unbound) {
+    return (
+      `Remove ${who}? They have not signed in since accounts were added, so this entry is the only one ` +
+      `that admits them, even if their GitHub account has an entry. ${ends} To keep them, ask them to ` +
+      `sign in once first.`
+    );
+  }
+  return `Remove ${who}? ${ends}`;
 }
 
 /**

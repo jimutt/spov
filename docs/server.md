@@ -97,6 +97,14 @@ manage the list too.
   When someone is refused, the page they see names both their account and their
   address, so they can tell you either.
 - The list shows "never signed in" beside an entry nobody has used yet.
+- **Switch someone to the username form only after they have signed in once.**
+  A person on the list by address since before usernames were recorded is known
+  to the server by that address until their next sign-in. The list marks them
+  ("has not signed in since accounts were added"); removing their address before
+  they sign in ends everything of theirs even if their username is on the list.
+- Someone admitted only by username whose GitHub address belongs to an earlier
+  user of the server is refused, so that they cannot take over that user's
+  credentials and history. Add the address as well if they are that person.
 - **Removing a person** ends their browser sessions, cancels their jobs, stops
   their sessions, revokes their CLI tokens and deletes their stored credentials.
   Their history and templates are kept. If another entry still covers them (an

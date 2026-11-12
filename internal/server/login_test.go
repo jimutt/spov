@@ -161,7 +161,7 @@ func newLoginFixtureWith(t *testing.T, allowlist string, adjust func(*Deps, *Log
 
 	f.login = &Login{
 		OAuth: oauthApp, Sessions: sessions, Users: f.store.Users(),
-		Allowlist: list, Entries: f.store.Allowlist(), OrgID: DefaultOrgID,
+		Allowlist: list, Entries: f.store.Allowlist(), Store: f.store, OrgID: DefaultOrgID,
 		Warn: func(s string) { f.warnings = append(f.warnings, s); t.Log(s) },
 	}
 

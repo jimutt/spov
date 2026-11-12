@@ -31,6 +31,12 @@ type Login struct {
 	Users store.UserStore
 	// Allowlist decides who may log in at all.
 	Allowlist *auth.Allowlist
+	// Store is where a row from before accounts were recorded is bound,
+	// in one transaction with the read of the address entry that allows
+	// it. Nil binds nothing.
+	//
+	// @decision(DL-128)
+	Store store.Store
 	// Entries is the allowlist's table, where a sign-in refreshes an
 	// account entry's login and name. Nil skips that.
 	//
@@ -197,6 +203,13 @@ func (l *Login) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := l.upsertUser(ctx, identity, admin)
+	if errors.Is(err, errEarlierUser) {
+		l.warn(fmt.Sprintf("login: refused %q: the address is an earlier user's, and no address entry allows it", who))
+		l.deny(w, r, http.StatusForbidden,
+			"The address "+identity.Email+" is recorded for an earlier user of this server.",
+			"An administrator can connect your account to it by adding the address as an entry.")
+		return
+	}
 	if errors.Is(err, errAddressTaken) {
 		l.warn(fmt.Sprintf("login: refused %q: the address is recorded for another account", who))
 		l.deny(w, r, http.StatusForbidden,
@@ -240,6 +253,13 @@ func (l *Login) handleCallback(w http.ResponseWriter, r *http.Request) {
 //
 // @decision(DL-128)
 var errAddressTaken = errors.New("the address is recorded for another user")
+
+// errEarlierUser is a sign-in whose address is on a row from before
+// accounts were recorded that no address entry allows: the row is not
+// bound, and no second row is made for the address.
+//
+// @decision(DL-128)
+var errEarlierUser = errors.New("the address is recorded for an earlier user")
 
 // upsertUser finds the account's row, binds a row from before accounts
 // were recorded, or creates one, and refreshes what GitHub owns. The row
@@ -307,7 +327,33 @@ func (l *Login) bindUser(ctx context.Context, u store.User, identity auth.GitHub
 	if u.GithubID != 0 && u.GithubID != identity.ID {
 		return store.User{}, errAddressTaken
 	}
-	if err := l.Users.BindGithub(ctx, l.OrgID, u.ID, identity.ID); err != nil {
+	if l.Store == nil {
+		return store.User{}, errEarlierUser
+	}
+	// Only an address entry admits the row's address, so only one
+	// lets an account become the earlier user: an account entry alone
+	// would hand that user's credentials and tokens to whoever holds the
+	// address now. Read under the allowlist's lock, so a removal of the
+	// address entry is either before the bind or after it.
+	//
+	// @decision(DL-128)
+	err := l.Store.Tx(ctx, func(tx store.Store) error {
+		al := tx.Allowlist()
+		if _, err := al.CountAdmins(ctx, l.OrgID); err != nil {
+			return err
+		}
+		if _, err := al.Get(ctx, l.OrgID, identity.Email); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return errEarlierUser
+			}
+			return err
+		}
+		return tx.Users().BindGithub(ctx, l.OrgID, u.ID, identity.ID)
+	})
+	if err != nil {
+		if errors.Is(err, errEarlierUser) {
+			return store.User{}, errEarlierUser
+		}
 		if errors.Is(err, store.ErrConflict) {
 			// Another sign-in bound it first: to this account is fine,
 			// to any other is the refusal.

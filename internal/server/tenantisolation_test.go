@@ -576,6 +576,8 @@ func (w *tenantWorld) adminOnly() []route {
 		{op: "PUT /api/v1/allowlist/{entry}", ids: map[string]string{"entry": "@b-gh"}, body: map[string]any{"admin": true}},
 		{op: "DELETE /api/v1/allowlist/{entry}", ids: map[string]string{"entry": aEmail}},
 		{op: "DELETE /api/v1/allowlist/{entry}", ids: map[string]string{"entry": "@a-gh"}},
+		{op: "PUT /api/v1/allowlist/{entry}", ids: map[string]string{"entry": "id:4242"}, body: map[string]any{"admin": true}},
+		{op: "DELETE /api/v1/allowlist/{entry}", ids: map[string]string{"entry": "id:4242"}},
 		{op: "GET /api/v1/org/github"},
 		{op: "PUT /api/v1/org/github/{platform}", ids: map[string]string{"platform": "gh"},
 			body: OrgGitHubApp{AppID: "1", PrivateKey: "x"}},

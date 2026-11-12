@@ -8,9 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
-
-	"github.com/jimutt/spov/internal/store"
 )
 
 // @decision(DL-128)
@@ -157,35 +154,26 @@ func TestTheLookupReadsABoundedBody(t *testing.T) {
 	}
 }
 
-// A user row that already records the login is used without asking
-// GitHub; with none, or more than one, GitHub is asked.
+// A new entry's account is GitHub's answer for the login, even when a
+// user row still carries that login: a renamed former member leaves it
+// there, and someone else may have registered it since.
 //
 // @decision(DL-128)
-func TestResolveAccountPrefersAUserRowThatRecordsTheLogin(t *testing.T) {
+func TestResolveAccountAlwaysAsksGitHub(t *testing.T) {
 	ctx := context.Background()
-	st := store.NewMemory()
-	if err := st.Users().Create(ctx, store.User{
-		ID: store.NewID(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), OrgID: "org", Email: "b@example.com", GithubID: 42, GithubLogin: "Bob", Name: "Bob B",
-	}); err != nil {
-		t.Fatal(err)
-	}
 	asked := 0
 	lookup := func(_ context.Context, login string) (GitHubAccount, error) {
 		asked++
-		return GitHubAccount{ID: 99, Login: login}, nil
+		return GitHubAccount{ID: 2, Login: login}, nil
 	}
-	got, err := ResolveAccount(ctx, st.Users(), "org", lookup, "@bob")
-	if err != nil || got.ID != 42 || got.Login != "Bob" || got.Name != "Bob B" || asked != 0 {
+	got, err := ResolveAccount(ctx, lookup, "@jsmith")
+	if err != nil || got.ID != 2 || got.Login != "jsmith" || asked != 1 {
 		t.Errorf("got %+v, %v after %d lookups", got, err, asked)
 	}
-	// Another org's row is not this one's.
-	if got, _ := ResolveAccount(ctx, st.Users(), "other", lookup, "bob"); got.ID != 99 || asked != 1 {
-		t.Errorf("another org's row answered: %+v", got)
-	}
-	if _, err := ResolveAccount(ctx, st.Users(), "org", nil, "carol"); !errors.Is(err, ErrGitHubUnavailable) {
+	if _, err := ResolveAccount(ctx, nil, "carol"); !errors.Is(err, ErrGitHubUnavailable) {
 		t.Errorf("no lookup = %v", err)
 	}
-	if _, err := ResolveAccount(ctx, st.Users(), "org", lookup, "-x"); err == nil {
+	if _, err := ResolveAccount(ctx, lookup, "-x"); err == nil || asked != 1 {
 		t.Error("a malformed login was resolved")
 	}
 }

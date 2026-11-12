@@ -140,6 +140,18 @@ already recorded for one account on this server is never given to
 another; a sign-in that would need it is refused with a page that says
 so.
 
+A user from before account entries existed is known by their address
+until they next sign in, when the server binds their row to their GitHub
+account. It does so only while an **address entry** allows that address:
+an account entry alone never hands an earlier user's row, credentials or
+CLI tokens to whoever holds the address at GitHub now, and such a sign-in
+is refused with a page that says to ask an administrator to add the
+address. So, to move someone from the address form to the account form,
+add `@login`, let them sign in once, and only then remove the address.
+The Settings page marks an address entry whose person has not signed in
+since ("has not signed in since accounts were added"); removing it ends
+everything of theirs even if their account has an entry.
+
 #### Managing it
 
 The Settings page is the easiest way: it lists every entry with whether
@@ -173,8 +185,15 @@ Adding an account asks GitHub once, without a token. GitHub allows 60
 such requests an hour from one address; past that, or when GitHub cannot
 be reached, the call answers 502 and stores nothing, and you try again
 later. An account entry that already exists is matched by its stored
-login without asking GitHub. That login, and the name, are refreshed
-whenever the account signs in.
+login without asking GitHub; a new one is always looked up, never taken
+from a login a user row still carries. That login, and the name, are
+refreshed whenever the account signs in.
+
+An account entry can also be named by its numeric GitHub ID, as
+`id:583231`, which never asks GitHub and changes or removes only an
+entry that exists. After renames, two entries can carry the same login;
+`@login` is then refused with a 409 that names both IDs, and the `id:`
+form reaches each. The Settings page always uses it for an existing row.
 
 Removing someone who has signed in off-boards them in the same call
 (DL-132), unless another entry still covers them: a person on the list
@@ -197,7 +216,7 @@ settings and credential names but no secret. Every step is done as you, so a can
 cancelled it. If a step fails, the others still run, and the call
 answers 500 saying the entry is removed, what is left, and that the
 same `DELETE` retries; on the Settings page that is the **Retry** button
-the message offers. A `DELETE` of an address or `@login` that is no
+the message offers. A `DELETE` of an address, `@login` or `id:` that is no
 longer on the allowlist, but names a person who has signed in and whom
 no entry covers, runs the steps again and answers 204. One that was
 never used is simply removed.

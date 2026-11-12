@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,13 @@ type AllowlistEntryView struct {
 	LastLoginAt *time.Time `json:"last_login_at,omitempty" doc:"The newest sign-in of a user this entry covers"`
 	// AlsoCoveredBy names, as a path would, the other entries that cover
 	// a user this one covers: removing this entry ends nothing of theirs.
+	// Unbound is an address entry covering a user row that no sign-in
+	// has bound to an account yet: only an address entry admits that
+	// row, so removing this one ends everything of theirs even if
+	// their account has an entry.
+	//
+	// @decision(DL-128)
+	Unbound       bool     `json:"unbound,omitempty" doc:"An address entry covering a user who has not signed in since accounts were recorded; removing it ends everything of theirs even if their account has an entry"`
 	AlsoCoveredBy []string `json:"also_covered_by,omitempty" doc:"Other entries (an address or @login) that cover a user this entry covers; removing this one leaves that user their access"`
 }
 
@@ -53,7 +61,7 @@ type allowlistOutput struct {
 }
 
 type putAllowlistInput struct {
-	Entry string `path:"entry" doc:"An address, or a GitHub account written @login"`
+	Entry string `path:"entry" doc:"An address, a GitHub account written @login, or an existing account entry written id:<github_id>"`
 	Body  struct {
 		Admin bool `json:"admin" doc:"Whether this entry administers the org"`
 	}
@@ -64,30 +72,50 @@ type allowlistEntryOutput struct {
 }
 
 type deleteAllowlistInput struct {
-	Entry string `path:"entry" doc:"The address, or the GitHub account written @login, to remove"`
+	Entry string `path:"entry" doc:"The address, the GitHub account written @login, or the account entry written id:<github_id>, to remove"`
 }
 
-// entryRef is what a path names: an address, or a GitHub login.
+// entryRef is what a path names: an address, a GitHub login, or an
+// account entry by its numeric ID.
 //
 // @decision(DL-128)
 type entryRef struct {
 	email string
 	login string
+	id    int64
 }
 
 func (r entryRef) String() string {
-	if r.login != "" {
+	switch {
+	case r.id != 0:
+		return idPrefix + strconv.FormatInt(r.id, 10)
+	case r.login != "":
 		return "@" + r.login
 	}
 	return r.email
 }
 
-// parseEntryRef reads a path segment. A leading "@" is a GitHub account;
-// anything else must be an address.
+// idPrefix names an account entry by its GitHub ID in a path. A login
+// never has a colon, so the form cannot be read as one.
+//
+// @decision(DL-128)
+const idPrefix = "id:"
+
+// parseEntryRef reads a path segment. A leading "@" is a GitHub account,
+// "id:" and digits an account entry by its ID; anything else must be an
+// address.
 //
 // @decision(DL-128)
 func parseEntryRef(s string) (entryRef, error) {
 	s = strings.TrimSpace(s)
+	if digits, ok := strings.CutPrefix(s, idPrefix); ok {
+		id, err := strconv.ParseInt(digits, 10, 64)
+		if err != nil || id <= 0 || strings.Trim(digits, "0123456789") != "" {
+			return entryRef{}, huma.Error422UnprocessableEntity(
+				"an account entry is named id: and its numeric GitHub ID, such as id:583231")
+		}
+		return entryRef{id: id}, nil
+	}
 	if strings.HasPrefix(s, "@") {
 		login, err := auth.ParseGitHubLogin(s)
 		if err != nil {
@@ -128,9 +156,9 @@ func (s *Server) registerAllowlist() {
 	register(s.api, huma.Operation{
 		OperationID: "put-allowlist-entry", Method: http.MethodPut, Path: "/api/v1/allowlist/{entry}",
 		Summary: "Allow an address or a GitHub account to log in, or change its admin rights",
-		Description: "The entry is an address, or a GitHub account written @login. A new account entry is" +
-			" resolved with GitHub and stored by its numeric ID; an existing one is matched by its stored" +
-			" login without asking GitHub.",
+		Description: "The entry is an address, a GitHub account written @login, or an existing account entry" +
+			" written id:<github_id>. A new account entry is always resolved with GitHub and stored by its" +
+			" numeric ID; an existing one is matched by its stored login, or by its ID, without asking GitHub.",
 		Tags: []string{"admin"},
 		Errors: []int{http.StatusConflict, http.StatusUnprocessableEntity, http.StatusNotImplemented,
 			http.StatusBadGateway},
@@ -143,7 +171,8 @@ func (s *Server) registerAllowlist() {
 			" their browser sessions, cancels their unfinished jobs, stops their live sessions (a held sync" +
 			" job's included), revokes their CLI tokens and deletes their stored credentials, then writes" +
 			" an audit row. Their history is kept. Deleting an address or @login that is no longer on the" +
-			" allowlist, but names a user who signed in and whom no entry covers, runs those steps again.",
+			" allowlist, but names a user who signed in and whom no entry covers, runs those steps again. An" +
+			" account entry may be named id:<github_id>, which a retry matches against the user's account.",
 		Tags:   []string{"admin"},
 		Errors: []int{http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusInternalServerError},
 	}, s.deleteAllowlistEntry)
@@ -164,11 +193,14 @@ func (s *Server) putAllowlistEntry(ctx context.Context, in *putAllowlistInput) (
 		return nil, err
 	}
 	var account store.AllowlistEntry
-	if ref.login != "" {
+	switch {
+	case ref.login != "":
 		account, err = s.resolveAccountEntry(ctx, p, ref)
 		if err != nil {
 			return nil, err
 		}
+	case ref.id != 0:
+		account.GithubID = ref.id
 	}
 	var stored store.AllowlistEntry
 	err = s.deps.Store.Tx(ctx, func(tx store.Store) error {
@@ -195,6 +227,17 @@ func (s *Server) putAllowlistEntry(ctx context.Context, in *putAllowlistInput) (
 			cur, err = al.Get(ctx, p.OrgID, ref.email)
 		} else {
 			cur, err = al.GetAccount(ctx, p.OrgID, account.GithubID)
+			// By ID only an existing entry is changed, and keeps its
+			// labels; a new one is added by login, which GitHub resolves.
+			//
+			// @decision(DL-128)
+			if ref.id != 0 {
+				if errors.Is(err, store.ErrNotFound) {
+					return huma.Error422UnprocessableEntity(ref.String() + " is not on the allowlist; add an account" +
+						" by its @login, which is looked up on GitHub")
+				}
+				account = cur
+			}
 			entry.GithubID, entry.GithubLogin, entry.GithubName = account.GithubID, account.GithubLogin, account.GithubName
 		}
 		switch {
@@ -233,9 +276,10 @@ func (s *Server) putAllowlistEntry(ctx context.Context, in *putAllowlistInput) (
 }
 
 // resolveAccountEntry is the account an "@login" PUT names: the entry
-// whose stored login it is, without asking GitHub; else the account a
-// user row records under it; else GitHub's answer. The labels returned
-// are what the entry will carry.
+// whose stored login it is, without asking GitHub; else GitHub's answer,
+// for an entry that does not exist yet. A user row's login is never
+// used, since it can be the stale label of another account. The labels
+// returned are what the entry will carry.
 //
 // @decision(DL-128)
 func (s *Server) resolveAccountEntry(ctx context.Context, p auth.Principal, ref entryRef) (store.AllowlistEntry, error) {
@@ -256,7 +300,7 @@ func (s *Server) resolveAccountEntry(ctx context.Context, p auth.Principal, ref 
 	if err := requireAdminEntry(mine); err != nil {
 		return store.AllowlistEntry{}, err
 	}
-	a, err := auth.ResolveAccount(ctx, s.deps.Store.Users(), p.OrgID, s.deps.GitHubAccounts, ref.login)
+	a, err := auth.ResolveAccount(ctx, s.deps.GitHubAccounts, ref.login)
 	if err != nil {
 		return store.AllowlistEntry{}, lookupError(ref, err)
 	}
@@ -392,21 +436,28 @@ func (s *Server) deleteAllowlistEntry(ctx context.Context, in *deleteAllowlistIn
 // @decision(DL-132) @decision(DL-128)
 func retryOffboarding(ctx context.Context, tx store.Store, orgID string, ref entryRef) ([]store.User, error) {
 	var candidates []store.User
-	if ref.email != "" {
-		u, err := tx.Users().ByEmail(ctx, orgID, ref.email)
+	switch {
+	case ref.email != "" || ref.id != 0:
+		var u store.User
+		var err error
+		if ref.id != 0 {
+			u, err = tx.Users().ByGithubID(ctx, orgID, ref.id)
+		} else {
+			u, err = tx.Users().ByEmail(ctx, orgID, ref.email)
+		}
 		switch {
 		case err == nil:
 			candidates = []store.User{u}
 		case !errors.Is(err, store.ErrNotFound):
 			return nil, err
 		}
-	} else {
+	default:
 		rows, err := tx.Users().ByGithubLogin(ctx, orgID, ref.login)
 		if err != nil {
 			return nil, err
 		}
 		if len(rows) > 1 {
-			return nil, ambiguousLogin(ref, "users")
+			return nil, ambiguousLogin(ref, nil)
 		}
 		candidates = rows
 	}
@@ -426,8 +477,11 @@ func retryOffboarding(ctx context.Context, tx store.Store, orgID string, ref ent
 //
 // @decision(DL-128)
 func findEntry(ctx context.Context, al store.AllowlistStore, orgID string, ref entryRef) (store.AllowlistEntry, error) {
-	if ref.email != "" {
+	switch {
+	case ref.email != "":
 		return al.Get(ctx, orgID, ref.email)
+	case ref.id != 0:
+		return al.GetAccount(ctx, orgID, ref.id)
 	}
 	return accountEntry(ctx, al, orgID, ref)
 }
@@ -448,12 +502,28 @@ func accountEntry(ctx context.Context, al store.AllowlistStore, orgID string, re
 	case 1:
 		return rows[0], nil
 	}
-	return store.AllowlistEntry{}, ambiguousLogin(ref, "entries")
+	return store.AllowlistEntry{}, ambiguousLogin(ref, rows)
 }
 
-func ambiguousLogin(ref entryRef, what string) error {
-	return huma.Error409Conflict("more than one of this server's " + what + " carries the GitHub login " +
-		ref.String() + ", because an account was renamed; each label is corrected when its account next signs in")
+// ambiguousLogin refuses a login more than one entry, or user, carries.
+// For entries it names each by its id: form, which reaches it.
+//
+// @decision(DL-128)
+func ambiguousLogin(ref entryRef, rows []store.AllowlistEntry) error {
+	if len(rows) == 0 {
+		return huma.Error409Conflict("more than one user of this server carries the GitHub login " + ref.String() +
+			", because an account was renamed; name the entry by its address or id:<github_id> instead")
+	}
+	names := make([]string, 0, len(rows))
+	for _, e := range rows {
+		name := idPrefix + strconv.FormatInt(e.GithubID, 10)
+		if e.GithubName != "" {
+			name += " (" + e.GithubName + ")"
+		}
+		names = append(names, name)
+	}
+	return huma.Error409Conflict("more than one entry carries the GitHub login " + ref.String() +
+		", because an account was renamed: " + strings.Join(names, " and ") + "; name the one you mean by its id: form")
 }
 
 // coveredUsers are the user rows an entry covers: the row with its
@@ -717,7 +787,12 @@ func allowlistView(e store.AllowlistEntry, entries []store.AllowlistEntry, users
 		if !entryCovers(e, u) {
 			continue
 		}
+		if e.GithubID == 0 && u.GithubID == 0 {
+			v.Unbound = true
+		}
 		for _, o := range entries {
+			// An account entry cannot admit an unbound row, so it is
+			// no cover for one.
 			if !sameEntry(o, e) && entryCovers(o, u) && !slices.Contains(v.AlsoCoveredBy, entryName(o)) {
 				v.AlsoCoveredBy = append(v.AlsoCoveredBy, entryName(o))
 			}

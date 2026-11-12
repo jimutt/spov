@@ -73,8 +73,10 @@ through spov's own device flow. An empty allowlist admits nobody.
   else gets none. An address entry admits the account whose **primary, verified**
   address it is, checked at each sign-in; GitHub lets anyone add an unverified
   address, so no other counts. A user from before account IDs were recorded is
-  bound to the account that next signs in with that verified primary address, and
-  no other account can claim the row after that. An address recorded for one
+  bound to the account that next signs in with that verified primary address only
+  while an address entry allows that address; an account entry alone never takes
+  over an earlier user's row, its credentials or its CLI tokens. No other account
+  can claim the row after that. An address recorded for one
   account is never given to another.
 - **The allowlist lives in the database** and is managed by admins on the
   Settings page or through `/api/v1/allowlist`. `SPOV_ALLOWLIST_FILE` only seeds

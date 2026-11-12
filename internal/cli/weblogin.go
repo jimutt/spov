@@ -116,6 +116,7 @@ func (e *Env) newLogin(ctx context.Context, st store.Store, publicURL string, wa
 		Allowlist: list,
 		// @decision(DL-128)
 		Entries: st.Allowlist(),
+		Store:   st,
 		OrgID:   server.DefaultOrgID,
 		Now:     e.now,
 		Warn:    warn,

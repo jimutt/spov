@@ -185,3 +185,37 @@ func TestASeedThatLostTheRaceWritesNothing(t *testing.T) {
 		t.Errorf("the losing seeder wrote its entry: %v", err)
 	}
 }
+
+// A re-seed takes a line whose login an existing entry carries as that
+// entry, without GitHub; a line that would create an entry asks GitHub,
+// whatever login a user row carries.
+//
+// @decision(DL-128)
+func TestAReSeedAsksGitHubForEveryEntryItWouldCreate(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	if err := st.Allowlist().Put(ctx, store.AllowlistEntry{OrgID: "org", GithubID: 5, GithubLogin: "kept"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Users().Create(ctx, store.User{ID: store.NewID(time.Now()), OrgID: "org", Email: "f@example.com",
+		GithubID: 1, GithubLogin: "jsmith"}); err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeAccounts{accounts: map[string]GitHubAccount{"jsmith": {ID: 2, Login: "jsmith"}}}
+	seeded, err := SeedAllowlist(ctx, st, "org", writeAllowlist(t, "@kept admin\n@jsmith\n"), gh.lookup, nil)
+	if err != nil || !seeded {
+		t.Fatalf("seeded = %v, %v", seeded, err)
+	}
+	if len(gh.calls) != 1 || gh.calls[0] != "jsmith" {
+		t.Errorf("GitHub was asked %v, want only the new line", gh.calls)
+	}
+	if e, err := st.Allowlist().GetAccount(ctx, "org", 5); err != nil || !e.Admin {
+		t.Errorf("the kept entry = %+v, %v", e, err)
+	}
+	if _, err := st.Allowlist().GetAccount(ctx, "org", 2); err != nil {
+		t.Errorf("the new line is not GitHub's account: %v", err)
+	}
+	if _, err := st.Allowlist().GetAccount(ctx, "org", 1); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("a user row's stale login made an entry: %v", err)
+	}
+}

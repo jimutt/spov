@@ -82,7 +82,7 @@ func seedOnce(ctx context.Context, st store.Store, orgID, path string, lookup Ac
 	}
 	var accounts map[int64]seedAccount
 	if err == nil {
-		accounts, err = resolveSeedAccounts(ctx, st.Users(), orgID, lookup, parsed.logins)
+		accounts, err = resolveSeedAccounts(ctx, st.Allowlist(), orgID, lookup, parsed.logins)
 	}
 	if err != nil {
 		return false, unusableSeed(err, path, firstBoot, warn)
@@ -122,11 +122,13 @@ type seedAccount struct {
 }
 
 // resolveSeedAccounts resolves every account line under one deadline.
-// Two lines that turn out to be one account take the widest privilege,
-// as a repeated address does.
+// A line whose login exactly one existing entry carries (a re-seed) is
+// that entry; any other would create an entry and is asked of GitHub,
+// never of a user row's login. Two lines that turn out to be one account
+// take the widest privilege, as a repeated address does.
 //
 // @decision(DL-128)
-func resolveSeedAccounts(ctx context.Context, users store.UserStore, orgID string, lookup AccountLookup, logins map[string]seedLogin) (map[int64]seedAccount, error) {
+func resolveSeedAccounts(ctx context.Context, al store.AllowlistStore, orgID string, lookup AccountLookup, logins map[string]seedLogin) (map[int64]seedAccount, error) {
 	if len(logins) == 0 {
 		return nil, nil
 	}
@@ -140,7 +142,16 @@ func resolveSeedAccounts(ctx context.Context, users store.UserStore, orgID strin
 	out := map[int64]seedAccount{}
 	for _, name := range names {
 		l := logins[name]
-		a, err := ResolveAccount(ctx, users, orgID, lookup, l.login)
+		existing, err := al.ByLogin(ctx, orgID, l.login)
+		if err != nil {
+			return nil, fmt.Errorf("auth: allowlist: reading the entries for @%s: %w", l.login, err)
+		}
+		var a GitHubAccount
+		if len(existing) == 1 {
+			a = GitHubAccount{ID: existing[0].GithubID, Login: existing[0].GithubLogin, Name: existing[0].GithubName}
+		} else {
+			a, err = ResolveAccount(ctx, lookup, l.login)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("auth: allowlist line %d: @%s: %w", l.line, l.login, err)
 		}
