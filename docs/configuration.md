@@ -76,6 +76,8 @@ sandbox:
   credentials: [acme-npm]           # keep only these of your routed credentials for spov fly, or [none]; only narrows (or pass --credentials / --no-credentials)
   job_credentials: [none]           # the same for spov jobs create; never inherits credentials
   needs: [npm.acme.com]             # hosts the project needs; a launch says when no routed credential covers one
+  template: acme                    # user file only: the sandbox template spov fly launches from (or pass --template / --no-template)
+  job_template: acme-jobs           # user file only: the same for spov jobs create; never inherits template
   job_max_duration: 2h              # a job's wall clock when --max-duration is unset; at least 1m, clamped to your limit (quotas.max_job_duration)
   job_sync_hold: 1h                 # how long a finished sync job's sandbox is held for spov jobs apply when --hold is unset; 30m by default, at least 1m
   sync: false                       # unset (the default): a plain spov fly inside a checkout syncs it; true: always (--sync); false: never (--no-sync)
@@ -181,6 +183,20 @@ keeps none; it never attaches one you did not already get, so a repository you
 clone from someone else cannot send your credentials anywhere new. A launch's own
 `--credentials a,b` attaches exactly those, asked-only ones included, and
 `--no-credentials` attaches none.
+
+### A project file cannot name a sandbox template
+
+A [sandbox template](sandbox.md#sandbox-templates) can attach routed credentials,
+including the ones you stored with `--attach asked`, so `sandbox.template` and
+`sandbox.job_template` are read from your user file only. A project file that
+sets either is refused when it is loaded. `--template` on the command line is
+yours to give.
+
+When a launch names a template, the template takes the place of `sandbox.egress`,
+`egress_extra_domains`, `addons`, `apt`, `env` and `git_access` from every config
+file for that launch, and the launch says which ones it replaced. Only a flag
+overrides a template. `sandbox.credentials` still narrows the template's list,
+because it can only take access away.
 
 ### A project file can ask for git access `all`
 

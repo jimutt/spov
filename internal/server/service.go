@@ -135,9 +135,19 @@ func newService(deps Deps) *Service {
 //
 // @decision(DL-005)
 func (s *Service) Create(ctx context.Context, p auth.Principal, req store.SessionRequest) (store.Session, error) {
+	// Before the defaults, which would make every field look set.
+	//
+	// @decision(DL-120)
+	tmpl, err := s.templateFor(ctx, p, req.Template)
+	if err != nil {
+		return store.Session{}, err
+	}
+	if tmpl != nil {
+		req = applyTemplate(req, *tmpl)
+	}
 	req = s.withDefaults(req)
 	if err := s.validateRequest(req); err != nil {
-		return store.Session{}, err
+		return store.Session{}, inTemplate(tmpl, err)
 	}
 	// One read of the profile answers both of the next two questions.
 	//
@@ -165,11 +175,11 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	}
 	// @decision(DL-075)
 	if err := s.refuseRoutedNames(ctx, p.OrgID, p.UserID, req.Routed); err != nil {
-		return store.Session{}, err
+		return store.Session{}, inTemplate(tmpl, err)
 	}
 	// @decision(DL-077)
 	if err := s.refuseRoutesWithoutProxy(ctx, p.OrgID, p.UserID, req.Routed); err != nil {
-		return store.Session{}, err
+		return store.Session{}, inTemplate(tmpl, err)
 	}
 	// The caller's own limits, checked before anything billable. The
 	// size limits refuse here; the concurrency limit is counted inside
@@ -643,6 +653,10 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	}
 	for _, n := range routedNotes {
 		log.Note(n)
+	}
+	// @decision(DL-120)
+	if name := sess.Request.Template; name != "" {
+		log.Note("sandbox settings are from your template " + name + ", under what this launch set itself")
 	}
 	proxied := make([]credproxy.Route, len(routed))
 	presets := make([]routedcred.Route, len(routed))

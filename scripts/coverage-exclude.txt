@@ -32,6 +32,7 @@ internal/store/postgres/allowlist.go
 internal/store/postgres/conversations.go
 internal/store/postgres/jobs.go
 internal/store/postgres/runs.go
+internal/store/postgres/templates.go
 internal/store/postgres/migrate.go
 internal/store/postgres/leader_run.go
 
@@ -70,6 +71,7 @@ internal/cli/serve_river.go
 # Nothing here may be reached from non-test code. If it ever is, it has
 # stopped being test support and belongs back under the gate.
 internal/store/storetest/storetest.go
+internal/store/storetest/templates.go
 internal/sandbox/fake.go
 internal/git/fake.go
 internal/jobs/jobstest/jobstest.go
