@@ -361,6 +361,13 @@ func (h *FakeHandle) AddTags(ctx context.Context, tags map[string]string) error 
 	return nil
 }
 
+// DropTag removes a tag, as anything that replaced the tag set would.
+func (h *FakeHandle) DropTag(key string) {
+	h.provider.mu.Lock()
+	defer h.provider.mu.Unlock()
+	delete(h.info.Tags, key)
+}
+
 // SidecarExecs returns every SidecarExecInput call, in order.
 func (h *FakeHandle) SidecarExecs() []SidecarExec {
 	h.provider.mu.Lock()

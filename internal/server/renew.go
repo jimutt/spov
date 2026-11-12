@@ -264,7 +264,6 @@ func (s *Service) renewGitToken(ctx context.Context, sess store.Session) error {
 	if err != nil {
 		return err
 	}
-	proxied := info.Tags[sandbox.TagProxy] == "1"
 	var (
 		failures []error
 		earliest time.Time
@@ -276,6 +275,15 @@ func (s *Service) renewGitToken(ctx context.Context, sess store.Session) error {
 		}
 		renewed++
 		name := sel.Platform.Name()
+		// Decided before a token is minted: one that cannot be written
+		// safely is not minted.
+		//
+		// @decision(DL-135)
+		proxied, err := s.tokenInProxy(sess, name, info)
+		if err != nil {
+			failures = append(failures, fmt.Errorf("%s: %w", name, err))
+			continue
+		}
 		tok, err := git.IssueFor(ctx, sel, sess.Request.Sandbox.Timeout)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("%s: %w", name, err))
@@ -361,6 +369,41 @@ func (s *Service) releaseRenewed(ctx context.Context, id string) {
 			}
 		}
 	}
+}
+
+// ErrProxyUnknown is a renewal that will not choose the main container
+// for a token: the sandbox's proxy tag is missing and nothing recorded
+// says it was launched without the proxy.
+//
+// @decision(DL-135)
+var ErrProxyUnknown = errors.New("the sandbox's proxy tag is missing and the session does not record its token as held in the sandbox")
+
+// tokenInProxy says where a platform's re-minted token is written. The
+// tag decides when it says "1". Without it the token goes to the main
+// container only when the session's record says the launch put it there,
+// or, for an adopted sandbox whose holder is unrecorded, when this
+// deployment runs no proxy at all.
+//
+// @decision(DL-135) @decision(DL-034)
+func (s *Service) tokenInProxy(sess store.Session, platform string, info sandbox.Info) (bool, error) {
+	if info.Tags[sandbox.TagProxy] == "1" {
+		return true, nil
+	}
+	for _, c := range sess.Credentials {
+		if c.Platform != platform {
+			continue
+		}
+		switch c.Holder {
+		case store.CredentialInSandbox:
+			return false, nil
+		case store.CredentialInProxy:
+			return false, ErrProxyUnknown
+		}
+	}
+	if s.deps.ProxyImage != nil {
+		return false, ErrProxyUnknown
+	}
+	return false, nil
 }
 
 // writeToken gives a re-minted token to the sandbox's credential proxy.
