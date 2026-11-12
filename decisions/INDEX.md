@@ -2,9 +2,9 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-133 | Request limits: sign-ins per address and per replica, and each user's rate, creates, streams and requests in progress | accepted | server | security, limits, api, auth |
 | DL-136 | The CLI runs git without the checkout hooks, lists what a sync-back changed, prints agent text safely, and the installer validates versions | accepted | cli | cli, sync, security, installer |
 | DL-135 | A group of small hardening fixes in the server and the credential proxy | accepted | server | security, server, proxy, auth |
+| DL-133 | Request limits: sign-ins per address and per replica, and each user's rate, creates, streams and requests in progress | accepted | server | security, limits, api, auth |
 | DL-132 | Removing a person from the allowlist ends their sessions and jobs, revokes their CLI tokens and deletes their credentials | accepted | server | auth, allowlist, offboarding, security |
 | DL-131 | One session stores a bounded number of conversations and a bounded size of history, and the verdict holds a bounded size | accepted | server | recorder, storage, security, limits |
 | DL-130 | An exec reads a bounded amount of a sandbox program's output, and more is an error | accepted | sandbox | sandbox, exec, security, limits |
