@@ -33,7 +33,9 @@ type offboarded struct {
 }
 
 // failingStore makes every credential delete fail while fail is set,
-// inside a transaction as well.
+// inside a transaction as well. The failure reads as a real store's
+// does, so the off-boarding's own 500 is shown to be kept apart from the
+// fixed answer an unexpected store error gets (DL-135).
 type failingStore struct {
 	store.Store
 	fail *atomic.Bool
@@ -46,7 +48,7 @@ type failingCredentials struct {
 
 func (f failingCredentials) Delete(ctx context.Context, orgID, userID, platform string) error {
 	if f.fail.Load() {
-		return errors.New("the credential table is unreachable")
+		return errors.New("store: delete credential: dial tcp db.internal:5432: connection refused")
 	}
 	return f.CredentialStore.Delete(ctx, orgID, userID, platform)
 }
@@ -265,6 +267,10 @@ func TestAFailedOffboardingStepStillRunsTheOthersAndIsRetried(t *testing.T) {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("the answer does not say %q: %s", want, out)
 		}
+	}
+	// @decision(DL-135)
+	if strings.Contains(string(out), "db.internal") || strings.Contains(string(out), "internal error (reference") {
+		t.Errorf("the answer carries the store's detail or the generic 500 in place of the off-boarding's: %s", out)
 	}
 	if _, err := o.f.store.Allowlist().Get(context.Background(), auth.LocalID, theirEmail); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("the entry survived a failed step: %v", err)
