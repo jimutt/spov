@@ -172,7 +172,10 @@ Sessions are server-side rows (`web_sessions`), so revoking one is a
 delete: `GET /api/v1/me/sessions` lists a user's logins and
 `DELETE /api/v1/me/sessions/{id}` ends one. The cookie is
 `HttpOnly; SameSite=Lax; Path=/`, and `Secure` whenever `SPOV_PUBLIC_URL`
-is https — on a plain-http trial it is not, and the server warns.
+is https — on a plain-http trial it is not, and the server warns. A
+`Secure` cookie is named `__Host-spov_session`, so a browser refuses one set
+by a sibling subdomain; on plain http it is `spov_session`. A deployment that
+upgrades to this naming signs everyone in once more.
 
 `SPOV_MIGRATE_ON_START=true` applies migrations before listening. It is
 for compose and development. A real deployment migrates in a step that
