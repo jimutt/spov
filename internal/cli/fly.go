@@ -40,6 +40,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 		sync                 bool
 		noSync               bool
 		routed               routedFlags
+		template             templateFlags
 		envVars              []string
 	)
 	cmd := &cobra.Command{
@@ -64,6 +65,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 				Identity:             git.Identity{Name: gitName, Email: gitEmail},
 				GitAccess:            gitAccess,
 				Routed:               routed,
+				Template:             template,
 				Env:                  envVars,
 				Sync:                 sync,
 				// An explicit --sync=false turns sync off rather than
@@ -93,6 +95,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 		"how far the sandbox's git credentials reach: repos (this session's) or all (every repository they can);"+
 			" sandbox.git_access, then your account default, when unset")
 	addRoutedFlags(cmd, &routed, "sandbox.credentials")
+	addTemplateFlags(env, cmd, &template, "sandbox.template")
 	addEnvFlag(cmd, &envVars)
 	// @decision(DL-027)
 	// @decision(DL-095)
@@ -110,6 +113,8 @@ func newFlyCmd(env *Env) *cobra.Command {
 type flyOptions struct {
 	// @decision(DL-075)
 	Routed routedFlags
+	// @decision(DL-122)
+	Template templateFlags
 	// Env are --env KEY=VALUE.
 	//
 	// @decision(DL-096)
@@ -158,6 +163,11 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 		return err
 	}
 	cfg := res.Config
+	// @decision(DL-122)
+	template, templateKey, templateConfigured := templateFor(cfg, opts.Template, false)
+	if template != "" {
+		underTemplate(env, &cfg, template, false)
+	}
 	// @decision(DL-096)
 	vars, err := launchEnv(cfg.Sandbox.Env, opts.Env, cfg.Sandbox.Addons)
 	if err != nil {
@@ -186,6 +196,11 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 	c, err := env.client(ctx)
 	if err != nil {
 		return err
+	}
+	if templateConfigured {
+		if err := checkConfiguredTemplate(ctx, c, template, templateKey); err != nil {
+			return err
+		}
 	}
 	if syncMode {
 		ref, sreq, checkout, err := env.resolveSyncLaunch(ctx, c, cfg, opts.Repos)
@@ -236,6 +251,8 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 	req := sessionRequest(cfg, opts, name, refs, identity)
 	req.Sync = syncReq
 	req.Env = vars
+	// @decision(DL-122)
+	req.Template = template
 	if syncMode && len(refs) == 1 {
 		repoDir := git.SingleRepoDir(refs[0].Owner, refs[0].Name)
 		if req.Landing == "" || req.Landing != repoDir {

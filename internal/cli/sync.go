@@ -90,6 +90,16 @@ func bundleOnlyNote(checkout git.LocalCheckout) string {
 		" its work comes back here when the session closes"
 }
 
+// repoMismatchError is a --repo that names another repository than the
+// checkout a synced launch starts from. Its text is fly's; a sync job
+// words its own.
+type repoMismatchError struct{ checkout, flag string }
+
+func (e repoMismatchError) Error() string {
+	return fmt.Sprintf("--sync uses the current git checkout (%s), which does not match --repo %s; drop --repo or pass --no-sync",
+		e.checkout, e.flag)
+}
+
 // resolveSyncLaunch inspects the local git checkout, matches its remote
 // against the configured platforms when possible (falling back to a
 // full local bundle when the repo has no remote, is on an unconfigured
@@ -112,8 +122,7 @@ func (e *Env) resolveSyncLaunch(ctx context.Context, c *client.Client, cfg confi
 			return server.RepoRef{}, nil, git.LocalCheckout{}, err
 		}
 		if !strings.EqualFold(parsed.Owner, checkout.Owner) || !strings.EqualFold(parsed.Name, checkout.Name) {
-			return server.RepoRef{}, nil, git.LocalCheckout{}, fmt.Errorf("--sync uses the current git checkout (%s/%s), which does not match --repo %s; drop --repo or pass --no-sync",
-				checkout.Owner, checkout.Name, repoFlags[0])
+			return server.RepoRef{}, nil, git.LocalCheckout{}, repoMismatchError{checkout: checkout.Owner + "/" + checkout.Name, flag: repoFlags[0]}
 		}
 		wantPlatform = parsed.Platform
 	}
