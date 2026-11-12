@@ -162,6 +162,10 @@ func (s *Service) Offboard(ctx context.Context, p auth.Principal, email string, 
 	if failedCreds > 0 {
 		left(plural(failedCreds, "stored credential", "not deleted"), lastCredErr)
 	}
+	// What they reached through those credentials is not kept either.
+	//
+	// @decision(DL-134)
+	s.ForgetRepoListings(user.OrgID, user.ID)
 
 	detail := email + ": " + r.summary()
 	if len(r.Left) > 0 {

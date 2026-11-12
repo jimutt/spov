@@ -19,6 +19,8 @@ const (
 	QuotaJobs     QuotaLimit = "jobs"
 	QuotaSize     QuotaLimit = "size"
 	QuotaDuration QuotaLimit = "duration"
+	// QuotaImageBuilds is a user's new image variants in a day (DL-134).
+	QuotaImageBuilds QuotaLimit = "image_builds"
 )
 
 // RequestLimit is which of the server's request limits refused a
@@ -102,7 +104,7 @@ const (
 )
 
 var (
-	quotaLimits      = names(QuotaSessions, QuotaJobs, QuotaSize, QuotaDuration)
+	quotaLimits      = names(QuotaSessions, QuotaJobs, QuotaSize, QuotaDuration, QuotaImageBuilds)
 	requestLimits    = names(LimitSignInRate, LimitSignInCap, LimitDeviceCodeCap, LimitDevicePollRate, LimitRequests, LimitCreates, LimitStreams, LimitInFlight)
 	jobKinds         = []string{string(store.JobKindPR), string(store.JobKindReport), string(store.JobKindSync)}
 	jobOutcomes      = []string{string(store.JobSucceeded), string(store.JobFailed), string(store.JobCancelled)}

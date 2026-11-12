@@ -137,6 +137,10 @@ func (s *Server) registerCredentials() {
 		if err := s.deps.Credentials.Put(ctx, p.OrgID, p.UserID, platform, secret, verified); err != nil {
 			return nil, toHumaError(err)
 		}
+		// What the user reaches has changed.
+		//
+		// @decision(DL-134)
+		s.svc.ForgetRepoListings(p.OrgID, p.UserID)
 		return &putCredentialOutput{Body: CredentialView{
 			Platform:   platform,
 			Present:    true,
@@ -170,6 +174,8 @@ func (s *Server) registerCredentials() {
 		//
 		// @decision(DL-008)
 		err = s.deps.Credentials.Delete(ctx, p.OrgID, p.UserID, platform)
+		// @decision(DL-134)
+		s.svc.ForgetRepoListings(p.OrgID, p.UserID)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return nil, toHumaError(err)
 		}

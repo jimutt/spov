@@ -250,12 +250,13 @@ type Deps struct {
 	//
 	// The policy says which tier each platform may resolve to (DL-042).
 	UserForge func(ctx context.Context, orgID, userID string, policy TierPolicy) (Forge, []PlatformTier, error)
-	// UserRepos lists the repositories each of one user's credential
-	// tiers reaches, platform by platform. Nil lists through UserForge
-	// alone (local mode).
+	// UserRepos lists the repositories one of a user's credential tiers
+	// reaches, platform by platform, through that tier's own credential.
+	// The server asks for each tier on its own, so it can keep each for
+	// RepoListTTL. Nil lists through UserForge alone (local mode).
 	//
-	// @decision(DL-042)
-	UserRepos func(ctx context.Context, orgID, userID string) ([]TieredRepo, []string, error)
+	// @decision(DL-042) @decision(DL-134)
+	UserRepos func(ctx context.Context, orgID, userID string, tier Tier) (RepoListing, error)
 	// Console is the OpenCode Console's device flow, and ConsoleGrants
 	// where each user's sign-in is kept: the local credential store in
 	// local mode, the sealed store in hosted mode. Either nil turns the

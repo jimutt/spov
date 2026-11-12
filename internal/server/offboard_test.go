@@ -354,6 +354,28 @@ func TestRemovingAnAddressNobodySignedInUnderRemovesOnlyTheEntry(t *testing.T) {
 	}
 }
 
+// A removal forgets the person's cached repository listings with their
+// credentials, as a credential delete through the API does.
+//
+// @decision(DL-132) @decision(DL-134)
+func TestRemovingAPersonForgetsTheirRepositoryListings(t *testing.T) {
+	o := newOffboarded(t, nil)
+	cache := o.f.srv.svc.repos
+	theirs := repoKey{org: auth.LocalID, user: theirID, tier: "user"}
+	mine := repoKey{org: auth.LocalID, user: auth.LocalID, tier: "user"}
+	cache.put(theirs, repoEntry{})
+	cache.put(mine, repoEntry{})
+	if resp, out := o.f.do(http.MethodDelete, "/api/v1/allowlist/"+theirEmail, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE = %d: %s", resp.StatusCode, out)
+	}
+	if _, ok := cache.get(theirs); ok {
+		t.Error("their cached listing outlived the removal")
+	}
+	if _, ok := cache.get(mine); !ok {
+		t.Error("the removal dropped another user's listing")
+	}
+}
+
 // TestOffboardingDeletesBrowserStoredCredentialsAndKeepsTemplates: a
 // routed credential the person stored from the browser, a preset's as
 // the form sends it, is a row of CredentialStore.ListByUser and is

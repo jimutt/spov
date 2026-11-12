@@ -52,6 +52,19 @@ it is safe before every deploy. Add-on variants are built on first use unless
 `modal.build_on_demand` is false. See
 [`docs/configuration.md`](../docs/configuration.md#add-ons).
 
+Because any valid add-on or `apt` selection is a new image, building on demand
+costs the operator's Modal account, and a hosted server limits it per user (DL-134; a local server does not):
+one build running at a time and five new variants in any 24 hours, each counted
+in the replica's memory. A deployment open to people the operator does not know
+should set `modal.build_on_demand: false` and prebuild the variants it wants
+with `spov serve image build`. Two builds at once per replica remain the bound
+for everyone together.
+
+The repository listing (`GET /api/v1/repos`) is kept for 60 seconds for each
+user and credential tier, also in memory per replica, so one user cannot spend
+the organisation's GitHub App rate limit by listing repeatedly. Storing or
+removing a credential, or the organisation's App, drops the affected entries.
+
 ## Browser login
 
 Recorded in [DL-007](../decisions/records/server/DL-007.md). Login is
