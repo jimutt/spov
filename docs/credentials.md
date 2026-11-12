@@ -59,7 +59,8 @@ an App; it refuses a plain token, which only a hosted server stores.
 
 ### Reuse your gh login (local)
 
-If `gh` is signed in on this machine (`gh auth login` if not):
+`spov init` does this for you: it adds the platform to your config file and
+opts into gh's login, after asking. By hand, if `gh` is signed in on this machine (`gh auth login` if not):
 
 ```sh
 spov credentials add github --from-gh
@@ -194,6 +195,9 @@ spov credentials add acme-api --host api.acme.com --bearer
 spov credentials add acme-files --host files.acme.com --path /team/ --basic deploy
 spov credentials add acme-search --host search.acme.com --header X-Api-Key
 ```
+
+You can also add or replace one in the web app, under Settings, Routed
+credentials; an admin can store one there for the whole organisation.
 
 The secret is prompted for without echo (or read with `--secret-file`) and
 stored unchecked. `--host` repeats, and the hosts must be exact names; a route

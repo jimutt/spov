@@ -32,6 +32,7 @@
   } from '../lib/settings';
   import Credentials from './Credentials.svelte';
   import RoutedCredentials from './RoutedCredentials.svelte';
+  import Templates from './Templates.svelte';
   import ModelPicker from './ModelPicker.svelte';
   import OpenCodeConnect from './OpenCodeConnect.svelte';
   import OrgSettings from './OrgSettings.svelte';
@@ -308,9 +309,13 @@
   <!-- Storing or removing a key changes which models can be picked
        above, and GET /api/v1/models has already answered. -->
   <Credentials onChanged={() => void models.refresh()} />
-  <!-- @decision(DL-077) -->
+  <!-- @decision(DL-077) @decision(DL-118) -->
   <RoutedCredentials admin={me.data?.admin ?? false} />
 </section>
+
+<!-- Its own section, which a server that keeps no templates leaves
+     out. @decision(DL-121) -->
+<Templates />
 
 <!-- Admin only; a server that keeps no App draws nothing.
      @decision(DL-062) -->

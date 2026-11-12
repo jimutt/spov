@@ -24,15 +24,16 @@ export function sessionProblems(repos: RepoRef[]): string[] {
 
 /**
  * toSessionRequest is the body POST /api/v1/sessions takes from this
- * form: the repositories and a model only when one was chosen, so the
- * server resolves everything else from the account's interactive
- * defaults and its own.
+ * form: the repositories, and a model or a sandbox template only when
+ * one was chosen, so the server resolves everything else from the
+ * account's interactive defaults and its own.
  *
- * @decision(DL-061)
+ * @decision(DL-061) @decision(DL-121)
  */
-export function toSessionRequest(repos: RepoRef[], model = ""): SessionRequest {
+export function toSessionRequest(repos: RepoRef[], model = "", template = ""): SessionRequest {
   const body: SessionRequest = { repos };
   if (model.trim()) body.model = model.trim();
+  if (template) body.template = template;
   return body;
 }
 
@@ -56,8 +57,9 @@ export async function startAndGo(
   post: PostSession,
   go: (url: string) => void,
   model = "",
+  template = "",
 ): Promise<void> {
-  const r = await post(toSessionRequest(repos, model));
+  const r = await post(toSessionRequest(repos, model, template));
   if (!r.response.ok) throw new ApiError(r.response.status, r.error as Problem | undefined);
   const id = r.data?.id;
   if (!id) {

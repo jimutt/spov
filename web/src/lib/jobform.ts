@@ -219,6 +219,11 @@ export interface JobDraft {
    * server applies the caller's job default, then repos (DL-043).
    */
   access: "" | GitAccess;
+  /**
+   * A sandbox template's name. Empty is None, which sends nothing; it is
+   * the opening value on every load and is never remembered (DL-121).
+   */
+  template: string;
 }
 
 /** A git access value the API takes. @decision(DL-043) */
@@ -246,7 +251,7 @@ export function defaultAccessLabel(jobDefault: string | undefined, loaded: boole
  * to choose rather than the one they get by not looking.
  */
 export function emptyDraft(): JobDraft {
-  return { goal: "", kind: "report", repos: [], model: INHERIT, check: "", clock: "", access: "" };
+  return { goal: "", kind: "report", repos: [], model: INHERIT, check: "", clock: "", access: "", template: "" };
 }
 
 /**
@@ -267,9 +272,11 @@ export function draftProblems(draft: JobDraft): string[] {
 /**
  * toJobRequest builds the body POST /api/v1/jobs takes. An empty model,
  * check or git access is omitted rather than sent as "" — Settings does
- * the opposite with the same fields, since there it is the setting.
+ * the opposite with the same fields, since there it is the setting. A
+ * template is sent only when one is chosen, and a control the person
+ * set is still sent, so it wins over the template's.
  *
- * @decision(DL-061) @decision(DL-014) @decision(DL-043)
+ * @decision(DL-061) @decision(DL-014) @decision(DL-043) @decision(DL-121)
  */
 export function toJobRequest(draft: JobDraft): JobRequest {
   const body: JobRequest = {
@@ -283,6 +290,8 @@ export function toJobRequest(draft: JobDraft): JobRequest {
   if (check) body.check = check;
   if (draft.clock) body.max_duration = draft.clock;
   if (draft.access) body.git_access = draft.access;
+  // @decision(DL-121)
+  if (draft.template) body.template = draft.template;
   return body;
 }
 
