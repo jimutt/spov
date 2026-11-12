@@ -6,12 +6,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -246,6 +248,12 @@ func (p *Proxy) forward(target string) http.Handler {
 			sc := scrub{secrets: p.cfg.Secrets(r), streams: p.cfg.Streamed != nil && p.cfg.Streamed(r)}
 			r = r.WithContext(context.WithValue(r.Context(), scrubKey{}, sc))
 		}
+		// Early hints carry headers the scrub never sees.
+		//
+		// @decision(DL-135)
+		if credentialed {
+			w = &hintStripper{ResponseWriter: w}
+		}
 		if !credentialed || p.cfg.Audit == nil {
 			rp.ServeHTTP(w, r)
 			return
@@ -287,11 +295,11 @@ const scrubbed = "spov-redacted"
 // @decision(DL-034)
 func scrubResponse(resp *http.Response) error {
 	sc, _ := resp.Request.Context().Value(scrubKey{}).(scrub)
-	secrets := sc.secrets
 	// A 101's body is the upgraded connection, which the proxy splices.
-	if len(secrets) == 0 || resp.StatusCode == http.StatusSwitchingProtocols {
+	if len(sc.secrets) == 0 || resp.StatusCode == http.StatusSwitchingProtocols {
 		return nil
 	}
+	secrets := echoForms(sc.secrets)
 	for k, vs := range resp.Header {
 		for i, v := range vs {
 			for _, sec := range secrets {
@@ -306,6 +314,14 @@ func scrubResponse(resp *http.Response) error {
 	if strings.HasPrefix(ct, "application/x-git-") || strings.HasPrefix(ct, "application/octet-stream") ||
 		(sc.streams && strings.HasPrefix(ct, "text/event-stream")) {
 		return nil
+	}
+	// A part of a body can cut a secret in two, so each part passes the
+	// scrub clean and the client joins them.
+	//
+	// @decision(DL-135)
+	if resp.StatusCode == http.StatusPartialContent {
+		_ = resp.Body.Close()
+		return errors.New("credproxy: a partial response to a credentialed request cannot be checked")
 	}
 	if resp.Header.Get("Content-Encoding") != "" {
 		return errors.New("credproxy: an encoded response to a credentialed request cannot be checked")
@@ -327,6 +343,41 @@ func scrubResponse(resp *http.Response) error {
 	resp.ContentLength = int64(len(body))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	return nil
+}
+
+// echoForms adds to each secret the spellings an upstream may echo it
+// in: JSON with escaped slashes (PHP's), JSON with HTML escapes, and URL
+// query and path escapes.
+//
+// @decision(DL-135)
+func echoForms(secrets []string) []string {
+	out := slices.Clone(secrets)
+	seen := map[string]bool{}
+	for _, s := range secrets {
+		seen[s] = true
+	}
+	add := func(f string) {
+		if f != "" && !seen[f] {
+			seen[f] = true
+			out = append(out, f)
+		}
+	}
+	for _, s := range secrets {
+		if s == "" {
+			continue
+		}
+		add(strings.ReplaceAll(s, "/", `\/`))
+		var b bytes.Buffer
+		if json.NewEncoder(&b).Encode(s) == nil {
+			j := strings.TrimSuffix(b.String(), "\n")
+			j = j[1 : len(j)-1]
+			add(j)
+			add(strings.ReplaceAll(j, "/", `\/`))
+		}
+		add(url.QueryEscape(s))
+		add(url.PathEscape(s))
+	}
+	return out
 }
 
 // PublicDial dials a public address only. It resolves the host itself
@@ -490,6 +541,10 @@ type statusWriter struct {
 }
 
 func (s *statusWriter) WriteHeader(code int) {
+	if isHint(code) {
+		s.ResponseWriter.WriteHeader(code)
+		return
+	}
 	if s.code == 0 {
 		s.code = code
 	}
@@ -515,3 +570,33 @@ func (s *statusWriter) status() int {
 	}
 	return s.code
 }
+
+// isHint reports an informational status other than a protocol switch.
+func isHint(code int) bool {
+	return code >= 100 && code < 200 && code != http.StatusSwitchingProtocols
+}
+
+// hintStripper passes an informational response on without its headers,
+// so a credentialed request's early hints cannot carry an echo past the
+// scrub. 100 Continue still reaches the client.
+//
+// @decision(DL-135)
+type hintStripper struct{ http.ResponseWriter }
+
+func (h *hintStripper) WriteHeader(code int) {
+	if isHint(code) {
+		hdr := h.ResponseWriter.Header()
+		for k := range hdr {
+			delete(hdr, k)
+		}
+	}
+	h.ResponseWriter.WriteHeader(code)
+}
+
+func (h *hintStripper) Flush() {
+	if f, ok := h.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (h *hintStripper) Unwrap() http.ResponseWriter { return h.ResponseWriter }
