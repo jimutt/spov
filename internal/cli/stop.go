@@ -158,7 +158,7 @@ func stopAll(ctx context.Context, env *Env, c *client.Client) error {
 		}
 		if err := c.DeleteSession(ctx, s.ID); err != nil {
 			failed++
-			_, _ = fmt.Fprintf(env.Err, "spov: %s: %v\n", displayName(s), err)
+			_, _ = fmt.Fprintf(env.Err, "spov: %s: %s\n", displayName(s), Printable(err.Error()))
 			continue
 		}
 		_, _ = fmt.Fprintln(env.Out, stoppedLine(displayName(s), s.Job))

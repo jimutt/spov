@@ -46,7 +46,7 @@ func runServerLogin(ctx context.Context, env *Env, opts serverLoginOptions) erro
 	}
 	auth, err := cfg.DeviceAuth(ctx, oauth2.SetAuthURLParam("name", name))
 	if err != nil {
-		return fmt.Errorf("starting the login: %w", redactURL(err))
+		return deviceStartError(err)
 	}
 
 	// The code is what a human retypes, so it is the loudest thing on
@@ -135,6 +135,19 @@ func deviceError(err error) error {
 		return fmt.Errorf("gave up waiting for approval")
 	}
 	return fmt.Errorf("the login did not complete: %w", redactURL(err))
+}
+
+// deviceStartError says why the server would not start a sign-in, in
+// its own words when it gave any: a limit's refusal says when to try
+// again.
+//
+// @decision(DL-133)
+func deviceStartError(err error) error {
+	var re *oauth2.RetrieveError
+	if errors.As(err, &re) && re.ErrorDescription != "" {
+		return fmt.Errorf("starting the login: %s", re.ErrorDescription)
+	}
+	return fmt.Errorf("starting the login: %w", redactURL(err))
 }
 
 // redactURL keeps a device code out of an error. x/oauth2 renders the

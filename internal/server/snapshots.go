@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/store"
 )
@@ -111,11 +112,14 @@ func (s *Service) CollectSnapshots(ctx context.Context) int {
 		}
 		wg.Go(func() {
 			defer func() { <-gate }()
-			if s.collect(pass, run) {
-				mu.Lock()
-				kept++
-				mu.Unlock()
-			}
+			// @decision(DL-135)
+			safego.Do("snapshot collection", s.deps.Warn, func() {
+				if s.collect(pass, run) {
+					mu.Lock()
+					kept++
+					mu.Unlock()
+				}
+			})
 		})
 	}
 	wg.Wait()

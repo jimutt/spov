@@ -60,3 +60,20 @@ func TestExitStatusFollowsAnExitError(t *testing.T) {
 		}
 	}
 }
+
+// An error can quote what a sandbox wrote, so its text reaches the
+// terminal with the control characters made visible.
+//
+// @decision(DL-136)
+func TestExitStatusPrintsAnErrorWithItsControlCharactersShown(t *testing.T) {
+	for _, err := range []error{
+		errors.New("exec failed: \x1b[2Jstderr\r"),
+		&cli.ExitError{Code: 4, Err: errors.New("exec failed: \x1b[2Jstderr\r")},
+	} {
+		var errBuf bytes.Buffer
+		exitStatus(err, &errBuf)
+		if got := errBuf.String(); strings.ContainsAny(strings.TrimSuffix(got, "\n"), "\x1b\r") || !strings.Contains(got, `\x1b[2J`) {
+			t.Errorf("%v: stderr = %q", err, got)
+		}
+	}
+}

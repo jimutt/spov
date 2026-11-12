@@ -124,6 +124,12 @@ describe("a row", () => {
         }),
       ),
     ).toEqual({ kind: "note", text: "1 pull request, partly done", tone: "soft" });
+    // A verified one the server sent without an address (it keeps only
+    // http and https ones on the forge's own host) is counted, not linked.
+    // @decision(DL-135)
+    expect(
+      outcomeOf(job({ kind: "pr", state: "succeeded", deliverables: [pr("verified")] })),
+    ).toEqual({ kind: "note", text: "1 pull request", tone: "soft" });
     // A report is counted, and never linked, whatever its fields say.
     expect(
       outcomeOf(

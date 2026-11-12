@@ -130,8 +130,13 @@ func (s *Server) registerAllowlist() {
 
 	register(s.api, huma.Operation{
 		OperationID: "delete-allowlist-entry", Method: http.MethodDelete, Path: "/api/v1/allowlist/{email}",
-		Summary: "Stop an address logging in, and end its sessions", Tags: []string{"admin"},
-		Errors: []int{http.StatusNotFound, http.StatusUnprocessableEntity},
+		Summary: "Stop an address logging in, and end what it has running and stored",
+		Description: "Removes the entry, ends the person's browser sessions, cancels their unfinished jobs," +
+			" stops their live sessions (a held sync job's included), revokes their CLI tokens and deletes" +
+			" their stored credentials, then writes an audit row. Their history is kept. Deleting an" +
+			" address that is no longer on the allowlist, but has signed in, runs those steps again.",
+		Tags:   []string{"admin"},
+		Errors: []int{http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusInternalServerError},
 	}, func(ctx context.Context, in *deleteAllowlistInput) (*struct{}, error) {
 		p := principal(ctx)
 		if err := s.requireAllowlist(p); err != nil {
@@ -141,6 +146,7 @@ func (s *Server) registerAllowlist() {
 		if err != nil {
 			return nil, huma.Error422UnprocessableEntity(err.Error())
 		}
+		var user *store.User
 		err = s.deps.Store.Tx(ctx, func(tx store.Store) error {
 			al := tx.Allowlist()
 			// Count before reading the entry: CountAdmins takes the org's
@@ -156,13 +162,31 @@ func (s *Server) registerAllowlist() {
 				return err
 			}
 			cur, err := al.Get(ctx, p.OrgID, email)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+			// A person who never signed in has no user row, and so
+			// nothing to end.
+			//
+			// @decision(DL-132)
+			u, uerr := tx.Users().ByEmail(ctx, p.OrgID, email)
+			switch {
+			case uerr == nil:
+				user = &u
+			case !errors.Is(uerr, store.ErrNotFound):
+				return uerr
+			}
 			if errors.Is(err, store.ErrNotFound) {
+				// Already removed: a person who signed in is off-boarded
+				// again, which is how a partial removal is retried.
+				//
+				// @decision(DL-132)
+				if user != nil {
+					return nil
+				}
 				// Not "no such session", which is what the shared
 				// mapper says for a missing row.
 				return huma.Error404NotFound(email + " is not on the allowlist")
-			}
-			if err != nil {
-				return err
 			}
 			if cur.Admin {
 				if err := guardLastAdmin(p, email, admins, "remove yourself"); err != nil {
@@ -186,6 +210,15 @@ func (s *Server) registerAllowlist() {
 				// session that outlived it is inert within one refresh
 				// interval, so this is a warning, not a failed delete.
 				s.deps.Warn("allowlist: revoking sessions for " + email + ": " + err.Error())
+			}
+		}
+		// After the commit, so the person is locked out before anything
+		// of theirs is ended. Each step runs even when one fails.
+		//
+		// @decision(DL-132)
+		if user != nil {
+			if _, err := s.svc.Offboard(ctx, p, email, *user); err != nil {
+				return nil, huma.Error500InternalServerError(err.Error())
 			}
 		}
 		return nil, nil

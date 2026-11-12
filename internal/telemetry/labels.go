@@ -23,6 +23,23 @@ const (
 	QuotaImageBuilds QuotaLimit = "image_builds"
 )
 
+// RequestLimit is which of the server's request limits refused a
+// request.
+//
+// @decision(DL-133)
+type RequestLimit string
+
+const (
+	LimitSignInRate     RequestLimit = "sign_in_rate"
+	LimitSignInCap      RequestLimit = "sign_in_cap"
+	LimitDeviceCodeCap  RequestLimit = "device_code_cap"
+	LimitDevicePollRate RequestLimit = "device_poll_rate"
+	LimitRequests       RequestLimit = "requests"
+	LimitCreates        RequestLimit = "creates"
+	LimitStreams        RequestLimit = "streams"
+	LimitInFlight       RequestLimit = "in_flight"
+)
+
 // EndedBy is what ended a job's run.
 type EndedBy string
 
@@ -88,6 +105,7 @@ const (
 
 var (
 	quotaLimits      = names(QuotaSessions, QuotaJobs, QuotaSize, QuotaDuration, QuotaImageBuilds)
+	requestLimits    = names(LimitSignInRate, LimitSignInCap, LimitDeviceCodeCap, LimitDevicePollRate, LimitRequests, LimitCreates, LimitStreams, LimitInFlight)
 	jobKinds         = []string{string(store.JobKindPR), string(store.JobKindReport), string(store.JobKindSync)}
 	jobOutcomes      = []string{string(store.JobSucceeded), string(store.JobFailed), string(store.JobCancelled)}
 	endedBys         = names(EndedDeclared, EndedWallClock, EndedStopped, EndedDenied, EndedNoCompletionTool, EndedContinueFailed, EndedTurnFailed, EndedAbandoned, EndedCancelled, EndedLaunchFailed)

@@ -97,10 +97,15 @@ func TestEveryReportAndItsImagesAreCollected(t *testing.T) {
 		"findings.md": []byte("intro\n# Findings\n\n![chart](images/chart.png)\n![x](images/x.svg)\n" +
 			"![fake](images/fake.png)\n![up](../secret.png)\n![remote](https://example.com/a.png)\n" +
 			"![gone](images/gone.png)\n![ref][r]\n\n[r]: <images/ref%20one.png>\n"),
-		"b-report.md":         []byte("no heading here"),
-		".hidden.md":          []byte("# hidden"),
-		"notes.txt":           []byte("not a report"),
-		"sub/nested.md":       []byte("# nested"),
+		"b-report.md":   []byte("no heading here"),
+		".hidden.md":    []byte("# hidden"),
+		"notes.txt":     []byte("not a report"),
+		"sub/nested.md": []byte("# nested"),
+		// Names an extractor could read as a path or as another file.
+		"..\\..\\x.md":        []byte("# backslashes"),
+		"c:evil.md":           []byte("# drive"),
+		"ctl\x07\x1b[2J.md":   []byte("# control"),
+		"bad\xffname.md":      []byte("# not utf-8"),
 		"images/chart.png":    pngBytes,
 		"images/x.svg":        svgBytes,
 		"images/fake.png":     htmlAsPNG,

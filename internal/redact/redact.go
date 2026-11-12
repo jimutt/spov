@@ -27,6 +27,12 @@ var secretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\b(ak|as)-[A-Za-z0-9]{8,}\b`),
 	regexp.MustCompile(`\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b`),
 	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}\b`),
+	// GitLab's token prefixes: personal, deploy, runner, CI build, pipeline
+	// trigger, OAuth application secret, feed, incoming mail, agent,
+	// SCIM, feature flags client and webhook.
+	//
+	// @decision(DL-135)
+	regexp.MustCompile(`\bgl(?:pat|dt|rt|rtr|cbt|ptt|oas|ft|imt|agent|soat|ffct|wt)-[A-Za-z0-9_.-]{8,}`),
 	regexp.MustCompile(`(?i)(?:password|passwd|secret|token|api[_-]?key)["']?\s*[:=]\s*["']?[^\s"',;}]+`),
 	regexp.MustCompile(`\b[A-Za-z0-9_-]{40,}\b`),
 }

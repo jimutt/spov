@@ -307,6 +307,12 @@ type Handle interface {
 	//
 	// @decision(DL-021)
 	ExecInput(ctx context.Context, command []string, stdin []byte) (ExecResult, error)
+	// ExecBounded is ExecInput reading at most maxOutput bytes of each
+	// output stream; over it the answer is ErrOutputTooLarge. Exec and
+	// ExecInput read MaxExecOutput.
+	//
+	// @decision(DL-130)
+	ExecBounded(ctx context.Context, command []string, stdin []byte, maxOutput int) (ExecResult, error)
 	// SidecarExecInput is ExecInput in the named sidecar. A sandbox
 	// without that sidecar answers ErrNoSidecar.
 	//

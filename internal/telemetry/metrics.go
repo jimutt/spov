@@ -27,9 +27,11 @@ import (
 //
 // @decision(DL-011)
 type Metrics struct {
-	apiRequests      metric.Int64Counter
-	apiDuration      metric.Float64Histogram
-	quotaRefusals    metric.Int64Counter
+	apiRequests   metric.Int64Counter
+	apiDuration   metric.Float64Histogram
+	quotaRefusals metric.Int64Counter
+	// @decision(DL-133)
+	limited          metric.Int64Counter
 	jobEndings       metric.Int64Counter
 	jobQueueDelay    metric.Float64Histogram
 	jobClockUsed     metric.Float64Histogram
@@ -97,6 +99,7 @@ func NewMetrics(meter metric.Meter, version string) (*Metrics, error) {
 	m.apiRequests = b.counter("spov_api_requests", "{request}", "API requests served, by operation and status class")
 	m.apiDuration = b.histogram("spov_api_request_duration", "API request duration, by operation", requestBuckets)
 	m.quotaRefusals = b.counter("spov_quota_refusals", "{refusal}", "Requests refused by the caller's own limits")
+	m.limited = b.counter("spov_requests_limited", "{request}", "Requests refused by the server's rate limits and caps, by limit")
 	m.jobEndings = b.counter("spov_job_endings", "{job}", "Jobs that reached a terminal state, by kind, outcome and what ended them")
 	m.jobQueueDelay = b.histogram("spov_job_queue_delay", "Time from a job's creation to its provisioning", waitBuckets)
 	m.jobClockUsed = b.histogram("spov_job_clock_used", "Wall clock a job used, recorded at its ending", clockBuckets)
@@ -229,6 +232,17 @@ func (m *Metrics) QuotaRefused(ctx context.Context, limit QuotaLimit) {
 		return
 	}
 	m.quotaRefusals.Add(ctx, 1, metric.WithAttributes(attribute.String("limit", oneOf(string(limit), quotaLimits))))
+}
+
+// RequestLimited records a request one of the server's request limits
+// refused.
+//
+// @decision(DL-133)
+func (m *Metrics) RequestLimited(ctx context.Context, limit RequestLimit) {
+	if m == nil {
+		return
+	}
+	m.limited.Add(ctx, 1, metric.WithAttributes(attribute.String("limit", oneOf(string(limit), requestLimits))))
 }
 
 // JobEnded records a job's terminal state, once, where the store took

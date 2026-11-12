@@ -20,6 +20,7 @@ import (
 	"github.com/jimutt/spov/internal/jobs"
 	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/server"
 	"github.com/jimutt/spov/internal/session"
@@ -324,6 +325,12 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 		if token == "" {
 			return fmt.Errorf("%s is not set; clients authenticate with it, so the server refuses to start without one", ServerTokenEnvVar)
 		}
+		// It is a standing administrator's credential.
+		//
+		// @decision(DL-135)
+		if err := checkServerToken(token); err != nil {
+			return err
+		}
 		if listen == "" {
 			// Loopback unless told otherwise: a container must set
 			// SPOV_LISTEN=:8080 to be reachable from outside its
@@ -464,6 +471,8 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 	//
 	// @decision(DL-017)
 	rec := server.NewRecorder(srv.Service(), deps.Store, env.now, deps.Warn)
+	// @decision(DL-131)
+	rec.SetSessionBytes(int64(cfg.History.MaxSessionMiB) << 20)
 	srv.Service().OnStop = rec.Final
 	// And the other end: a launch tells the recorder to attach at once,
 	// rather than leaving a short interactive session to finish inside
@@ -497,7 +506,11 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 		defer close(reconDone)
 		runReconciler(ctx, func(ctx context.Context) {
 			var wg sync.WaitGroup
-			wg.Go(func() { recon.Run(ctx) })
+			// Each loop recovers a panic and starts again.
+			//
+			// @decision(DL-135)
+			loop := func(name string, fn func()) { wg.Go(func() { safego.Loop(ctx, name, deps.Warn, fn) }) }
+			loop("reconciler", func() { recon.Run(ctx) })
 			// The sweep re-queues unfinished jobs nothing is working,
 			// and runs where the reconciler runs for the same reason:
 			// N replicas each re-queueing every job on every tick is
@@ -505,32 +518,32 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 			//
 			// @decision(DL-045) @decision(DL-004)
 			if deps.Jobs != nil {
-				wg.Go(func() { deps.Jobs.RunSweep(ctx) })
+				loop("job sweep", func() { deps.Jobs.RunSweep(ctx) })
 			}
 			// Re-minting writes into sandboxes, so it runs on one
 			// replica too.
 			//
 			// @decision(DL-021)
-			wg.Go(func() { srv.Service().RunRenewals(ctx) })
+			loop("token renewals", func() { srv.Service().RunRenewals(ctx) })
 			// Recreating a sidecar writes into a sandbox too.
 			//
 			// @decision(DL-034)
-			wg.Go(func() { srv.Service().RunSidecarChecks(ctx) })
+			loop("sidecar checks", func() { srv.Service().RunSidecarChecks(ctx) })
 			// Deleting images is a deployment-wide write, so it runs on
 			// one replica too; a local server prunes at start-up.
 			//
 			// @decision(DL-016)
-			wg.Go(func() { srv.Service().RunImagePrune(ctx) })
+			loop("image prune", func() { srv.Service().RunImagePrune(ctx) })
 			// Collecting and pruning exit snapshots, the same way.
 			//
 			// @decision(DL-085) @decision(DL-086)
-			wg.Go(func() { srv.Service().RunSnapshots(ctx) })
+			loop("snapshots", func() { srv.Service().RunSnapshots(ctx) })
 			// Shared state is reported only while this replica holds
 			// the lock, and withdrawn when it stops holding it.
 			//
 			// @decision(DL-011)
-			wg.Go(func() { srv.Service().RunMetricsSnapshot(ctx) })
-			rec.Run(ctx)
+			loop("metrics snapshot", func() { srv.Service().RunMetricsSnapshot(ctx) })
+			safego.Loop(ctx, "recorder", deps.Warn, func() { rec.Run(ctx) })
 			wg.Wait()
 		})
 	}()
@@ -563,7 +576,7 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 	//
 	// @decision(DL-034)
 	if bake := proxyImageFor(provider, proxyBinary); bake != nil {
-		go func() {
+		go safego.Do("proxy image bake", deps.Warn, func() {
 			bctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer cancel()
 			name, err := bake(bctx)
@@ -572,7 +585,7 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 				return
 			}
 			_, _ = fmt.Fprintf(env.Err, "spov serve: credential proxy image %s is ready\n", name)
-		}()
+		})
 	}
 
 	if opts.Local {
@@ -589,7 +602,7 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 		if idleAfter == 0 {
 			idleAfter = IdleExit
 		}
-		go idle.watch(ctx, cancel, deps.Store, idleAfter)
+		go safego.Loop(ctx, "idle exit", deps.Warn, func() { idle.watch(ctx, cancel, deps.Store, idleAfter) })
 	}
 
 	select {
@@ -721,7 +734,15 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 		closeStore()
 		return server.Deps{}, nil, err
 	}
+	// @decision(DL-133)
+	trusted, err := config.TrustedProxyPrefixes(cfg.Server.TrustedProxies)
+	if err != nil {
+		closeStore()
+		return server.Deps{}, nil, err
+	}
 	return server.Deps{
+		// @decision(DL-133)
+		TrustedProxies: trusted,
 		// @decision(DL-084) @decision(DL-086)
 		Snapshots: snapshots,
 		// @decision(DL-087) @decision(DL-091)
@@ -1090,7 +1111,7 @@ func (e *Env) wireLogin(ctx context.Context, deps *server.Deps) (func(), error) 
 		// Every replica re-reads the allowlist on its own timer.
 		//
 		// @decision(DL-007)
-		go login.Allowlist.Run(ctx)
+		go safego.Loop(ctx, "allowlist refresh", deps.Warn, func() { login.Allowlist.Run(ctx) })
 
 		deps.Device = &server.Device{
 			Store:     deps.Store,
@@ -1100,11 +1121,11 @@ func (e *Env) wireLogin(ctx context.Context, deps *server.Deps) (func(), error) 
 			Warn:      deps.Warn,
 		}
 		// Expired device codes are reaped in the background.
-		go deps.Device.Sweep(ctx)
+		go safego.Loop(ctx, "device code sweep", deps.Warn, func() { deps.Device.Sweep(ctx) })
 	}
 	// Outside the branch above: a hosted server without login must still
 	// trap SIGHUP.
-	go watchAllowlist(ctx, login, deps.Warn)
+	go safego.Loop(ctx, "allowlist signal", deps.Warn, func() { watchAllowlist(ctx, login, deps.Warn) })
 	return stop, nil
 }
 
@@ -1179,4 +1200,22 @@ func (env *Env) wireJobs(deps server.Deps, srv *server.Server, rec *server.Recor
 	// @decision(DL-049)
 	deps.Jobs.EndRun = svc.EndJobRun
 	deps.Jobs.Now = env.now
+}
+
+// MinServerTokenLength is the shortest SPOV_SERVER_TOKEN a hosted server
+// starts with. `openssl rand -hex 32` makes 64.
+//
+// @decision(DL-135)
+const MinServerTokenLength = 32
+
+// checkServerToken refuses a shared bearer token too short to withstand
+// guessing, and says how to make a good one.
+//
+// @decision(DL-135)
+func checkServerToken(token string) error {
+	if len(token) >= MinServerTokenLength {
+		return nil
+	}
+	return fmt.Errorf("%s is %d characters; a hosted server needs at least %d. Generate one with: openssl rand -hex 32",
+		ServerTokenEnvVar, len(token), MinServerTokenLength)
 }

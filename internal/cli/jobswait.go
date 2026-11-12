@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -157,9 +156,7 @@ func printJob(env *Env, v server.JobView, asJSON, compact bool) error {
 
 // writeJSONLine prints v as one line.
 func writeJSONLine(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	return enc.Encode(v)
+	return encodeJSON(w, v, "")
 }
 
 // outcomeCode is the exit status for a terminal job: nil for a success.
@@ -219,8 +216,8 @@ func waitForJob(ctx context.Context, env *Env, c *client.Client, id string, time
 			}
 			failures++
 			delay := min(poll<<(failures-1), maxRetryDelay)
-			_, _ = fmt.Fprintf(env.Err, "  job %s: could not read it (%v); retrying in %s (%d of %d)\n",
-				id, err, delay, failures, waitRetries)
+			_, _ = fmt.Fprintf(env.Err, "  job %s: could not read it (%s); retrying in %s (%d of %d)\n",
+				id, printableLine(err.Error()), delay, failures, waitRetries)
 			select {
 			case <-wctx.Done():
 				return view, ended()
@@ -271,6 +268,21 @@ func (e *Env) stderrIsTerminal() bool {
 	if e.StderrIsTerminal != nil {
 		return e.StderrIsTerminal()
 	}
-	f, ok := e.Err.(interface{ Fd() uintptr })
+	return writerIsTerminal(e.Err)
+}
+
+// stdoutIsTerminal says whether stdout is a person's terminal, where a
+// report's control characters would act, and not a pipe or a file.
+//
+// @decision(DL-136)
+func (e *Env) stdoutIsTerminal() bool {
+	if e.StdoutIsTerminal != nil {
+		return e.StdoutIsTerminal()
+	}
+	return writerIsTerminal(e.Out)
+}
+
+func writerIsTerminal(w io.Writer) bool {
+	f, ok := w.(interface{ Fd() uintptr })
 	return ok && term.IsTerminal(int(f.Fd()))
 }
