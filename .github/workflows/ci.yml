@@ -321,7 +321,7 @@ jobs:
           # sets it. Printed rather than only tested, so a change in the
           # SDK's behaviour is visible instead of just red.
           set +e
-          out=$(env -u HOME SPOV_SERVER_TOKEN=probe /tmp/spov serve --listen 127.0.0.1:0 2>&1)
+          out=$(env -u HOME SPOV_SERVER_TOKEN=0123456789abcdef0123456789abcdef /tmp/spov serve --listen 127.0.0.1:0 2>&1)
           set -e
           echo "without HOME, spov serve said:"
           echo "$out"

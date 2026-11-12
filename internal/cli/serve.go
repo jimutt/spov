@@ -324,6 +324,12 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 		if token == "" {
 			return fmt.Errorf("%s is not set; clients authenticate with it, so the server refuses to start without one", ServerTokenEnvVar)
 		}
+		// It is a standing administrator's credential.
+		//
+		// @decision(DL-135)
+		if err := checkServerToken(token); err != nil {
+			return err
+		}
 		if listen == "" {
 			// Loopback unless told otherwise: a container must set
 			// SPOV_LISTEN=:8080 to be reachable from outside its
@@ -1175,4 +1181,22 @@ func (env *Env) wireJobs(deps server.Deps, srv *server.Server, rec *server.Recor
 	// @decision(DL-049)
 	deps.Jobs.EndRun = svc.EndJobRun
 	deps.Jobs.Now = env.now
+}
+
+// MinServerTokenLength is the shortest SPOV_SERVER_TOKEN a hosted server
+// starts with. `openssl rand -hex 32` makes 64.
+//
+// @decision(DL-135)
+const MinServerTokenLength = 32
+
+// checkServerToken refuses a shared bearer token too short to withstand
+// guessing, and says how to make a good one.
+//
+// @decision(DL-135)
+func checkServerToken(token string) error {
+	if len(token) >= MinServerTokenLength {
+		return nil
+	}
+	return fmt.Errorf("%s is %d characters; a hosted server needs at least %d. Generate one with: openssl rand -hex 32",
+		ServerTokenEnvVar, len(token), MinServerTokenLength)
 }
