@@ -124,6 +124,7 @@ snapshots:                          # exit snapshots for resume; servers under t
 
 history:                            # a local server's session history, under $XDG_DATA_HOME/spov/sessions
   retention: 720h                   # kept this long after a session stopped; 0 keeps it forever
+  max_session_mib: 1024             # any server: one session's stored events and messages; past it its recording stops
 
 metrics:                            # see docs/metrics.md; OTLP is configured by OTEL_EXPORTER_OTLP_* instead
   prometheus_listen: 127.0.0.1:9464 # serves GET /metrics on its own listener, unauthenticated; empty serves none
@@ -191,7 +192,7 @@ full list, with what each one does, is in [`deploy/README.md`](../deploy/README.
 | Variable | Read by | Meaning |
 |---|---|---|
 | `SPOV_SERVER` | the CLI | The server's URL; `--server` wins over it, and it wins over `server.url`. |
-| `SPOV_SERVER_TOKEN` | the CLI, `spov serve` | The CLI sends it as its bearer token. A hosted server refuses to start without it. |
+| `SPOV_SERVER_TOKEN` | the CLI, `spov serve` | The CLI sends it as its bearer token. A hosted server refuses to start without it, or with one under 32 characters (`openssl rand -hex 32` makes a good one). |
 | `SPOV_DATABASE_URL` | `spov serve` | Postgres. Jobs and browser login need it. |
 | `SPOV_MIGRATE_ON_START` | `spov serve` | `1`, `true`, `yes` or `on` applies the migrations before listening. |
 | `SPOV_PUBLIC_URL` | `spov serve` | The externally visible origin, which the browser guard, cookies and login redirects use. |

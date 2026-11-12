@@ -1,10 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
+	"strings"
 	"testing"
+
+	"github.com/alexedwards/scs/v2"
+	"github.com/alexedwards/scs/v2/memstore"
+	"github.com/jimutt/spov/internal/auth"
 )
 
 // listWebSessions reads the caller's browser logins.
@@ -228,5 +234,50 @@ func TestTokenID(t *testing.T) {
 	}
 	if got := tokenID(""); got != "" {
 		t.Errorf("tokenID(empty) = %q", got)
+	}
+}
+
+// TestTheStoreNeverHoldsACookiesValue: the session store's key is a hash
+// of the token, storeKey agrees with scs on it, and revoking by the
+// listed handle still deletes the row.
+//
+// @decision(DL-007)
+func TestTheStoreNeverHoldsACookiesValue(t *testing.T) {
+	sessions := scs.New()
+	store := memstore.New()
+	sessions.Store = store
+	sessions.HashTokenInStore = true
+	l := &Login{Sessions: sessions}
+
+	ctx, err := sessions.Load(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions.Put(ctx, auth.SessionKeyUserID, "u1")
+	token, _, err := sessions.Commit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, found, _ := store.Find(token); found {
+		t.Fatal("the store holds the row under the cookie's value")
+	}
+	if _, found, _ := store.Find(l.storeKey(token)); !found {
+		t.Fatal("storeKey is not the key scs stored the session under")
+	}
+
+	found, err := l.sessionsOf(context.Background(), "u1")
+	if err != nil || len(found) != 1 {
+		t.Fatalf("sessionsOf = %v, %v", found, err)
+	}
+	if found[0].id != tokenID(l.storeKey(token)) || strings.HasPrefix(token, found[0].id) {
+		t.Errorf("handle %q is not a prefix of the store key alone", found[0].id)
+	}
+	ok, err := l.revoke(context.Background(), "u1", found[0].id)
+	if err != nil || !ok {
+		t.Fatalf("revoke = %v, %v", ok, err)
+	}
+	if _, found, _ := store.Find(l.storeKey(token)); found {
+		t.Error("a revoked session is still in the store")
 	}
 }

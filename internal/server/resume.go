@@ -15,6 +15,7 @@ import (
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/session"
 	"github.com/jimutt/spov/internal/store"
 	"github.com/jimutt/spov/internal/telemetry"
@@ -393,7 +394,8 @@ func (s *Service) startResume(ctx context.Context, sess store.Session, plan runP
 	s.logs[sess.ID] = log
 	s.launches[sess.ID] = cancel
 	s.mu.Unlock()
-	go func() {
+	// @decision(DL-135)
+	go safego.Do("resume of session "+sess.ID, s.deps.Warn, func() {
 		defer func() {
 			cancel()
 			s.mu.Lock()
@@ -412,7 +414,7 @@ func (s *Service) startResume(ctx context.Context, sess store.Session, plan runP
 				opts.Sync.Bundle = bundle
 			}
 		})
-	}()
+	})
 }
 
 // resumeLaunchTimeout is a resume's launch budget: a transcript resume

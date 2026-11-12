@@ -186,13 +186,25 @@ func plainNames(segs []string) bool {
 //
 // @decision(DL-034)
 func carriesQueryCredential(raw string) bool {
+	return carriesQueryNamed(raw, gitlabCredentialQuery)
+}
+
+// forgejoCredentialQuery are the query parameters Forgejo and Gitea read
+// a credential or an identity from: `sudo` acts as another user, and a
+// token there outranks the header the proxy sets.
+//
+// @decision(DL-135)
+var forgejoCredentialQuery = []string{"sudo", "token", "access_token"}
+
+// carriesQueryNamed is carriesQueryCredential for any list of names.
+func carriesQueryNamed(raw string, names []string) bool {
 	for _, pair := range strings.FieldsFunc(raw, func(r rune) bool { return r == '&' || r == ';' }) {
 		k, _, _ := strings.Cut(pair, "=")
 		if d, err := url.QueryUnescape(k); err == nil {
 			k = d
 		}
 		k = strings.ToLower(strings.TrimSpace(k))
-		for _, c := range gitlabCredentialQuery {
+		for _, c := range names {
 			if k == c || strings.HasPrefix(k, c+"[") {
 				return true
 			}

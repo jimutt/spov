@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"net/http"
 	"sort"
 	"time"
@@ -28,16 +30,44 @@ type webSessionsOutput struct {
 	}
 }
 
-// tokenID is the handle the API exposes for a session token: its first 12
-// characters, which identify a row but are useless as a credential because
-// scs looks up the whole token.
+// tokenID is the handle the API exposes for a browser login: the first 12
+// characters of its key in the session store, which identify a row and
+// are useless as a credential. It takes a store key, never a cookie's
+// value; see storeKey.
 //
-// @decision(DL-007)
-func tokenID(token string) string {
-	if len(token) <= 12 {
+// @decision(DL-007) @decision(DL-127)
+func tokenID(key string) string {
+	if len(key) <= 12 {
+		return key
+	}
+	return key[:12]
+}
+
+// storeKey is the key the session store holds for a cookie's token:
+// scs's own hash of it when the manager hashes tokens, which a hosted
+// server always does. Inside Iterate, Sessions.Token is already this key.
+//
+// @decision(DL-007) @decision(DL-127)
+func (l *Login) storeKey(token string) string {
+	if token == "" || !l.Sessions.HashTokenInStore {
 		return token
 	}
-	return token[:12]
+	sum := sha256.Sum256([]byte(token))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// destroyIterated deletes the session Iterate is on, by its store key.
+// Sessions.Destroy would hash that key a second time and delete nothing.
+//
+// @decision(DL-007) @decision(DL-127)
+func (l *Login) destroyIterated(ctx context.Context) error {
+	key := l.Sessions.Token(ctx)
+	if c, ok := l.Sessions.Store.(interface {
+		DeleteCtx(context.Context, string) error
+	}); ok {
+		return c.DeleteCtx(ctx, key)
+	}
+	return l.Sessions.Store.Delete(key)
 }
 
 // registerWebSessions serves a user's browser logins. It exists only in
@@ -54,7 +84,7 @@ func (s *Server) registerWebSessions() {
 		if err != nil {
 			return nil, toHumaError(err)
 		}
-		current := tokenID(s.deps.Login.Sessions.Token(ctx))
+		current := tokenID(s.deps.Login.storeKey(s.deps.Login.Sessions.Token(ctx)))
 		out := &webSessionsOutput{}
 		out.Body.Sessions = make([]WebSessionView, 0, len(found))
 		for _, f := range found {
@@ -135,7 +165,7 @@ func (l *Login) revoke(ctx context.Context, userID, id string) (bool, error) {
 			return nil
 		}
 		revoked = true
-		return l.Sessions.Destroy(ctx)
+		return l.destroyIterated(ctx)
 	})
 	if err != nil {
 		return false, err

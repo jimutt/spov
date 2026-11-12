@@ -2,10 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"net/http"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -786,9 +790,58 @@ func toHumaError(err error) error {
 		return e
 	case errors.Is(err, context.DeadlineExceeded):
 		return huma.Error504GatewayTimeout(redact.Error(err))
+	// An unexpected store error names the database's host, user and
+	// statement; the client gets a fixed answer and the log the detail.
+	//
+	// @decision(DL-135)
+	case unexpectedStoreError(err):
+		return internalProblem(err)
 	default:
 		return huma.Error502BadGateway(redact.Error(err))
 	}
+}
+
+// storeSentinels are the store's own deliberate errors, which a caller
+// may show.
+var storeSentinels = []error{
+	store.ErrNotFound, store.ErrConflict, store.ErrNestedTx, store.ErrInvalidEvent,
+	store.ErrInvalidTransition, store.ErrInvalidJob, store.ErrJournalLocked,
+}
+
+// unexpectedStoreError reports whether err is one a store raised that is
+// not one of its sentinels: every store error's text begins "store: ",
+// at any depth of the wrapping.
+//
+// @decision(DL-135)
+func unexpectedStoreError(err error) bool {
+	for _, s := range storeSentinels {
+		if errors.Is(err, s) {
+			return false
+		}
+	}
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if strings.HasPrefix(e.Error(), "store: ") {
+			return true
+		}
+	}
+	return false
+}
+
+// internalLog is where the detail of an internal error goes: the
+// process's standard logger, which `spov serve` points at stderr beside
+// its own warnings.
+var internalLog = log.New(os.Stderr, "spov serve: ", log.LstdFlags)
+
+// internalProblem answers 500 with a fixed message and a reference, and
+// logs the detail under that reference.
+//
+// @decision(DL-135)
+func internalProblem(err error) error {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	ref := hex.EncodeToString(b[:])
+	internalLog.Printf("internal error %s: %s", ref, redact.Error(err))
+	return huma.Error500InternalServerError("internal error (reference " + ref + "); the detail is in the server log")
 }
 
 func principal(ctx context.Context) auth.Principal {

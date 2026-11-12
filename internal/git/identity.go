@@ -61,8 +61,7 @@ const gitConfigUnset = 1
 //
 // @decision(DL-044)
 func gitConfigValue(ctx context.Context, dir, key string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "config", "--get", key)
-	cmd.Dir = dir
+	cmd := Command(ctx, dir, nil, "config", "--get", key)
 	out, err := cmd.Output()
 	if err == nil {
 		return strings.TrimSpace(string(out)), nil

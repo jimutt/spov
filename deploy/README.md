@@ -11,7 +11,7 @@ Recorded in [DL-010](../decisions/records/server/DL-010.md).
 |---|---|
 | `SPOV_PUBLIC_URL` | The externally visible origin. **Required behind a proxy**: the `Host` header names it rather than the listen address, and the browser guard runs before authentication — omit it and every request is refused with 403. It is also the OAuth redirect base and the cookie origin. |
 | `SPOV_DATABASE_URL` | Postgres. Environment-only; a database URL carries a password. Without it the server runs on an in-memory store that a restart empties, and jobs and browser login are unavailable. |
-| `SPOV_SERVER_TOKEN` | A single shared bearer token. The server refuses to start without one. Prefer per-user CLI tokens (`spov login`, below) for people; this one identifies nobody and cannot be revoked without restarting the server. |
+| `SPOV_SERVER_TOKEN` | A single shared bearer token. The server refuses to start without one, or with one under 32 characters (`openssl rand -hex 32`). Prefer per-user CLI tokens (`spov login`, below) for people; this one identifies nobody and cannot be revoked without restarting the server. |
 | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | The deployment's own Modal credential, minted separately rather than reused from a laptop. |
 | `MODAL_ENVIRONMENT` | The Modal environment sandboxes are created in. Use a dedicated one: DL-004's reaper terminates any `spov=1` sandbox past its deadline, and sharing an environment with your local work puts that work in range. |
 
@@ -200,7 +200,10 @@ Sessions are server-side rows (`web_sessions`), so revoking one is a
 delete: `GET /api/v1/me/sessions` lists a user's logins and
 `DELETE /api/v1/me/sessions/{id}` ends one. The cookie is
 `HttpOnly; SameSite=Lax; Path=/`, and `Secure` whenever `SPOV_PUBLIC_URL`
-is https — on a plain-http trial it is not, and the server warns.
+is https — on a plain-http trial it is not, and the server warns. A
+`Secure` cookie is named `__Host-spov_session`, so a browser refuses one set
+by a sibling subdomain; on plain http it is `spov_session`. A deployment that
+upgrades to this naming signs everyone in once more.
 
 `SPOV_MIGRATE_ON_START=true` applies migrations before listening. It is
 for compose and development. A real deployment migrates in a step that
