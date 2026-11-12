@@ -19,6 +19,10 @@ func TestRedactStripsCredentialShapes(t *testing.T) {
 		"authorization: Basic b3BlbmNvZGU6c2VjcmV0 rejected":                                    "b3Bl",
 		"modal: token ak-AbCdEfGh1234 / as-XyZ987654321 invalid":                                "ak-A",
 		"github_pat_11ABCDEFG0123456789abcdefghijk expired":                                     "github_pat_11",
+		"gitlab said glpat-xYz12_AbCdEfGh3456 is revoked":                                       "glpat-xYz",
+		"deploy gldt-AbCdEfGh1234 failed":                                                       "gldt-Ab",
+		"runner glrt-t1_AbCdEfGh1234 failed":                                                    "glrt-t1",
+		"build glcbt-64_AbCdEfGh1234 failed":                                                    "glcbt-64",
 		"opaque " + strings.Repeat("Q", 48) + " string":                                         strings.Repeat("Q", 48),
 	}
 	for in, secret := range cases {

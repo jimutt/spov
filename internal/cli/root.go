@@ -97,6 +97,12 @@ type Env struct {
 	//
 	// @decision(DL-103)
 	StderrIsTerminal func() bool
+	// StdoutIsTerminal overrides the check that decides whether a
+	// report is printed raw (to a pipe or a file) or with its control
+	// characters made visible (to a terminal); nil asks the terminal.
+	//
+	// @decision(DL-136)
+	StdoutIsTerminal func() bool
 	// ProcessAlive reports whether a pid is running. Nil means signal 0.
 	ProcessAlive func(pid int) bool
 	// StopProcess stops a server of another build. Nil means SIGTERM and

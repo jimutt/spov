@@ -12,6 +12,7 @@ import (
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -114,7 +115,10 @@ func (f pollFeed) Subscribe(ctx context.Context, p auth.Principal, limit int) (<
 	// races the consumer's own teardown, and an unbuffered channel would
 	// block a feed nobody is reading until its context is cancelled.
 	out := make(chan []store.Session, 1)
-	go func() {
+	// A panic in a feed closes its stream and is logged; the process goes on.
+	//
+	// @decision(DL-135)
+	go safego.Do("session feed", f.warn, func() {
 		defer close(out)
 		out <- first
 		prev := fingerprint(first) + f.mark(ctx, p, first)
@@ -148,7 +152,7 @@ func (f pollFeed) Subscribe(ctx context.Context, p auth.Principal, limit int) (<
 				return
 			}
 		}
-	}()
+	})
 	return out, nil
 }
 
@@ -246,8 +250,16 @@ type sseSender interface {
 func problemOf(err error) ProblemView {
 	status := http.StatusInternalServerError
 	var se huma.StatusError
-	if errors.As(toHumaError(err), &se) {
+	mapped := toHumaError(err)
+	if errors.As(mapped, &se) {
 		status = se.GetStatus()
+	}
+	// An unexpected store error is answered with the fixed message the
+	// API gives, never its text.
+	//
+	// @decision(DL-135)
+	if status == http.StatusInternalServerError && unexpectedStoreError(err) {
+		return ProblemView{Title: http.StatusText(status), Status: status, Detail: mapped.Error()}
 	}
 	return ProblemView{Title: http.StatusText(status), Status: status, Detail: redact.Error(err)}
 }
@@ -301,7 +313,8 @@ func (f pollEvents) Subscribe(ctx context.Context, orgID, sessionID string, afte
 		return nil, err
 	}
 	out := make(chan eventBatch, 1)
-	go func() {
+	// @decision(DL-135)
+	go safego.Do("session log feed", f.warn, func() {
 		defer close(out)
 		cursor, batch := after, first
 		for {
@@ -324,7 +337,7 @@ func (f pollEvents) Subscribe(ctx context.Context, orgID, sessionID string, afte
 				return
 			}
 		}
-	}()
+	})
 	return out, nil
 }
 

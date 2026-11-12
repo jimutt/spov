@@ -41,7 +41,8 @@ revokes the token.
 
 Running a server, with its database, browser login, allowlist, quotas,
 credentials, health checks and the published image, is covered in
-[`deploy/README.md`](../deploy/README.md).
+[`deploy/README.md`](../deploy/README.md). That page also covers the limits on
+image builds and the 60-second cache of the repository listing.
 
 ## The web dashboard
 
@@ -74,3 +75,42 @@ allowlist.
 
 The browser never talks to a sandbox directly. The page shows what the server
 has recorded, and an open tab does not keep a sandbox alive.
+
+## Limits
+
+The server limits how often and how much one client may ask of it, so that one
+user or one anonymous address cannot take it down. The limits are fixed; only
+`server.trusted_proxies` is a setting. A refused request is a 429 with a
+`Retry-After` header (in seconds) and a message saying which limit refused it,
+which the CLI prints and the dashboard shows.
+
+| Limit | Value | Refused with |
+|---|---|---|
+| Sign-ins started from one address (`GET /login` and `POST /device/code` together) | 30 a minute | 429 |
+| CLI polls for a sign-in token from one address (`POST /device/token`) | 120 a minute | 429 `slow_down`, which makes the CLI poll less often |
+| Browser sign-ins in progress on one replica | 10,000 started within 15 minutes | 503 with `Retry-After` |
+| CLI sign-ins (device codes) in progress on one replica | 10,000 started within 10 minutes | 503 with `Retry-After` |
+| API requests (`/api/v1/*`) per user | 600 a minute, after a burst of 100 | 429 |
+| Session creates, job creates and session resumes per user | 20 a minute | 429 |
+| Open live views (event streams) per user | 20 | 429 on the next |
+| Requests in progress per user, streams not counted | 32 | 429 |
+| Request body | 1 MiB; 24 MiB on session create, job create and resume, which carry a sync bundle | 413 |
+| Time to send a request body | 30 s; 5 minutes on those three routes | the request fails (408 on the API) |
+| Time to send the headers | 10 s | the connection is closed |
+| An idle keep-alive connection | closed after 2 minutes | |
+
+A user is the account a credential belongs to; the shared `SPOV_SERVER_TOKEN`
+is one user. `/livez`, `/readyz`, `/startupz`, `/opencode-pin.json`, the web
+app's own files and the Prometheus listener are not limited. A live view
+reopens every five minutes and has no time limit across reopens.
+
+Every limit is kept in memory by each replica, so N replicas allow N times as
+much, and a restart starts each count again. The two sign-in caps bound how
+many sign-in rows one replica can create while the rows live.
+
+**Behind a reverse proxy every client shares the proxy's address** for the
+per-address limits, until `server.trusted_proxies` names the proxy
+([configuration](configuration.md#behind-a-reverse-proxy-servertrusted_proxies)).
+Until then the server logs one warning the first time a request arrives with an
+`X-Forwarded-For` header it ignores. Refusals are counted in
+`spov_requests_limited_total` ([metrics](metrics.md)).

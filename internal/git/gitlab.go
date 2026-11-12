@@ -319,7 +319,7 @@ func (g *GitLab) FindPullRequest(ctx context.Context, repo RepoRef, branch strin
 			if mr.SourceBranch != branch || mr.SourceProjectID != mr.TargetProjectID {
 				continue
 			}
-			best = bestPullRequest(best, PullRequest{Number: mr.IID, URL: mr.WebURL, Title: mr.Title, State: mr.State,
+			best = bestPullRequest(best, PullRequest{Number: mr.IID, URL: OwnURL(mr.WebURL, g.baseURL), Title: mr.Title, State: mr.State,
 				Open: mr.State == "opened", Merged: mr.State == "merged", Created: mr.CreatedAt})
 			if best.Open {
 				return best, nil

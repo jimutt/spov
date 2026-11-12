@@ -122,7 +122,7 @@ func newRegistryFixture(t *testing.T, onDemand bool, modal *imageFake) *registry
 	rf := &registryFixture{images: store.NewMemoryImages(), modal: modal, now: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)}
 	var mu sync.Mutex
 	var launched []session.Options
-	variants := &session.VariantBuilder{Builder: modal}
+	variants := &session.VariantBuilder{Builder: modal, PerOwnerLimits: true}
 	rf.apiFixture = newAPIFixtureWith(t, func(d *Deps) {
 		d.Defaults.Image = sandbox.ImageSpec{OpenCodeVersion: variantPin}.Name()
 		d.Defaults.OpenCodeVersion = variantPin

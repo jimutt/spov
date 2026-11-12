@@ -32,7 +32,10 @@ export interface paths {
         /** Allow an address to log in, or change its admin rights */
         put: operations["put-allowlist-entry"];
         post?: never;
-        /** Stop an address logging in, and end its sessions */
+        /**
+         * Stop an address logging in, and end what it has running and stored
+         * @description Removes the entry, ends the person's browser sessions, cancels their unfinished jobs, stops their live sessions (a held sync job's included), revokes their CLI tokens and deletes their stored credentials, then writes an audit row. Their history is kept. Deleting an address that is no longer on the allowlist, but has signed in, runs those steps again.
+         */
         delete: operations["delete-allowlist-entry"];
         options?: never;
         head?: never;

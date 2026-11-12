@@ -79,7 +79,7 @@ func (e *Env) wireCredentials(deps *server.Deps, cfg config.Config, localMode bo
 	}
 	deps.UserForge = hosted.forgeFor
 	// @decision(DL-042)
-	deps.UserRepos = hosted.reposByTier
+	deps.UserRepos = hosted.reposOfTier
 	deps.UserProviderKeys = hosted.providerKeysFor
 	// @decision(DL-042)
 	deps.OrgGitHub = orgGitHub{h: hosted}

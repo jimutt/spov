@@ -86,8 +86,9 @@ func TestUnknownLabelValuesBecomeOther(t *testing.T) {
 	m.JobEnded(ctx, store.JobKind("job_01ABC"), store.JobState("weird"), EndedBy("acme/app"), 0)
 	m.JobGate(ctx, "gate-from-a-sandbox", "maybe")
 	m.QuotaRefused(ctx, QuotaLimit("user@example.com"))
+	m.RequestLimited(ctx, RequestLimit("203.0.113.7"))
 	m.SessionLaunched(ctx, SessionKind("x"), false, LaunchStep("https://example.com/step"), time.Second)
-	for _, name := range []string{"spov_job_endings", "spov_job_gates", "spov_quota_refusals", "spov_session_launches"} {
+	for _, name := range []string{"spov_job_endings", "spov_job_gates", "spov_quota_refusals", "spov_requests_limited", "spov_session_launches"} {
 		sets := attributesOf(t, r, name)
 		if len(sets) == 0 {
 			t.Fatalf("%s recorded nothing", name)

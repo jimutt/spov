@@ -33,7 +33,7 @@ func TestFakeConcurrentUse(t *testing.T) {
 			if _, err := f.List(context.Background(), OwnedTags()); err != nil {
 				t.Error(err)
 			}
-			if _, err := h.Exec(context.Background(), []string{"echo", "x"}); err != nil {
+			if _, err := h.Exec(execCtx(t), []string{"echo", "x"}); err != nil {
 				t.Error(err)
 			}
 			_ = f.Running()

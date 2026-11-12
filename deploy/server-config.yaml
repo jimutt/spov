@@ -24,3 +24,8 @@ platforms:
 # Keep sandboxes near the deployment; broad (us, eu, ap) or narrow (eu-west, ...).
 # sandbox:
 #   regions: [eu]
+
+# Behind a reverse proxy: the proxy's address or range, so the per-address
+# sign-in limits count each client rather than the proxy (docs/server.md#limits).
+# server:
+#   trusted_proxies: [10.0.0.0/8]

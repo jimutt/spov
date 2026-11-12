@@ -17,6 +17,7 @@ import (
 	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
 	"github.com/jimutt/spov/internal/routedcred"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/session"
 	"github.com/jimutt/spov/internal/store"
@@ -46,6 +47,10 @@ type Service struct {
 	//
 	// @decision(DL-016)
 	imageUses map[string]time.Time
+	// repos keeps each user's repository listings for RepoListTTL.
+	//
+	// @decision(DL-134)
+	repos *repoCache
 	// renewals is each session's re-mint state: when one was last tried,
 	// and the re-minted tokens that may still be in its sandbox. Lazily
 	// made; lost on restart, when the tokens expire on their own.
@@ -118,6 +123,7 @@ func newService(deps Deps) *Service {
 	return &Service{deps: deps, live: map[string]*session.Session{}, logs: map[string]*launchLog{},
 		launches: map[string]context.CancelFunc{}, deleted: map[string]bool{},
 		imageUses: map[string]time.Time{},
+		repos:     newRepoCache(deps.Now),
 		passwords: newPasswordCache(DefaultPasswordCacheSize),
 		conns:     newConnCache(DefaultConnectionCacheSize),
 		messages:  newMessageLimiter(MessagesPerMinute)}
@@ -177,6 +183,10 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 		s.deps.Metrics.QuotaRefused(ctx, telemetry.QuotaSize)
 		return store.Session{}, err
 	}
+	// @decision(DL-134)
+	if err := s.refuseBuildOverLimit(ctx, p.UserID, req); err != nil {
+		return store.Session{}, err
+	}
 	now := s.deps.Now()
 	sess := store.Session{
 		ID:      store.NewID(now),
@@ -212,7 +222,11 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	s.launches[sess.ID] = cancel
 	s.mu.Unlock()
 
-	go func() {
+	// A panic in a launch is logged and survived: the session stays as
+	// the reconciler's recovery finds it.
+	//
+	// @decision(DL-135)
+	go safego.Do("launch of session "+sess.ID, s.deps.Warn, func() {
 		defer func() {
 			cancel()
 			s.mu.Lock()
@@ -220,7 +234,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 			s.mu.Unlock()
 		}()
 		s.launch(launchCtx, sess, log, telemetry.KindInteractive, runPlan{})
-	}()
+	})
 	return sess, nil
 }
 
@@ -659,7 +673,7 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	}
 	pick := variantPick{image: sess.Request.Image, addons: addons}
 	if spec, ok := s.variantOf(sess.Request); ok {
-		pick = s.pickVariant(ctx, spec, log.Note)
+		pick = s.pickVariant(ctx, attributionUser(sess.OwnerID), spec, log.Note)
 		// Its name still resolves, so the launch would only meet Modal's
 		// NotFound.
 		//

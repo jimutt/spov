@@ -1211,6 +1211,75 @@ func TestALongRunKeepsTheEndWhereTheEvidenceIs(t *testing.T) {
 	}
 }
 
+// The verdict holds a bounded size of a run's events as well as a
+// bounded count, and still keeps the end, where the evidence is.
+//
+// @decision(DL-131)
+func TestTheVerdictHoldsABoundedSizeOfARun(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	job := jobstest.SeedJob(t, st, store.JobDelivering)
+	job.CheckCommand = "./scripts/check.sh"
+	if err := st.Jobs().Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	conv, err := st.Conversations().UpsertConversation(ctx, store.Conversation{
+		ID: store.NewID(time.Now()), OrgID: job.OrgID, SessionID: job.SessionID, OpenCodeID: "ses_fat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Far fewer events than the count bound, each a kilobyte.
+	pad := []byte(`{"pad":"` + strings.Repeat("x", 1000) + `"}`)
+	for i := range 40 {
+		if _, err := st.Conversations().PutEvents(ctx, []store.Event{{
+			ID: store.NewID(time.Now()), OrgID: job.OrgID, SessionID: job.SessionID,
+			ConversationID: conv.ID, Source: store.SourceOpenCode,
+			Seq: int64(i + 1), Name: "session.next.tool", At: time.Now(), Raw: pad,
+		}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.Conversations().PutEvents(ctx, []store.Event{{
+		ID: store.NewID(time.Now()), OrgID: job.OrgID, SessionID: job.SessionID,
+		Source: store.SourceSpov, Name: MarkerEvidence, At: time.Now(),
+		Text: checkLine(map[string]any{"exit": 0}),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	const bound = 8 << 10
+	sup := &Supervisor{Store: st, Warn: func(string) {}, MaxVerdictBytes: bound}
+	evs, err := sup.jobEvents(ctx, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held int64
+	for _, e := range evs {
+		held += eventBytes(e)
+	}
+	if held > bound || len(evs) == 0 || len(evs) >= 41 {
+		t.Errorf("the verdict holds %d events of %d bytes against a bound of %d", len(evs), held, bound)
+	}
+	if last := evs[len(evs)-1]; last.Name != MarkerEvidence {
+		t.Errorf("the last event held is %s, want the evidence marker", last.Name)
+	}
+	v, err := sup.Judge(ctx, job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gateNamed(v, GateMechanical); got.Outcome != GatePassed {
+		t.Errorf("gate 1 = %s (%s), want passed", got.Outcome, got.Detail)
+	}
+
+	// One event larger than the whole bound is still held: the newest
+	// is never dropped.
+	sup.MaxVerdictBytes = 16
+	if evs, err := sup.jobEvents(ctx, job); err != nil || len(evs) != 1 || evs[0].Name != MarkerEvidence {
+		t.Errorf("under a bound smaller than one event: %d events, %v", len(evs), err)
+	}
+}
+
 // A succeeded job carries no Error, including the GapNote a follow pass
 // stamped while it ran.
 //

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
@@ -23,10 +25,45 @@ func jsonFlag(cmd *cobra.Command, on *bool) {
 
 // writeJSON prints v indented, with <, > and & as written.
 func writeJSON(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
+	return encodeJSON(w, v, "  ")
+}
+
+// encodeJSON writes v as JSON with the characters encoding/json leaves
+// raw but a terminal acts on (C1 controls, bidirectional overrides)
+// written as \u escapes, so a pipe to a terminal is as safe as a read
+// with jq. Control characters below U+0020 are escaped by the encoder.
+//
+// @decision(DL-136)
+func encodeJSON(w io.Writer, v any, indent string) error {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	if indent != "" {
+		enc.SetIndent("", indent)
+	}
 	enc.SetEscapeHTML(false)
-	return enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		return err
+	}
+	_, err := w.Write(escapeJSONText(buf.Bytes()))
+	return err
+}
+
+// escapeJSONText rewrites every raw C1 control, bidirectional control
+// and DEL in an encoded document as a \u escape. They occur only inside
+// strings, where the escape means the same character.
+func escapeJSONText(b []byte) []byte {
+	if !bytes.ContainsFunc(b, func(r rune) bool { return r == 0x7f || (r >= 0x80 && r <= 0x9f) || isFormatSpoof(r) }) {
+		return b
+	}
+	var out bytes.Buffer
+	for _, r := range string(b) {
+		if r == 0x7f || (r >= 0x80 && r <= 0x9f) || isFormatSpoof(r) {
+			fmt.Fprintf(&out, "\\u%04x", r)
+			continue
+		}
+		out.WriteRune(r)
+	}
+	return out.Bytes()
 }
 
 // The listings' bodies as the API sends them, so a script reads the

@@ -228,7 +228,7 @@ func TestFakeExec(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := h.Exec(context.Background(), []string{"echo", "hi"})
+	res, err := h.Exec(execCtx(t), []string{"echo", "hi"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestFakeExec(t *testing.T) {
 		t.Errorf("stdout = %q", res.Stdout)
 	}
 
-	if _, err := h.Exec(context.Background(), []string{"unmatched"}); err != nil {
+	if _, err := h.Exec(execCtx(t), []string{"unmatched"}); err != nil {
 		t.Fatalf("an unmatched command should return a zero result, not an error: %v", err)
 	}
 	if got := h.(*FakeHandle).ExecLog(); len(got) != 2 {
@@ -326,7 +326,7 @@ func TestFakeRejectsUseAfterDetach(t *testing.T) {
 			if _, err := h.Tunnels(context.Background()); err == nil {
 				t.Error("Tunnels succeeded on an unusable handle")
 			}
-			if _, err := h.Exec(context.Background(), []string{"echo"}); err == nil {
+			if _, err := h.Exec(execCtx(t), []string{"echo"}); err == nil {
 				t.Error("Exec succeeded on an unusable handle")
 			}
 			// Info stays available: `spov ls` reports terminated sandboxes.

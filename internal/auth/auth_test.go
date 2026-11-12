@@ -426,3 +426,48 @@ func TestAllowPublicHostAcceptsTheProxiedOrigin(t *testing.T) {
 		t.Errorf("the listen address = %d, want 200", got)
 	}
 }
+
+// TestAnOriginOfAnotherSchemeIsRefusedOnThePublicHost: an https
+// deployment is not reached by a page served over http on its name.
+//
+// @decision(DL-135)
+func TestAnOriginOfAnotherSchemeIsRefusedOnThePublicHost(t *testing.T) {
+	g, err := NewBrowserGuard("0.0.0.0:8080", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.AllowPublicHost("spov.example.com")
+	g.RequirePublicScheme("https")
+	served := g.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	do := func(host, origin string) int {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/sessions", nil)
+		r.Host = host
+		r.Header.Set("Origin", origin)
+		w := httptest.NewRecorder()
+		served.ServeHTTP(w, r)
+		return w.Code
+	}
+	if got := do("spov.example.com", "https://spov.example.com"); got != http.StatusNoContent {
+		t.Errorf("the public origin = %d, want 204", got)
+	}
+	if got := do("spov.example.com", "http://spov.example.com"); got != http.StatusForbidden {
+		t.Errorf("the public host over http = %d, want 403", got)
+	}
+	// The listener's own address keeps both schemes: an operator's port
+	// forward is plain http.
+	if got := do("localhost:8080", "http://localhost:8080"); got != http.StatusNoContent {
+		t.Errorf("a loopback origin = %d, want 204", got)
+	}
+	// With no public host set (local mode, the Vite proxy) nothing is
+	// required of the scheme.
+	plain, _ := NewBrowserGuard("127.0.0.1:8080", nil)
+	plainServed := plain.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	r := httptest.NewRequest(http.MethodPost, "/x", nil)
+	r.Host = "127.0.0.1:8080"
+	r.Header.Set("Origin", "https://127.0.0.1:8080")
+	w := httptest.NewRecorder()
+	plainServed.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("local mode = %d, want 204", w.Code)
+	}
+}

@@ -86,7 +86,7 @@ func TestAPublishedVariantIsNotRebuilt(t *testing.T) {
 	spec := variantSpec(t, "rust")
 	b := &fakeBuilder{published: map[string]bool{spec.Name(): true}}
 	var notes []string
-	if err := (&VariantBuilder{Builder: b}).Ensure(context.Background(), spec, false, func(s string) { notes = append(notes, s) }); err != nil {
+	if err := (&VariantBuilder{Builder: b}).Ensure(context.Background(), "", spec, false, func(s string) { notes = append(notes, s) }); err != nil {
 		t.Fatal(err)
 	}
 	if b.builds.Load() != 0 || len(notes) != 0 {
@@ -107,7 +107,7 @@ func TestConcurrentLaunchesShareOneBuild(t *testing.T) {
 	errs := make(chan error, 3)
 	for range 3 {
 		wg.Go(func() {
-			errs <- v.Ensure(context.Background(), spec, false, func(s string) {
+			errs <- v.Ensure(context.Background(), "", spec, false, func(s string) {
 				if strings.Contains(s, spec.Name()) && strings.Contains(s, "rust@") {
 					notes.Add(1)
 				}
@@ -140,7 +140,7 @@ func TestABuildOutlivesTheLaunchThatStartedIt(t *testing.T) {
 	v := &VariantBuilder{Builder: b}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error)
-	go func() { done <- v.Ensure(ctx, spec, false, noNote) }()
+	go func() { done <- v.Ensure(ctx, "", spec, false, noNote) }()
 	for b.builds.Load() == 0 {
 		time.Sleep(time.Millisecond)
 	}
@@ -156,7 +156,7 @@ func TestABuildOutlivesTheLaunchThatStartedIt(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if err := v.Ensure(context.Background(), spec, false, noNote); err != nil || b.builds.Load() != 1 {
+	if err := v.Ensure(context.Background(), "", spec, false, noNote); err != nil || b.builds.Load() != 1 {
 		t.Errorf("the next launch: %v after %d builds", err, b.builds.Load())
 	}
 }
@@ -169,16 +169,16 @@ func TestAFailedBuildIsNotRemembered(t *testing.T) {
 	spec := variantSpec(t, "ruby")
 	b := &fakeBuilder{err: errors.New("apt: 503")}
 	v := &VariantBuilder{Builder: b}
-	err := v.Ensure(context.Background(), spec, false, noNote)
+	err := v.Ensure(context.Background(), "", spec, false, noNote)
 	if err == nil || !strings.Contains(err.Error(), "apt: 503") || !strings.Contains(err.Error(), "ruby@") {
 		t.Fatalf("Ensure = %v", err)
 	}
 	b.err = nil
-	if err := v.Ensure(context.Background(), spec, false, noNote); err != nil || b.builds.Load() != 2 {
+	if err := v.Ensure(context.Background(), "", spec, false, noNote); err != nil || b.builds.Load() != 2 {
 		t.Errorf("the retry: %v after %d builds", err, b.builds.Load())
 	}
 	b.lookupErr = errors.New("modal: 401")
-	if err := v.Ensure(context.Background(), variantSpec(t, "php"), false, noNote); err == nil || b.builds.Load() != 2 {
+	if err := v.Ensure(context.Background(), "", variantSpec(t, "php"), false, noNote); err == nil || b.builds.Load() != 2 {
 		t.Errorf("a failed lookup built anyway: %v", err)
 	}
 }
@@ -257,12 +257,12 @@ func TestBuildsAreBoundedPerProcess(t *testing.T) {
 	v := &VariantBuilder{Builder: b, MaxBuilds: 1}
 	first := variantSpec(t, "rust")
 	done := make(chan error, 2)
-	go func() { done <- v.Ensure(context.Background(), first, false, noNote) }()
+	go func() { done <- v.Ensure(context.Background(), "", first, false, noNote) }()
 	for b.builds.Load() == 0 {
 		time.Sleep(time.Millisecond)
 	}
-	go func() { done <- v.Ensure(context.Background(), first, false, noNote) }()
-	if err := v.Ensure(context.Background(), variantSpec(t, "ruby"), false, noNote); !errors.Is(err, ErrTooManyBuilds) {
+	go func() { done <- v.Ensure(context.Background(), "", first, false, noNote) }()
+	if err := v.Ensure(context.Background(), "", variantSpec(t, "ruby"), false, noNote); !errors.Is(err, ErrTooManyBuilds) {
 		t.Errorf("a second variant past the bound: %v", err)
 	}
 	close(b.release)
@@ -282,7 +282,7 @@ func TestARebuildBuildsAPublishedName(t *testing.T) {
 	b := &fakeBuilder{published: map[string]bool{spec.Name(): true}}
 	var built []string
 	v := &VariantBuilder{Builder: b, OnBuilt: func(_ context.Context, s sandbox.ImageSpec) { built = append(built, s.Name()) }}
-	if err := v.Ensure(context.Background(), spec, true, noNote); err != nil {
+	if err := v.Ensure(context.Background(), "", spec, true, noNote); err != nil {
 		t.Fatal(err)
 	}
 	if b.rebuilds.Load() != 1 || len(built) != 1 || built[0] != spec.Name() {
@@ -303,13 +303,13 @@ func TestABackgroundBuildIsRecordedAndBounded(t *testing.T) {
 		OnBuilt: func(_ context.Context, s sandbox.ImageSpec) { built <- s.Name() },
 		Warn:    func(string) { warnings.Add(1) }}
 	first, second := variantSpec(t, "rust"), variantSpec(t, "dotnet")
-	if !v.Start(context.Background(), first, false) {
+	if !v.Start(context.Background(), "", first, false) {
 		t.Fatal("the first build should start")
 	}
-	if !v.Start(context.Background(), first, false) {
+	if !v.Start(context.Background(), "", first, false) {
 		t.Fatal("a second ask for the same name joins the running build")
 	}
-	if v.Start(context.Background(), second, false) {
+	if v.Start(context.Background(), "", second, false) {
 		t.Fatal("a build past the bound must not start")
 	}
 	close(b.release)
@@ -323,7 +323,7 @@ func TestABackgroundBuildIsRecordedAndBounded(t *testing.T) {
 	failing := &fakeBuilder{err: errors.New("apt broke")}
 	w := &VariantBuilder{Builder: failing, OnBuilt: func(context.Context, sandbox.ImageSpec) { t.Error("a failed build was recorded") },
 		Warn: func(string) { warnings.Add(1) }}
-	w.Start(context.Background(), second, false)
+	w.Start(context.Background(), "", second, false)
 	for warnings.Load() == 0 {
 		time.Sleep(time.Millisecond)
 	}
