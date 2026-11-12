@@ -71,19 +71,40 @@ func (a *TokenAuthenticator) Authenticate(r *http.Request) (Principal, error) {
 		}
 		return Principal{}, fmt.Errorf("auth: loading the token's user: %w", err)
 	}
-	// A row not yet bound to an account (zero) is covered only by an
-	// address entry until its next sign-in binds it.
-	//
-	// @decision(DL-128)
-	admin, allowed := a.Allowlist.Lookup(user.GithubID, user.Email)
-	if !allowed {
-		return Principal{}, fmt.Errorf("%w: %s is no longer on the allowlist", ErrBadCredential, user.Email)
+	p, err := a.principalOf(user)
+	if err != nil {
+		return Principal{}, err
 	}
-
 	a.touch(ctx, rec, now)
-	return Principal{
-		UserID: user.ID, OrgID: user.OrgID, Email: user.Email, GitHubID: user.GithubID, Admin: admin, TokenID: rec.ID,
-	}, nil
+	p.TokenID = rec.ID
+	return p, nil
+}
+
+// principalOf is who a token's user row is. A person is allowed while
+// an allowlist entry covers them; a service account while it is not
+// disabled, never as an admin, and without the allowlist; a row of any
+// other kind is refused.
+//
+// @decision(DL-006) @decision(DL-128) @decision(DL-140)
+func (a *TokenAuthenticator) principalOf(user store.User) (Principal, error) {
+	switch {
+	case personRow(user):
+		// A row not yet bound to an account (zero) is covered only by
+		// an address entry until its next sign-in binds it.
+		//
+		// @decision(DL-128)
+		admin, allowed := a.Allowlist.Lookup(user.GithubID, user.Email)
+		if !allowed {
+			return Principal{}, fmt.Errorf("%w: %s is no longer on the allowlist", ErrBadCredential, user.Email)
+		}
+		return Principal{UserID: user.ID, OrgID: user.OrgID, Email: user.Email, GitHubID: user.GithubID, Admin: admin}, nil
+	case user.Kind == store.UserService:
+		if user.DisabledAt != nil {
+			return Principal{}, fmt.Errorf("%w: the service account %s is deleted", ErrBadCredential, user.Email)
+		}
+		return Principal{UserID: user.ID, OrgID: user.OrgID, Email: user.Email, Service: true}, nil
+	}
+	return Principal{}, fmt.Errorf("%w: the token's user is of no kind that may sign in", ErrBadCredential)
 }
 
 // touch records use, at most once a TouchInterval. A failure here is not

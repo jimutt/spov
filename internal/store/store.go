@@ -581,8 +581,14 @@ type UserStore interface {
 	BindGithub(ctx context.Context, orgID, userID string, githubID int64) error
 	List(ctx context.Context, orgID string) ([]User, error)
 	// Update writes the row, except GithubID, which only Create and
-	// BindGithub set.
+	// BindGithub set, and Kind and DisabledAt, which only Create and
+	// Disable set.
 	Update(ctx context.Context, u User) error
+	// Disable sets a service account's DisabledAt, once: a row already
+	// disabled keeps its first time. A person's row is ErrConflict.
+	//
+	// @decision(DL-140)
+	Disable(ctx context.Context, orgID, id string, at time.Time) error
 	Delete(ctx context.Context, orgID, id string) error
 }
 
@@ -722,7 +728,35 @@ type AllowlistEntry struct {
 	CreatedAt time.Time
 }
 
-// User is a person who may use the server.
+// UserKind says whether a user row is a person, who signs in, or a
+// service account, which an admin creates and which never signs in.
+//
+// @decision(DL-140)
+type UserKind string
+
+const (
+	// UserPerson is every row a sign-in makes, and the default.
+	UserPerson UserKind = "person"
+	// UserService is an admin-created account that authenticates only
+	// with a token an admin issued for it.
+	UserService UserKind = "service"
+)
+
+// Valid reports whether k is one of the two kinds.
+func (k UserKind) Valid() bool { return k == UserPerson || k == UserService }
+
+// Person reports whether u is a person's row. An empty kind is one
+// written before kinds existed, which is a person; a row of any other
+// kind than the two is neither.
+//
+// @decision(DL-140)
+func (u User) Person() bool { return u.Kind == UserPerson || u.Kind == "" }
+
+// ErrUnknownUserKind is a user row whose kind is neither a person nor a
+// service account.
+var ErrUnknownUserKind = errors.New("store: a user is a person or a service account")
+
+// User is a person, or a service account, who may use the server.
 //
 // @decision(DL-003)
 type User struct {
@@ -732,11 +766,19 @@ type User struct {
 	Name        string
 	GithubLogin string
 	// GithubID is the GitHub account this row is. Zero on a row from
-	// before accounts were recorded, until its next sign-in binds it.
+	// before accounts were recorded, until its next sign-in binds it,
+	// and always on a service account.
 	//
 	// @decision(DL-128)
 	GithubID int64
-	Admin    bool
+	// Kind is set when the row is created and never changes; Create
+	// reads an empty one as UserPerson. DisabledAt is when a service
+	// account was deleted, set only by Disable.
+	//
+	// @decision(DL-140)
+	Kind       UserKind
+	DisabledAt *time.Time
+	Admin      bool
 	// GitName and GitEmail author commits made in this user's sessions.
 	GitName  string
 	GitEmail string

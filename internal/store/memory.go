@@ -729,6 +729,16 @@ type memUsers struct{ m *Memory }
 
 func (s memUsers) Create(_ context.Context, u User) error {
 	defer s.m.lock()()
+	// @decision(DL-140)
+	if u.Kind == "" {
+		u.Kind = UserPerson
+	}
+	if !u.Kind.Valid() {
+		return ErrUnknownUserKind
+	}
+	if u.Kind == UserService && u.GithubID != 0 {
+		return ErrConflict
+	}
 	if _, ok := s.m.users[u.ID]; ok {
 		return ErrConflict
 	}
@@ -802,6 +812,11 @@ func (s memUsers) BindGithub(_ context.Context, orgID, userID string, githubID i
 		return ErrNotFound
 	}
 	switch {
+	// A service account is never bound to a GitHub account.
+	//
+	// @decision(DL-140)
+	case u.Kind != UserPerson:
+		return ErrConflict
 	case u.GithubID == githubID:
 		return nil
 	case u.GithubID != 0, githubID == 0:
@@ -858,8 +873,32 @@ func (s memUsers) Update(_ context.Context, u User) error {
 	//
 	// @decision(DL-128)
 	u.GithubID = cur.GithubID
+	// Only Create sets the kind and only Disable the time.
+	//
+	// @decision(DL-140)
+	u.Kind, u.DisabledAt = cur.Kind, cur.DisabledAt
 	u.UpdatedAt = s.m.now()
 	s.m.users[u.ID] = copyUser(u)
+	return nil
+}
+
+// @decision(DL-140)
+func (s memUsers) Disable(_ context.Context, orgID, id string, at time.Time) error {
+	defer s.m.lock()()
+	u, ok := s.m.users[id]
+	if !ok || u.OrgID != orgID {
+		return ErrNotFound
+	}
+	if u.Kind != UserService {
+		return ErrConflict
+	}
+	if u.DisabledAt != nil {
+		return nil
+	}
+	at = at.UTC()
+	u.DisabledAt = &at
+	u.UpdatedAt = s.m.now()
+	s.m.users[id] = u
 	return nil
 }
 
@@ -883,6 +922,10 @@ func copyUser(u User) User {
 	if u.LastLoginAt != nil {
 		t := *u.LastLoginAt
 		u.LastLoginAt = &t
+	}
+	if u.DisabledAt != nil {
+		t := *u.DisabledAt
+		u.DisabledAt = &t
 	}
 	u.Quota = u.Quota.Clone()
 	return u

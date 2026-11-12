@@ -51,6 +51,11 @@ const (
 	aTemplateEnv      = "a-private-template-value"
 	aTemplate         = "a-tmpl"
 	strangerOrg       = "org-stranger"
+	// The service account's, which only it and an admin may reach.
+	//
+	// @decision(DL-140)
+	sName = "s-pipeline"
+	sGoal = "S's private pipeline goal for the release"
 )
 
 // route is one request of a sweep: an operation as the OpenAPI document
@@ -113,6 +118,12 @@ type tenantWorld struct {
 	console *console.Fake
 
 	a, b, c, admin auth.Principal
+	// svc is a service account of A's org, with a job and a token.
+	//
+	// @decision(DL-140)
+	svc        auth.Principal
+	svcJob     store.Job
+	svcTokenID string
 
 	run, stopped store.Session
 	job, syncJob store.Job
@@ -134,6 +145,8 @@ func (w *tenantWorld) markers() []string {
 		aTemplateText, aTemplateEnv,
 		w.webSessionID, w.tokenID, w.attempt,
 		w.run.SandboxID, w.askID, w.formID,
+		// @decision(DL-140)
+		sGoal, w.svcTokenID,
 	}
 }
 
@@ -148,6 +161,8 @@ func newTenantWorld(t *testing.T) *tenantWorld {
 	w.b = auth.Principal{UserID: "u-b", OrgID: auth.LocalID, Email: "b@example.com"}
 	w.admin = auth.Principal{UserID: "u-admin", OrgID: auth.LocalID, Email: "admin@example.com", Admin: true}
 	w.c = auth.Principal{UserID: "u-c", OrgID: strangerOrg, Email: "c@elsewhere.example"}
+	// @decision(DL-140)
+	w.svc = auth.Principal{UserID: "u-svc", OrgID: auth.LocalID, Email: auth.ServiceAccountAddress(sName), Service: true}
 
 	sessions := scs.New()
 	sessions.Store = memstore.New()
@@ -200,6 +215,28 @@ func newTenantWorld(t *testing.T) *tenantWorld {
 		if err := f.store.Users().Create(ctx, store.User{ID: u.UserID, OrgID: u.OrgID, Email: u.Email}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// A service account, with a job of its own and a token.
+	//
+	// @decision(DL-140)
+	if err := f.store.Users().Create(ctx, store.User{ID: w.svc.UserID, OrgID: w.svc.OrgID, Email: w.svc.Email,
+		Name: sName, Kind: store.UserService}); err != nil {
+		t.Fatal(err)
+	}
+	svcReq := jobRequest()
+	svcReq.Goal = sGoal
+	svcView, err := f.srv.svc.CreateJob(ctx, w.svc, svcReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.svcJob, err = f.store.Jobs().Get(ctx, auth.LocalID, svcView.ID); err != nil {
+		t.Fatal(err)
+	}
+	w.svcTokenID = store.NewID(time.Now())
+	if err := f.store.Tokens().Create(ctx, store.APIToken{
+		ID: w.svcTokenID, OrgID: auth.LocalID, UserID: w.svc.UserID, Hash: auth.HashToken("spov_s_token"), Name: "ci",
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	w.as(w.a)
@@ -427,6 +464,21 @@ func (w *tenantWorld) snapshot() string {
 	out["opencode"] = console
 	u, _ := st.Users().Get(ctx, auth.LocalID, w.a.UserID)
 	out["user"] = fmt.Sprintf("%+v", u)
+	// The service account's row, jobs and tokens.
+	//
+	// @decision(DL-140)
+	su, _ := st.Users().Get(ctx, auth.LocalID, w.svc.UserID)
+	sjobs, _ := st.Jobs().List(ctx, auth.LocalID, store.JobFilter{OwnerID: w.svc.UserID})
+	var sjrows []string
+	for _, j := range sjobs {
+		sjrows = append(sjrows, fmt.Sprintf("%s %s", j.ID, j.State))
+	}
+	stoks, _ := st.Tokens().ListByUser(ctx, auth.LocalID, w.svc.UserID)
+	var strows []string
+	for _, tk := range stoks {
+		strows = append(strows, fmt.Sprintf("%s revoked=%v", tk.ID, tk.RevokedAt))
+	}
+	out["service"] = map[string]any{"user": fmt.Sprintf("%+v", su), "jobs": sjrows, "tokens": strows}
 	b, err := json.MarshalIndent(out, "", " ")
 	if err != nil {
 		w.t.Fatal(err)
@@ -585,6 +637,16 @@ func (w *tenantWorld) adminOnly() []route {
 		{op: "PUT /api/v1/org/routed-credentials/{name}", ids: map[string]string{"name": "acme-npm"},
 			body: map[string]any{"secret": "npm_B_ORG", "route": acmeNPM}},
 		{op: "DELETE /api/v1/org/routed-credentials/{name}", ids: map[string]string{"name": "acme-npm"}},
+		// @decision(DL-140) @decision(DL-141)
+		{op: "GET /api/v1/service-accounts"},
+		{op: "POST /api/v1/service-accounts", body: map[string]any{"name": "b-made"}},
+		{op: "PATCH /api/v1/service-accounts/{name}", ids: map[string]string{"name": sName},
+			body: map[string]any{"git_name": "B"}},
+		{op: "DELETE /api/v1/service-accounts/{name}", ids: map[string]string{"name": sName}},
+		{op: "GET /api/v1/service-accounts/{name}/tokens", ids: map[string]string{"name": sName}},
+		{op: "POST /api/v1/service-accounts/{name}/tokens", ids: map[string]string{"name": sName},
+			body: map[string]any{"name": "b's"}},
+		{op: "DELETE /api/v1/service-accounts/{name}/tokens/{id}", ids: map[string]string{"name": sName, "id": w.svcTokenID}},
 	}
 }
 
@@ -920,5 +982,64 @@ func TestALaunchCannotNameAnotherUsersTemplate(t *testing.T) {
 	}
 	if after := w.snapshot(); after != before {
 		t.Errorf("launches naming A's template changed A's world:\nbefore %s\nafter  %s", before, after)
+	}
+}
+
+// TestAServiceAccountIsWalledLikeAnyUser: the service account reaches
+// nothing of A's (404 on every route that names A's, nothing of A's in
+// what it lists, 403 on every admin route), B reaches nothing of the
+// service account's job, and the org's admin reaches it as it reaches
+// any user's.
+//
+// @decision(DL-140) @decision(DL-006)
+func TestAServiceAccountIsWalledLikeAnyUser(t *testing.T) {
+	w := newTenantWorld(t)
+	before := w.snapshot()
+	// A service principal that claims to be an admin is still not one.
+	claimsAdmin := w.svc
+	claimsAdmin.Admin = true
+	for name, p := range map[string]auth.Principal{"the service account": w.svc, "a service account claiming admin": claimsAdmin} {
+		for _, table := range [][]route{w.byRef(), w.byOtherID()} {
+			for _, r := range table {
+				for _, path := range r.requests() {
+					status, body := w.send(p, r.method(), path, r.body)
+					if status != http.StatusNotFound {
+						t.Errorf("%s: %s %s = %d, want 404\n%s", name, r.method(), path, status, body)
+					}
+				}
+			}
+		}
+		for _, r := range w.adminOnly() {
+			status, body := w.send(p, r.method(), r.path(""), r.body)
+			if status != http.StatusForbidden {
+				t.Errorf("%s: %s %s = %d, want 403\n%s", name, r.method(), r.path(""), status, body)
+			}
+		}
+	}
+	// What it reads of its own carries nothing of A's, but its own job.
+	for _, path := range []string{"/api/v1/jobs", "/api/v1/sessions", "/api/v1/me"} {
+		status, body := w.send(w.svc, http.MethodGet, path, nil)
+		if status != http.StatusOK {
+			t.Errorf("the service account: GET %s = %d\n%s", path, status, body)
+		}
+		for _, m := range w.leaks(body) {
+			if m != sGoal && m != w.svcTokenID {
+				t.Errorf("the service account: GET %s carries A's %q", path, m)
+			}
+		}
+	}
+	if _, body := w.send(w.svc, http.MethodGet, "/api/v1/jobs", nil); !strings.Contains(body, w.svcJob.ID) {
+		t.Errorf("the service account does not list its own job: %s", body)
+	}
+	// B is told the service account's job does not exist.
+	if status, body := w.send(w.b, http.MethodGet, "/api/v1/jobs/"+w.svcJob.ID, nil); status != http.StatusNotFound {
+		t.Errorf("B: GET the service account's job = %d\n%s", status, body)
+	}
+	if after := w.snapshot(); after != before {
+		t.Errorf("the service account's requests changed the world:\nbefore %s\nafter  %s", before, after)
+	}
+	if status, body := w.send(w.admin, http.MethodGet, "/api/v1/jobs/"+w.svcJob.ID, nil); status != http.StatusOK ||
+		!strings.Contains(body, sGoal) {
+		t.Errorf("the org's admin: GET the service account's job = %d\n%s", status, body)
 	}
 }

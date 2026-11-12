@@ -122,7 +122,8 @@ func (d *Device) handleApprove(w http.ResponseWriter, r *http.Request) {
 // @decision(DL-006)
 func approvingUser(r *http.Request) (auth.Principal, bool) {
 	p, ok := auth.From(r.Context())
-	if !ok || p.UserID == "" || p.TokenID != "" {
+	// A service account never approves one (DL-140).
+	if !ok || p.UserID == "" || p.TokenID != "" || p.Service {
 		return auth.Principal{}, false
 	}
 	return p, true

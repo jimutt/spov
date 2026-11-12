@@ -24,6 +24,12 @@ type UserView struct {
 	GithubLogin string     `json:"github_login,omitempty"`
 	Admin       bool       `json:"admin"`
 	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+	// Kind tells a person from a service account; DisabledAt is when a
+	// service account was deleted.
+	//
+	// @decision(DL-140)
+	Kind       store.UserKind `json:"kind" enum:"person,service" doc:"A person, who signs in, or a service account, which an admin creates"`
+	DisabledAt *time.Time     `json:"disabled_at,omitempty" doc:"When the service account was deleted"`
 	// Quota is the effective quota: the org defaults with this user's
 	// override applied.
 	Quota QuotaView `json:"quota"`
@@ -190,7 +196,10 @@ func (s *Server) requireAdmin(p auth.Principal) error {
 	if s.deps.Store == nil {
 		return huma.Error501NotImplemented("this server has no users to administer")
 	}
-	if !p.Admin {
+	// A service principal is never an admin, whatever it carries.
+	//
+	// @decision(DL-140)
+	if !p.Admin || p.Service {
 		return huma.Error403Forbidden("this needs an administrator")
 	}
 	return nil
@@ -206,7 +215,14 @@ func (s *Server) userView(u store.User) UserView {
 	if s.deps.Login != nil && s.deps.Login.Allowlist != nil {
 		admin, _ = s.deps.Login.Allowlist.Lookup(u.GithubID, u.Email)
 	}
+	// @decision(DL-140)
+	kind := store.UserPerson
+	if !u.Person() {
+		kind, admin = u.Kind, false
+	}
 	return UserView{
+		Kind:          kind,
+		DisabledAt:    u.DisabledAt,
 		ID:            u.ID,
 		Email:         u.Email,
 		Name:          u.Name,

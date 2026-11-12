@@ -210,6 +210,9 @@ func userFromRow(r sqlcgen.User) store.User {
 	if r.GithubID != nil {
 		u.GithubID = *r.GithubID
 	}
+	// @decision(DL-140)
+	u.Kind = store.UserKind(r.Kind)
+	u.DisabledAt = goTimePtr(r.DisabledAt)
 	return u
 }
 

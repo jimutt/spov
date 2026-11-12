@@ -18,6 +18,24 @@ import (
 // @decision(DL-132)
 const AdminMemberOffboarded = "allowlist.offboarded"
 
+// offboarding is why a user's things are being ended: the audit action
+// it writes and how its answer says the user was removed.
+//
+// @decision(DL-132) @decision(DL-140)
+type offboarding struct {
+	action  string
+	removed string
+}
+
+var (
+	// offboardMember is a person removed from the allowlist.
+	offboardMember = offboarding{action: AdminMemberOffboarded, removed: "is removed from the allowlist"}
+	// offboardService is a service account deleted by an admin.
+	//
+	// @decision(DL-140)
+	offboardService = offboarding{action: AdminServiceAccountOffboarded, removed: "is deleted"}
+)
+
 // offboardResult counts what an off-boarding ended, and names each step
 // that did not finish.
 //
@@ -54,11 +72,11 @@ func plural(n int, noun, verb string) string {
 // user row, past sessions, transcripts, reports) is kept.
 //
 // @decision(DL-132)
-func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, user store.User) (offboardResult, error) {
+func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, user store.User, how offboarding) (offboardResult, error) {
 	var r offboardResult
 	left := func(what string, err error) {
 		r.Left = append(r.Left, what)
-		s.deps.Warn("allowlist: off-boarding " + who + ": " + what + ": " + redact.Error(err))
+		s.deps.Warn("off-boarding " + who + ": " + what + ": " + redact.Error(err))
 	}
 
 	// Jobs first: a cancel stops the job's session by the path its
@@ -190,15 +208,15 @@ func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, us
 		detail += "; left: " + strings.Join(r.Left, ", ")
 	}
 	if err := s.deps.Store.AdminEvents().Append(ctx, store.AdminEvent{
-		ID: store.NewID(now), OrgID: p.OrgID, Actor: actorOf(p), Action: AdminMemberOffboarded, At: now,
+		ID: store.NewID(now), OrgID: p.OrgID, Actor: actorOf(p), Action: how.action, At: now,
 		Detail: detail,
 	}); err != nil {
 		left("the audit row was not written", err)
 	}
 	if len(r.Left) > 0 {
-		return r, fmt.Errorf("%s is removed from the allowlist, but not everything of theirs was ended: %s"+
+		return r, fmt.Errorf("%s %s, but not everything of theirs was ended: %s"+
 			" (done: %s); send the same delete again to retry",
-			who, strings.Join(r.Left, ", "), r.summary())
+			who, how.removed, strings.Join(r.Left, ", "), r.summary())
 	}
 	return r, nil
 }

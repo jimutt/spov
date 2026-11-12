@@ -38,7 +38,11 @@ func (s AllowlistSet) Len() int { return len(s.Emails) + len(s.Accounts) }
 //
 // @decision(DL-128)
 func (s AllowlistSet) Covers(githubID int64, email string) (admin, ok bool) {
-	if a, found := s.Emails[normalizeEmail(email)]; found && email != "" {
+	// No entry covers a service account's address, even one stored
+	// before such entries were refused.
+	//
+	// @decision(DL-140)
+	if a, found := s.Emails[normalizeEmail(email)]; found && email != "" && !IsServiceAddress(email) {
 		admin, ok = a, true
 	}
 	if a, found := s.Accounts[githubID]; found && githubID != 0 {

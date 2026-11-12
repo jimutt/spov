@@ -227,6 +227,8 @@ func New(deps Deps, addr string) (*Server, error) {
 	//
 	// @decision(DL-007)
 	s.registerAllowlist()
+	// @decision(DL-140) @decision(DL-141)
+	s.registerServiceAccounts()
 	// The browser login flow, in hosted mode only.
 	//
 	// @decision(DL-007)

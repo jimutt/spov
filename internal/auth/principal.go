@@ -20,6 +20,11 @@ type Principal struct {
 	// @decision(DL-128)
 	GitHubID int64
 	Admin    bool
+	// Service marks a service account's principal, which a bearer token
+	// alone produces and which is never an admin.
+	//
+	// @decision(DL-140)
+	Service bool
 	// TokenID names the stored CLI token this request authenticated
 	// with, so a handler can resolve "the token I am using" — what
 	// `spov logout` revokes. It is a row id, never a credential, and is
@@ -61,7 +66,7 @@ func Recorder(orgID string) Principal {
 //
 // @decision(DL-006)
 func (p Principal) CanAccess(ownerID string) bool {
-	return p.Admin || (p.UserID != "" && p.UserID == ownerID)
+	return (p.Admin && !p.Service) || (p.UserID != "" && p.UserID == ownerID)
 }
 
 // ErrUnauthenticated means the request carried no usable credential.
@@ -69,8 +74,14 @@ var ErrUnauthenticated = errors.New("auth: unauthenticated")
 
 type ctxKey struct{}
 
-// WithPrincipal returns a context carrying p.
+// WithPrincipal returns a context carrying p. A service principal is
+// never an admin, whichever authenticator produced it.
+//
+// @decision(DL-006) @decision(DL-140)
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
+	if p.Service {
+		p.Admin = false
+	}
 	return context.WithValue(ctx, ctxKey{}, p)
 }
 

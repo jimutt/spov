@@ -64,6 +64,16 @@ func (p pgMints) SetExpiry(ctx context.Context, orgID, mintID string, expires ti
 type pgUsers struct{ s *Store }
 
 func (p pgUsers) Create(ctx context.Context, u store.User) error {
+	// @decision(DL-140)
+	if u.Kind == "" {
+		u.Kind = store.UserPerson
+	}
+	if !u.Kind.Valid() {
+		return store.ErrUnknownUserKind
+	}
+	if u.Kind == store.UserService && u.GithubID != 0 {
+		return store.ErrConflict
+	}
 	now := p.s.now()
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = now
@@ -95,6 +105,8 @@ func (p pgUsers) Create(ctx context.Context, u store.User) error {
 		UpdatedAt:                 ts(u.UpdatedAt),
 		// @decision(DL-128)
 		GithubID: githubIDArg(u.GithubID),
+		// @decision(DL-140)
+		Kind: string(u.Kind),
 	}))
 }
 
@@ -234,6 +246,25 @@ func (p pgUsers) Update(ctx context.Context, u store.User) error {
 		return store.ErrNotFound
 	}
 	return nil
+}
+
+// Disable matches only a service account, and keeps a first time.
+//
+// @decision(DL-140)
+func (p pgUsers) Disable(ctx context.Context, orgID, id string, at time.Time) error {
+	n, err := p.s.q.DisableUser(ctx, sqlcgen.DisableUserParams{
+		ID: id, OrgID: orgID, DisabledAt: ts(at), UpdatedAt: ts(p.s.now()),
+	})
+	if err != nil {
+		return mapErr("disable user", err)
+	}
+	if n == 1 {
+		return nil
+	}
+	if _, err := p.Get(ctx, orgID, id); err != nil {
+		return err
+	}
+	return store.ErrConflict
 }
 
 func (p pgUsers) Delete(ctx context.Context, orgID, id string) error {

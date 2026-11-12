@@ -291,6 +291,8 @@ type User struct {
 	DefaultJobGitAccess       string
 	DefaultJobDurationSeconds int64
 	GithubID                  *int64
+	Kind                      string
+	DisabledAt                pgtype.Timestamptz
 }
 
 type UserCredential struct {

@@ -39,7 +39,7 @@ func (q *Queries) AppendAdminEvent(ctx context.Context, arg AppendAdminEventPara
 
 const bindUserGithub = `-- name: BindUserGithub :execrows
 update users set github_id = $3, updated_at = $4
-where id = $1 and org_id = $2 and github_id is null
+where id = $1 and org_id = $2 and github_id is null and kind = 'person'
 `
 
 type BindUserGithubParams struct {
@@ -52,6 +52,7 @@ type BindUserGithubParams struct {
 // Binds a row to its account once. A row already bound is never moved:
 // the update touches only a row with no account yet.
 // @decision(DL-128)
+// A service account is never bound (DL-140).
 func (q *Queries) BindUserGithub(ctx context.Context, arg BindUserGithubParams) (int64, error) {
 	result, err := q.db.Exec(ctx, bindUserGithub,
 		arg.ID,
@@ -452,8 +453,8 @@ const createUser = `-- name: CreateUser :exec
 insert into users (id, org_id, email, name, github_login, admin, git_name, git_email,
                    default_model, quota, last_login_at, created_at, updated_at,
                    default_git_access, default_job_git_access, default_job_duration_seconds,
-                   github_id)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                   github_id, kind)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 `
 
 type CreateUserParams struct {
@@ -474,6 +475,7 @@ type CreateUserParams struct {
 	DefaultJobGitAccess       string
 	DefaultJobDurationSeconds int64
 	GithubID                  *int64
+	Kind                      string
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
@@ -495,6 +497,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 		arg.DefaultJobGitAccess,
 		arg.DefaultJobDurationSeconds,
 		arg.GithubID,
+		arg.Kind,
 	)
 	return err
 }
@@ -746,6 +749,34 @@ func (q *Queries) DeliverablesForJobs(ctx context.Context, arg DeliverablesForJo
 		return nil, err
 	}
 	return items, nil
+}
+
+const disableUser = `-- name: DisableUser :execrows
+update users set disabled_at = coalesce(disabled_at, $3), updated_at = $4
+where id = $1 and org_id = $2 and kind = 'service'
+`
+
+type DisableUserParams struct {
+	ID         string
+	OrgID      string
+	DisabledAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+// Sets a service account's disabled_at once; a person's row is never
+// matched.
+// @decision(DL-140)
+func (q *Queries) DisableUser(ctx context.Context, arg DisableUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, disableUser,
+		arg.ID,
+		arg.OrgID,
+		arg.DisabledAt,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const endCurrentRun = `-- name: EndCurrentRun :exec
@@ -1341,7 +1372,7 @@ func (q *Queries) GetSessionProxyCA(ctx context.Context, arg GetSessionProxyCAPa
 }
 
 const getUser = `-- name: GetUser :one
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where id = $1 and org_id = $2
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users where id = $1 and org_id = $2
 `
 
 type GetUserParams struct {
@@ -1370,12 +1401,14 @@ func (q *Queries) GetUser(ctx context.Context, arg GetUserParams) (User, error) 
 		&i.DefaultJobGitAccess,
 		&i.DefaultJobDurationSeconds,
 		&i.GithubID,
+		&i.Kind,
+		&i.DisabledAt,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where org_id = $1 and lower(email) = lower($2)
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users where org_id = $1 and lower(email) = lower($2)
 `
 
 type GetUserByEmailParams struct {
@@ -1404,12 +1437,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) 
 		&i.DefaultJobGitAccess,
 		&i.DefaultJobDurationSeconds,
 		&i.GithubID,
+		&i.Kind,
+		&i.DisabledAt,
 	)
 	return i, err
 }
 
 const getUserByGithubID = `-- name: GetUserByGithubID :one
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where org_id = $1 and github_id = $2
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users where org_id = $1 and github_id = $2
 `
 
 type GetUserByGithubIDParams struct {
@@ -1438,6 +1473,8 @@ func (q *Queries) GetUserByGithubID(ctx context.Context, arg GetUserByGithubIDPa
 		&i.DefaultJobGitAccess,
 		&i.DefaultJobDurationSeconds,
 		&i.GithubID,
+		&i.Kind,
+		&i.DisabledAt,
 	)
 	return i, err
 }
@@ -2582,7 +2619,7 @@ func (q *Queries) ListUserCredentials(ctx context.Context, arg ListUserCredentia
 }
 
 const listUsers = `-- name: ListUsers :many
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where org_id = $1 order by id
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users where org_id = $1 order by id
 `
 
 func (q *Queries) ListUsers(ctx context.Context, orgID string) ([]User, error) {
@@ -2612,6 +2649,8 @@ func (q *Queries) ListUsers(ctx context.Context, orgID string) ([]User, error) {
 			&i.DefaultJobGitAccess,
 			&i.DefaultJobDurationSeconds,
 			&i.GithubID,
+			&i.Kind,
+			&i.DisabledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2624,7 +2663,7 @@ func (q *Queries) ListUsers(ctx context.Context, orgID string) ([]User, error) {
 }
 
 const listUsersByGithubLogin = `-- name: ListUsersByGithubLogin :many
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users
 where org_id = $1 and github_id is not null and lower(github_login) = lower($2::text)
 order by id
 `
@@ -2663,6 +2702,8 @@ func (q *Queries) ListUsersByGithubLogin(ctx context.Context, arg ListUsersByGit
 			&i.DefaultJobGitAccess,
 			&i.DefaultJobDurationSeconds,
 			&i.GithubID,
+			&i.Kind,
+			&i.DisabledAt,
 		); err != nil {
 			return nil, err
 		}
