@@ -9,9 +9,12 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"io/fs"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/opencode"
@@ -221,10 +224,34 @@ func reportNames(entries []OutEntry) []string {
 		if strings.HasPrefix(name, ".") || !strings.HasSuffix(strings.ToLower(name), ".md") {
 			continue
 		}
+		// A name an extractor could read as a path is not collected.
+		//
+		// @decision(DL-135)
+		if !SafeEntryName(name) {
+			continue
+		}
 		out = append(out, name)
 	}
 	slices.Sort(out)
 	return out
+}
+
+// SafeEntryName reports whether a collected file's path can be a zip
+// entry and a stored path without meaning anything else on an extractor:
+// valid UTF-8 of a bounded length; segments that are neither empty nor a
+// dot segment; and no backslash, colon or control character.
+//
+// @decision(DL-135)
+func SafeEntryName(name string) bool {
+	if name == "" || len(name) > 255 || !utf8.ValidString(name) || !fs.ValidPath(name) || name == "." {
+		return false
+	}
+	for _, r := range name {
+		if r == '\\' || r == ':' || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // collectReport reads and stores one report, and returns its body (nil
