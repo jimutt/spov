@@ -35,6 +35,66 @@ func fastForward(ctx context.Context, root, cur, head string) (refused string, e
 	return "git refused to update the checkout: " + strings.Join(strings.Fields(mergeErr.Error()), " "), nil
 }
 
+// boundIncomingObjects refuses a sync whose new objects (those reachable
+// from head but not from cur) total more than maxSyncIncomingBytes, or
+// whose largest blob is over maxSyncIncomingBlobBytes. The sizes come
+// from the object headers (`cat-file --batch-check`), which does not
+// inflate the content, so a delta that would expand to gigabytes is
+// caught before the checkout pays for it. No ref has been written when
+// this runs, so a refusal leaves the checkout and its refs as they were.
+//
+// @decision(DL-126)
+func boundIncomingObjects(ctx context.Context, root, cur, head string) error {
+	rangeArg := head
+	if cur != "" && cur != head && commitExists(ctx, root, cur) {
+		rangeArg = cur + ".." + head
+	}
+	listed, err := gitOutputRaw(ctx, root, "rev-list", "--objects", rangeArg)
+	if err != nil {
+		return fmt.Errorf("git: list the objects the sync brings in: %w", err)
+	}
+	var shas strings.Builder
+	for _, line := range strings.Split(listed, "\n") {
+		if sha, _, _ := strings.Cut(strings.TrimSpace(line), " "); sha != "" {
+			shas.WriteString(sha)
+			shas.WriteByte('\n')
+		}
+	}
+	if shas.Len() == 0 {
+		return nil
+	}
+	cmd := Command(ctx, root, nil, "cat-file", "--batch-check=%(objecttype) %(objectsize)")
+	cmd.Stdin = strings.NewReader(shas.String())
+	out, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("git: measure the objects the sync brings in: %w", err)
+	}
+	var total, biggest int64
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		typ, sizeStr, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		var size int64
+		if _, err := fmt.Sscan(sizeStr, &size); err != nil {
+			continue
+		}
+		total += size
+		if typ == "blob" && size > biggest {
+			biggest = size
+		}
+	}
+	if biggest > maxSyncIncomingBlobBytes {
+		return fmt.Errorf("git: the sandbox's export holds a %d MiB file (limit %d MiB); nothing was applied",
+			biggest>>20, maxSyncIncomingBlobBytes>>20)
+	}
+	if total > maxSyncIncomingBytes {
+		return fmt.Errorf("git: the sandbox's export expands to %d MiB of objects (limit %d MiB); nothing was applied",
+			total>>20, maxSyncIncomingBytes>>20)
+	}
+	return nil
+}
+
 // An in-place sync-back lands the sandbox's commits and uncommitted
 // files in the user's work tree. inPlaceVeto decides, before anything
 // is written, whether it may: it returns a reason, naming the paths,
@@ -161,6 +221,35 @@ func inPlaceVeto(ctx context.Context, root, curHead, headCommit string, packed, 
 		}
 	}
 	return "", nil
+}
+
+// unpredictableWorkTreeVeto falls back when the checkout's own config
+// makes an in-place landing write somewhere other than where the veto
+// looked, or hide what it must see: a sparse checkout (the fast-forward
+// skips paths outside the sparse set, and status would not show a file
+// hidden by it) or a work tree moved off root (`core.worktree`, a git
+// file worktree). The veto reads and writes root; git would not. These
+// cannot be overridden per command without changing where the sync
+// lands, so the work goes to spov/<session> instead.
+//
+// @decision(DL-126)
+func unpredictableWorkTreeVeto(ctx context.Context, root string) string {
+	if v, _ := gitConfigValue(ctx, root, "core.sparsecheckout"); strings.EqualFold(strings.TrimSpace(v), "true") {
+		return "this checkout is a sparse checkout (core.sparseCheckout), where an in-place sync could miss paths"
+	}
+	if v, _ := gitConfigValue(ctx, root, "core.worktree"); strings.TrimSpace(v) != "" {
+		return "this checkout's work tree is set elsewhere (core.worktree)"
+	}
+	top, err := gitOutput(ctx, root, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return ""
+	}
+	realTop, rerr := filepath.EvalSymlinks(top)
+	realRoot, qerr := filepath.EvalSymlinks(root)
+	if rerr == nil && qerr == nil && realTop != realRoot {
+		return "this checkout's work tree is not where the sync was told to land"
+	}
+	return ""
 }
 
 // namePaths names up to three paths, then how many more there are.

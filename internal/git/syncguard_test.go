@@ -433,3 +433,62 @@ func TestSyncBackNeverLandsInPlaceWhenItChangesWhatGitReads(t *testing.T) {
 		})
 	}
 }
+
+// TestASyncThatExpandsTooFarIsRefused: the sync is bounded by the size
+// of the objects it brings in, not only the bundle's bytes, so a small
+// pack whose blobs expand past the limits is refused with nothing
+// written. Limits are injected to keep the fixture small.
+//
+// @decision(DL-126)
+func TestASyncThatExpandsTooFarIsRefused(t *testing.T) {
+	ctx := context.Background()
+	big := strings.Repeat("A", 3<<20) // 3 MiB
+
+	sandboxOf := func(t *testing.T, dir, base string) ExportedState {
+		return sandboxCommits(t, dir, base, func(s string) {
+			writeFile(t, s, "big.bin", big, 0o644)
+			runGit(t, s, "add", "big.bin")
+		})
+	}
+	unchanged := func(t *testing.T, dir, head string, err error, want string) {
+		t.Helper()
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want one naming %q", err, want)
+		}
+		if got := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD")); got != head {
+			t.Errorf("HEAD moved to %s", got)
+		}
+		if out := runGit(t, dir, "branch", "--list", "spov/*"); out != "" {
+			t.Errorf("a refused sync wrote a branch: %s", out)
+		}
+	}
+
+	t.Run("a single blob over the per-blob limit", func(t *testing.T) {
+		dir, head := initTestRepo(t, "")
+		state := sandboxOf(t, dir, head)
+		old := maxSyncIncomingBlobBytes
+		maxSyncIncomingBlobBytes = 1 << 20 // 1 MiB
+		t.Cleanup(func() { maxSyncIncomingBlobBytes = old })
+		_, err := ApplySync(ctx, dir, "s", "main", state)
+		unchanged(t, dir, head, err, "file")
+	})
+
+	t.Run("the objects together over the total limit", func(t *testing.T) {
+		dir, head := initTestRepo(t, "")
+		state := sandboxOf(t, dir, head)
+		old := maxSyncIncomingBytes
+		maxSyncIncomingBytes = 1 << 20 // 1 MiB
+		t.Cleanup(func() { maxSyncIncomingBytes = old })
+		_, err := ApplySync(ctx, dir, "s", "main", state)
+		unchanged(t, dir, head, err, "expands")
+	})
+
+	t.Run("within the limits it lands", func(t *testing.T) {
+		dir, head := initTestRepo(t, "")
+		state := sandboxOf(t, dir, head)
+		res, err := ApplySync(ctx, dir, "s", "main", state)
+		if err != nil || !res.InPlace {
+			t.Fatalf("an honest export under the limit: %+v, %v", res, err)
+		}
+	})
+}

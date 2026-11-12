@@ -33,6 +33,23 @@ const MaxSyncBundleBytes = 16 << 20
 // @decision(DL-027)
 const MaxSyncExportBytes = 32 << 20
 
+// MaxSyncIncomingBytes bounds the total size of the git objects a sync
+// brings in, and MaxSyncIncomingBlobBytes any single blob. The bundle's
+// own bytes are small (MaxSyncExportBytes), but its deltas can expand to
+// much more at fetch or checkout; these bound what reaches the disk.
+//
+// @decision(DL-126)
+const (
+	MaxSyncIncomingBytes     = 1 << 30   // 1 GiB
+	MaxSyncIncomingBlobBytes = 256 << 20 // 256 MiB
+)
+
+// Overridable for tests; the production values are the constants above.
+var (
+	maxSyncIncomingBytes     int64 = MaxSyncIncomingBytes
+	maxSyncIncomingBlobBytes int64 = MaxSyncIncomingBlobBytes
+)
+
 // LocalCheckout describes a clean local git checkout ready to seed a
 // synced session.
 //
@@ -542,6 +559,17 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 		return SyncResult{}, fmt.Errorf("git: commit %s is not present in %s after unbundling", state.HeadCommit[:12], root)
 	}
 
+	// Measure what the sync brings in before the fast-forward or the
+	// fallback landing materialises it, and refuse an expansion that
+	// would fill the disk. No ref is written yet, so refusing here
+	// leaves the checkout exactly as it was.
+	//
+	// @decision(DL-126)
+	cur, _ := gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
+	if err := boundIncomingObjects(ctx, root, strings.ToLower(cur), state.HeadCommit); err != nil {
+		return SyncResult{}, err
+	}
+
 	packed, err := archivePaths(state.WorktreeTar)
 	if err != nil {
 		return SyncResult{}, err
@@ -557,6 +585,15 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 
 	commits := countCommitsBetween(ctx, root, state.BaseCommit, state.HeadCommit)
 	inPlace, reason := canApplyInPlace(ctx, root, startBranch, state.BaseCommit, state.HeadCommit)
+	// A checkout whose own config would make an in-place landing write
+	// somewhere other than where the veto looked, or hide what it must
+	// see, goes to the fallback with a clear reason, whatever
+	// canApplyInPlace concluded from the relocated tree.
+	//
+	// @decision(DL-126)
+	if u := unpredictableWorkTreeVeto(ctx, root); u != "" {
+		inPlace, reason = false, u
+	}
 	var curHead string
 	if inPlace {
 		curHead, _ = gitOutput(ctx, root, "rev-parse", "--verify", "HEAD")
@@ -660,9 +697,13 @@ func unbundleCommits(ctx context.Context, root string, bundle []byte, wantCommit
 	tempRef := "refs/spov-sync/head"
 	defer func() { _, _ = gitOutput(ctx, root, "update-ref", "-d", tempRef) }()
 
-	if _, err := gitOutput(ctx, root, "fetch", "--no-tags", "--", bundlePath, "HEAD:"+tempRef); err != nil {
+	// fsck the incoming objects: a malformed or malicious pack is
+	// refused as it is received, not after it is in the store.
+	//
+	// @decision(DL-126)
+	if _, err := gitOutput(ctx, root, "-c", "fetch.fsckObjects=true", "fetch", "--no-tags", "--", bundlePath, "HEAD:"+tempRef); err != nil {
 		// Fall back to unbundling every ref in the bundle.
-		if _, uerr := gitOutput(ctx, root, "bundle", "unbundle", bundlePath); uerr != nil {
+		if _, uerr := gitOutput(ctx, root, "-c", "fetch.fsckObjects=true", "-c", "transfer.fsckObjects=true", "bundle", "unbundle", bundlePath); uerr != nil {
 			return fmt.Errorf("git: unbundle sandbox commits: %w", err)
 		}
 	}

@@ -97,7 +97,13 @@ quit.
   control character shown as an escape such as `\x1b`.
 - **Your checkout's hooks do not run.** Every git command spov runs in your
   checkout turns off its hooks (`core.hooksPath`) and its filesystem monitor
-  (`core.fsmonitor`), and uses no pager.
+  (`core.fsmonitor`), uses no pager, and keeps git's own protections against
+  `.git`-lookalike names on, whatever your config says. A sparse checkout, or
+  a checkout whose work tree is set elsewhere (`core.worktree`), takes the
+  work on a `spov/<session>` branch rather than in place.
+- **A very large result is refused.** A sync that would bring in more than
+  1 GiB of git objects, or a single file over 256 MiB, stops with an error
+  and changes nothing; push the branch to the forge instead.
 - **Nothing is lost.** The sandbox is terminated only after the work is
   back; a sync that fails leaves it running and tells you how to retry.
 - **The checkout must be clean and on a branch**, or the launch stops and
