@@ -409,6 +409,11 @@ func (s *Service) freshConsoleToken(ctx context.Context, orgID, userID string, n
 	return g.Access, g.Generation, "", nil
 }
 
+// setKeyTimeout bounds writing a refreshed grant into a sidecar.
+//
+// @decision(DL-135)
+const setKeyTimeout = 30 * time.Second
+
 const reconnectNote = "OpenCode refused the stored sign-in; reconnect OpenCode (`spov login opencode`, or Settings)"
 
 // consoleRefreshError is a refresh that failed without ending the grant.
@@ -498,7 +503,10 @@ func (s *Service) pushOpenCodeGrant(ctx context.Context, sess store.Session, g C
 	if err != nil {
 		return err
 	}
-	res, err := h.SidecarExecInput(ctx, credproxy.SidecarName, credproxy.SetKeyCommand(prep.OpenCodeKeyEnv), []byte(g.Access+"\n"))
+	// @decision(DL-135)
+	xctx, cancelExec := context.WithTimeout(ctx, setKeyTimeout)
+	defer cancelExec()
+	res, err := h.SidecarExecInput(xctx, credproxy.SidecarName, credproxy.SetKeyCommand(prep.OpenCodeKeyEnv), []byte(g.Access+"\n"))
 	if err == nil && res.ExitCode != 0 && strings.Contains(res.Stderr, "no provider key") {
 		// The sidecar holds no OpenCode key to replace, so it never will.
 		return s.deps.Store.Sessions().SetOpenCodeGrant(ctx, sess.OrgID, sess.ID, 0)
