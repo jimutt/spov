@@ -41,7 +41,8 @@ revokes the token.
 
 Running a server, with its database, browser login, allowlist, quotas,
 credentials, health checks and the published image, is covered in
-[`deploy/README.md`](../deploy/README.md).
+[`deploy/README.md`](../deploy/README.md). That page also covers the limits on
+image builds and the 60-second cache of the repository listing.
 
 ## The web dashboard
 

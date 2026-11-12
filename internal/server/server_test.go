@@ -520,15 +520,16 @@ func TestSessionsAreScopedToTheirOwner(t *testing.T) {
 // @decision(DL-005)
 func TestReposAndConnect(t *testing.T) {
 	f := newAPIFixture(t)
-	resp, body := f.do(http.MethodGet, "/api/v1/repos", nil)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"owner":"acme"`) || !strings.Contains(string(body), `"private":true`) {
-		t.Errorf("repos: %d %s", resp.StatusCode, body)
-	}
+	// First, so the cache holds nothing for it to answer from (DL-134).
 	f.forge.err = errors.New("forge down")
 	if resp, _ := f.do(http.MethodGet, "/api/v1/repos", nil); resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("forge failure: %d", resp.StatusCode)
 	}
 	f.forge.err = nil
+	resp, body := f.do(http.MethodGet, "/api/v1/repos", nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"owner":"acme"`) || !strings.Contains(string(body), `"private":true`) {
+		t.Errorf("repos: %d %s", resp.StatusCode, body)
+	}
 	id := f.create(repoReq("alpha"))
 	f.events(id)
 	if resp, _ := f.do(http.MethodPost, "/api/v1/sessions/alpha/connect", nil); resp.StatusCode != http.StatusOK {

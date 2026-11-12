@@ -52,6 +52,13 @@ unless `modal.build_on_demand` is false, in which case
 images nobody has used for a while. Versions and defaults are in
 [configuration.md](configuration.md#add-ons).
 
+A server limits how much one person can build. Each person has one image build
+running at a time: a second launch of theirs waits for the first build to end.
+A request may start at most five new images in any 24 hours, failed builds
+included, and a launch past that is refused with a 429 that says when the next
+one is allowed. Booting an image that already exists, whoever built it, never
+counts and never waits, and neither does an operator's `spov serve image build`.
+
 ## Environment variables
 
 Ordinary settings go in `sandbox.env`, in your user file or a project's

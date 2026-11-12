@@ -765,6 +765,11 @@ func toHumaError(err error) error {
 	// @decision(DL-009)
 	case errors.Is(err, ErrQuotaExceeded):
 		return huma.Error429TooManyRequests(err.Error())
+	// A launch that reached the build limit after its create passed.
+	//
+	// @decision(DL-134)
+	case errors.As(err, new(*session.BuildLimitError)):
+		return huma.Error429TooManyRequests(err.Error())
 	case errors.Is(err, ErrPasswordUnavailable), errors.Is(err, session.ErrNoPassword):
 		// Never a fabricated password: it would authenticate nowhere and
 		// fail at the proxy with a far less obvious message.
@@ -1022,9 +1027,13 @@ func (s *Server) registerRepos() {
 		// Both tiers, each repository marked with the tiers that reach
 		// it; the platforms say which one a browser launch uses.
 		//
-		// @decision(DL-042)
+		// Each tier's listing is kept for RepoListTTL per user, so the
+		// forge is asked at most that often however often this is
+		// called.
+		//
+		// @decision(DL-042) @decision(DL-134)
 		if s.deps.UserRepos != nil && p.UserID != "" {
-			tiered, warnings, err := s.deps.UserRepos(ctx, p.OrgID, p.UserID)
+			tiered, warnings, err := s.svc.tieredListing(ctx, p)
 			if err != nil {
 				return nil, toHumaError(err)
 			}
@@ -1032,18 +1041,12 @@ func (s *Server) registerRepos() {
 			out.Body.Repos = mergeTiers(tiered)
 			return out, nil
 		}
-		repos, warnings, err := forge.ListRepos(ctx)
+		views, warnings, err := s.svc.plainListing(ctx, p, forge, tiers)
 		if err != nil {
 			return nil, toHumaError(err)
 		}
 		out.Body.Warnings = warnings
-		out.Body.Repos = make([]RepoView, 0, len(repos))
-		for _, r := range repos {
-			out.Body.Repos = append(out.Body.Repos, RepoView{
-				Platform: r.Platform.Name(), Owner: r.Repo.Owner, Name: r.Repo.Name,
-				Private: r.Repo.Private, Archived: r.Repo.Archived, UpdatedAt: r.Repo.UpdatedAt,
-			})
-		}
+		out.Body.Repos = views
 		return out, nil
 	})
 }

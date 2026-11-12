@@ -130,6 +130,10 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 		s.deps.Metrics.QuotaRefused(ctx, telemetry.QuotaSize)
 		return store.Job{}, err
 	}
+	// @decision(DL-134)
+	if err := s.refuseBuildOverLimit(ctx, p.UserID, sreq); err != nil {
+		return store.Job{}, err
+	}
 
 	sess := store.Session{
 		ID:      store.NewID(now),

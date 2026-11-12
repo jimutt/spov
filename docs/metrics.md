@@ -62,7 +62,7 @@ are in seconds.
 | `spov_build_info` | gauge | `version` | per process | The running build, always 1. |
 | `spov_api_requests_total` | counter | `operation`, `status_class` | per process | API traffic and errors by operation (the huma operation ID) and `2xx`/`3xx`/`4xx`/`5xx`. Requests refused before they reach an operation (a missing or bad token, the browser guard) are not counted. Event streams are counted when they end. |
 | `spov_api_request_duration_seconds` | histogram | `operation` | per process | API latency by operation. |
-| `spov_quota_refusals_total` | counter | `limit` | per process | Requests refused by a user's limits: `sessions`, `jobs`, `size`, `duration`. |
+| `spov_quota_refusals_total` | counter | `limit` | per process | Requests refused by a user's limits: `sessions`, `jobs`, `size`, `duration`, `image_builds`. |
 | `spov_jobs` | gauge | `state` | shared | Unfinished jobs by state: `queued`, `provisioning`, `running`, `blocked`, `steered`, `delivering`. |
 | `spov_job_oldest_queued_age_seconds` | gauge | none | shared | How long the oldest queued job has waited. Rising means jobs are not being picked up. |
 | `spov_job_endings_total` | counter | `kind`, `outcome`, `ended_by` | per process | Finished jobs. `kind` is `pr`, `report` or `sync`. `outcome` is `succeeded`, `failed` or `cancelled`. `ended_by` is `declared`, `wall-clock`, `stopped`, `denied`, `no-completion-tool`, `continue-failed`, `turn-failed`, `abandoned`, `cancelled`, `launch-failed` or `other`. |

@@ -164,7 +164,7 @@ func TestEachTierListsItsOwnRepositories(t *testing.T) {
 		}
 		return f, nil
 	}
-	got, warnings, err := h.reposByTier(ctx, "default", "u1")
+	got, warnings, err := bothTiers(t, h, "default", "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestAFineGrainedTokensPublicRepositoriesAreMarked(t *testing.T) {
 		f.Repos = []git.Repo{{Owner: "me", Name: "granted", Private: true}, {Owner: "me", Name: "public"}}
 		return f, nil
 	}
-	got, _, err := h.reposByTier(ctx, "default", "u1")
+	got, _, err := bothTiers(t, h, "default", "u1")
 	if err != nil {
 		t.Fatal(err)
 	}

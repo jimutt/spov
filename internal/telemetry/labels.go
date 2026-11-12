@@ -19,6 +19,8 @@ const (
 	QuotaJobs     QuotaLimit = "jobs"
 	QuotaSize     QuotaLimit = "size"
 	QuotaDuration QuotaLimit = "duration"
+	// QuotaImageBuilds is a user's new image variants in a day (DL-134).
+	QuotaImageBuilds QuotaLimit = "image_builds"
 )
 
 // EndedBy is what ended a job's run.
@@ -85,7 +87,7 @@ const (
 )
 
 var (
-	quotaLimits      = names(QuotaSessions, QuotaJobs, QuotaSize, QuotaDuration)
+	quotaLimits      = names(QuotaSessions, QuotaJobs, QuotaSize, QuotaDuration, QuotaImageBuilds)
 	jobKinds         = []string{string(store.JobKindPR), string(store.JobKindReport), string(store.JobKindSync)}
 	jobOutcomes      = []string{string(store.JobSucceeded), string(store.JobFailed), string(store.JobCancelled)}
 	endedBys         = names(EndedDeclared, EndedWallClock, EndedStopped, EndedDenied, EndedNoCompletionTool, EndedContinueFailed, EndedTurnFailed, EndedAbandoned, EndedCancelled, EndedLaunchFailed)

@@ -382,7 +382,7 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 	//
 	// @decision(DL-016)
 	if opts.Variant != nil && opts.BuildVariant && l.Variants != nil {
-		if err := l.Variants.Ensure(ctx, *opts.Variant, opts.RebuildVariant, l.progress); err != nil {
+		if err := l.Variants.Ensure(ctx, opts.User, *opts.Variant, opts.RebuildVariant, l.progress); err != nil {
 			return nil, err
 		}
 	}

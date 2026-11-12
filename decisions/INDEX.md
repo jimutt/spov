@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-134 | Image builds are limited per user, and the repository listing is cached for a minute | accepted | server | images, quota, security, repos |
 | DL-117 | On a phone the composer is one container: the text over a toolbar holding the model chip and a small Send, folded to one row while idle | accepted | web | web, phone, composer |
 | DL-116 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
 | DL-115 | A session's last-message preview comes from its root conversations, never from a subagent | accepted | server | subagents |
