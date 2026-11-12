@@ -141,6 +141,7 @@ func routedLaunchFixture(t *testing.T) (*renewFixture, *SealedRoutedCredentials)
 		d.ProxyImage = image
 		src = &SealedRoutedCredentials{Store: d.Store.Credentials(), Sealer: testSealer(t)}
 		d.RoutedCredentials = src
+		d.Templates = &store.FileTemplates{}
 	})
 	ctx := context.Background()
 	p := auth.Local()

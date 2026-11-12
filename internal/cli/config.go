@@ -131,6 +131,9 @@ type shownSandbox struct {
 	Credentials    []string `json:"credentials,omitempty" yaml:"credentials,omitempty"`
 	JobCredentials []string `json:"job_credentials,omitempty" yaml:"job_credentials,omitempty"`
 	Needs          []string `json:"needs,omitempty" yaml:"needs,omitempty"`
+	// @decision(DL-122)
+	Template    string `json:"template,omitempty" yaml:"template,omitempty"`
+	JobTemplate string `json:"job_template,omitempty" yaml:"job_template,omitempty"`
 	// @decision(DL-049)
 	JobMaxDuration string `json:"job_max_duration,omitempty" yaml:"job_max_duration,omitempty"`
 	// @decision(DL-101)
@@ -219,6 +222,8 @@ func newShownConfig(res config.Result, credentialBackend string, stored *shownSt
 			Credentials:        c.Sandbox.Credentials,
 			JobCredentials:     c.Sandbox.JobCredentials,
 			Needs:              c.Sandbox.Needs,
+			Template:           c.Sandbox.Template,
+			JobTemplate:        c.Sandbox.JobTemplate,
 			JobMaxDuration:     configuredDuration(c.Sandbox.JobMaxDuration),
 			JobSyncHold:        configuredDuration(c.Sandbox.JobSyncHold),
 			Sync:               c.Sandbox.Sync,

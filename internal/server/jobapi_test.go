@@ -89,6 +89,9 @@ func TestCreateJobRecordsAQueuedJobWithItsOwnSession(t *testing.T) {
 	if view.SessionID == "" {
 		t.Fatal("the job has no session, so nothing can run it")
 	}
+	if view.CreatedAt.IsZero() || view.UpdatedAt.IsZero() {
+		t.Errorf("the create answered without the stored times: created %v, updated %v", view.CreatedAt, view.UpdatedAt)
+	}
 	// The session is real, is the job's own, and has no sandbox yet:
 	// provisioning is the supervisor's.
 	sess, err := f.store.Sessions().Get(context.Background(), auth.LocalID, view.SessionID)

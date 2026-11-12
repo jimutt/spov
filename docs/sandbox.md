@@ -114,6 +114,53 @@ fails. Another model provider (Groq, xAI, DeepSeek, Mistral) needs its API host
 in `sandbox.egress_extra_domains`. `sandbox.egress_extra_domains` adds hosts to either (not to `open`), and
 a routed credential's hosts are added for it.
 
+## Sandbox templates
+
+A **sandbox template** is a named set of the settings above that you keep on
+the server and pick when you launch. It is how a launch from the browser gets
+anything but the defaults, and how you keep one project's credentials out of
+another's sandboxes.
+
+A template can set any of:
+
+| Setting | What it does |
+|---|---|
+| Egress | The preset, and extra domains for `install` or `agent` |
+| Routed credentials | Exactly the ones it lists, or none. This is the only way besides `--credentials` to attach one you stored with `--attach asked` |
+| Variables | Environment variables, merged by name under the launch's own |
+| Add-ons and apt packages | The image's add-ons, in place of the server's defaults |
+| Git access | `repos` or `all`, as a preference: where `all` is not allowed it falls back to `repos` and says so |
+
+A setting a template leaves out stays as it would be without the template. A
+template holds no secret, no repository and no model.
+
+Make and change templates in the web app, under Settings, Sandbox templates.
+Both launch forms have a Template choice, which is None unless you pick one.
+From the CLI:
+
+```sh
+spov templates                       # list them
+spov templates show acme             # what one sets
+spov fly --template acme             # launch from one
+spov jobs create "..." --template acme
+spov templates remove acme
+```
+
+A launch's own flags win over the template (`--env`, `--git-access`,
+`--credentials`, `--no-credentials`). Your config files' values for the same
+settings are not used for that launch; see
+[Configuration](configuration.md#a-project-file-cannot-name-a-sandbox-template).
+`sandbox.template` in your user file names a template for every `spov fly`,
+and `--no-template` launches without it.
+
+A session records the settings it was given. Changing or removing a template
+later changes no session, and a resumed session keeps what it had. If a
+template lists a routed credential you no longer hold, a launch from it is
+refused until you store the credential again or change the template.
+
+Templates are your own: there are no shared ones, and an organisation's routed
+credentials can be named in yours.
+
 ## Cost
 
 A Modal sandbox bills for its whole wall-clock life, not for the work it does.

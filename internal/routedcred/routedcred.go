@@ -50,10 +50,15 @@ func IsKey(key string) bool { return strings.HasPrefix(key, KeyPrefix) }
 //
 // @decision(DL-072) @decision(DL-073)
 type Route struct {
-	Name   string   `json:"name"`
-	Hosts  []string `json:"hosts"`
+	Name string `json:"name"`
+	// Hosts and Scheme may be left out of a write that names a preset,
+	// which sets them; a stored route always has both, so its encoding
+	// is the same with or without omitempty.
+	//
+	// @decision(DL-118)
+	Hosts  []string `json:"hosts,omitempty"`
 	Paths  []string `json:"paths,omitempty"`
-	Scheme string   `json:"scheme" enum:"bearer,basic,header"`
+	Scheme string   `json:"scheme,omitempty" enum:"bearer,basic,header"`
 	// User is the Basic username.
 	User string `json:"user,omitempty"`
 	// Header is the header a header-scheme secret is set in.
@@ -101,14 +106,46 @@ func (r Route) Validate() error {
 		if err != nil {
 			return fmt.Errorf("routed credential %s: %w", r.Name, err)
 		}
-		if !slices.Equal(again.Hosts, r.Hosts) || again.Scheme != r.Scheme {
-			return fmt.Errorf("routed credential %s: its hosts or scheme are not its %s preset's", r.Name, r.Preset)
+		// The paths too: a preset route with none would put the secret
+		// on every path of a host other repositories share.
+		//
+		// @decision(DL-118)
+		if !slices.Equal(again.Hosts, r.Hosts) || again.Scheme != r.Scheme || !slices.Equal(again.Paths, r.Paths) ||
+			again.User != r.User || again.RepoID != r.RepoID {
+			return fmt.Errorf("routed credential %s: its hosts, paths, scheme or user are not its %s preset's", r.Name, r.Preset)
 		}
 	} else if r.URL != "" || r.Scope != "" || r.RepoID != "" {
 		return fmt.Errorf("routed credential %s: url, scope and repo_id are a preset's", r.Name)
 	}
 	return r.validateBase()
 }
+
+// Expanded is the route a write stores: a preset's route remade from
+// its options, so its hosts, scheme, user and path prefix are never the
+// client's to choose, and any other route as it is. A preset route that
+// carries hosts or a scheme of its own must carry its preset's.
+//
+// @decision(DL-118) @decision(DL-076)
+func (r Route) Expanded() (Route, error) {
+	if r.Preset == "" {
+		return r, nil
+	}
+	out, err := FromPreset(r.Name, r.Preset, PresetOptions{URL: r.URL, Scope: r.Scope, RepoID: r.RepoID,
+		User: r.User, Paths: r.Paths, Attach: r.Attach})
+	if err != nil {
+		return Route{}, fmt.Errorf("routed credential %s: %s", r.Name, presetFieldNames.Replace(err.Error()))
+	}
+	given := r.Normal()
+	if (len(given.Hosts) > 0 && !slices.Equal(given.Hosts, out.Hosts)) || (given.Scheme != "" && given.Scheme != out.Scheme) {
+		return Route{}, fmt.Errorf("routed credential %s: its hosts or scheme are not its %s preset's", r.Name, r.Preset)
+	}
+	return out, nil
+}
+
+// presetFieldNames words a preset's refusal for a caller that sent
+// fields, not flags.
+var presetFieldNames = strings.NewReplacer("--url", "url", "--scope", "scope", "--id", "repo_id",
+	"--user", "user", "--path", "path", "--attach", "attach")
 
 // validateBase checks what the proxy checks, with any secret.
 func (r Route) validateBase() error {

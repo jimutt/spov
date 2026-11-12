@@ -3,7 +3,7 @@
   // endpoint `spov jobs create` uses — and on success leaves for the session's
   // page. The logic is in ../lib/jobform.ts so a test can reach it.
   //
-  // @decision(DL-061) @decision(DL-056)
+  // @decision(DL-061) @decision(DL-056) @decision(DL-121)
   import { api, nav, unwrap } from '../lib/api/client';
   import { resource } from '../lib/resource.svelte';
   import {
@@ -26,9 +26,11 @@
     spokenLength,
   } from '../lib/jobform';
   import { kindName, sentence } from '../lib/format';
+  import { listTemplates, templateAccessLabel } from '../lib/templates';
   import Problem from './Problem.svelte';
   import ModelPicker from './ModelPicker.svelte';
   import RepoPicker from './RepoPicker.svelte';
+  import TemplatePicker from './TemplatePicker.svelte';
   import { field, fieldBase, fieldMono, help, label, more, moreSummary, pageTitle, primaryLarge } from './ui';
 
   const repos = resource(async (signal) => unwrap(await api.GET('/api/v1/repos', { signal })));
@@ -39,6 +41,9 @@
   //
   // @decision(DL-061)
   const me = resource(async (signal) => unwrap(await api.GET('/api/v1/me', { signal })));
+
+  // A failed read draws no picker and stops no launch. @decision(DL-121)
+  const templates = resource(listTemplates);
 
   let draft = $state(emptyDraft());
   let starting = $state(false);
@@ -52,7 +57,12 @@
   // @decision(DL-049)
   const clockLimit = $derived(me.data?.quota?.max_job_duration);
   // @decision(DL-043)
-  const accessLabel = $derived(defaultAccessLabel(me.data?.default_job_git_access, me.loaded));
+  // A chosen template that sets git access is where the unset value
+  // comes from, before the profile. @decision(DL-121) @decision(DL-120)
+  const chosenTemplate = $derived((templates.data ?? []).find((t) => t.name === draft.template));
+  const accessLabel = $derived(
+    templateAccessLabel(chosenTemplate) || defaultAccessLabel(me.data?.default_job_git_access, me.loaded),
+  );
   const inheritLabel = $derived(defaultOptionLabel(accountDefault, me.loaded));
   const defaultNote = $derived(defaultModelNote(accountDefault, me.loaded, groups));
   // What the submit bar says the job will spend. @decision(DL-056)
@@ -156,6 +166,9 @@
         not inside a repository.
       </p>
     </fieldset>
+
+    <!-- @decision(DL-121) -->
+    <TemplatePicker id="job-template" bind:value={draft.template} templates={templates.data} />
 
     <div class="grid grid-cols-1 gap-x-5 sm:grid-cols-2">
       <div class="mb-7 min-w-0">

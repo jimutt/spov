@@ -44,6 +44,15 @@ func ghLogin(stored string) (string, bool) {
 // slow is an error, never a fallback to another credential.
 //
 // @decision(DL-083)
+// The two ways gh has no token to give, kept apart so `spov init` can
+// offer the right fix for each.
+//
+// @decision(DL-123)
+var (
+	errGhMissing   = errors.New("gh is not installed")
+	errGhSignedOut = errors.New("gh has no login")
+)
+
 func (e *Env) ghToken(ctx context.Context, host string) (string, error) {
 	if e.GhToken != nil {
 		return e.GhToken(ctx, host)
@@ -53,15 +62,15 @@ func (e *Env) ghToken(ctx context.Context, host string) (string, error) {
 	out, err := exec.CommandContext(ctx, "gh", "auth", "token", "--hostname", host).Output()
 	switch {
 	case errors.Is(err, exec.ErrNotFound):
-		return "", errors.New("this platform uses gh's login, and gh is not installed")
+		return "", fmt.Errorf("this platform uses gh's login, and %w", errGhMissing)
 	case ctx.Err() != nil:
 		return "", fmt.Errorf("gh auth token did not answer within %s", ghTimeout)
 	case err != nil:
-		return "", fmt.Errorf("gh has no login for %s; run `gh auth login --hostname %s`", host, host)
+		return "", fmt.Errorf("%w for %s; run `gh auth login --hostname %s`", errGhSignedOut, host, host)
 	}
 	token := strings.TrimSpace(string(out))
 	if token == "" {
-		return "", fmt.Errorf("gh has no login for %s; run `gh auth login --hostname %s`", host, host)
+		return "", fmt.Errorf("%w for %s; run `gh auth login --hostname %s`", errGhSignedOut, host, host)
 	}
 	return token, nil
 }

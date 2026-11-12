@@ -234,6 +234,13 @@ type Sandbox struct {
 	Credentials    []string `koanf:"credentials"`
 	JobCredentials []string `koanf:"job_credentials"`
 	Needs          []string `koanf:"needs"`
+	// Template and JobTemplate name the sandbox template `spov fly` and
+	// `spov jobs create` launch from when no flag says. A job never takes
+	// Template. A project file may not set either.
+	//
+	// @decision(DL-122)
+	Template    string `koanf:"template"`
+	JobTemplate string `koanf:"job_template"`
 	// JobMaxDuration is the wall clock `spov jobs create` asks for when no
 	// flag names one. The server treats it as a preference and clamps it
 	// to the caller's limit.
