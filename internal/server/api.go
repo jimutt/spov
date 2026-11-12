@@ -133,6 +133,10 @@ func New(deps Deps, addr string) (*Server, error) {
 			return nil, err
 		}
 		guard.AllowPublicHost(host)
+		// @decision(DL-135)
+		if u, err := url.Parse(deps.PublicURL); err == nil {
+			guard.RequirePublicScheme(u.Scheme)
+		}
 	}
 	s := &Server{deps: deps, svc: newService(deps), mux: http.NewServeMux(), guard: guard}
 	// Polling, behind the Subscribe seam a LISTEN/NOTIFY feed replaces.

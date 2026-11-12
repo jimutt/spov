@@ -188,7 +188,7 @@ func (g *GitHubPAT) FindPullRequest(ctx context.Context, repo RepoRef, branch st
 		func(ctx context.Context, method, path, _ string, body, out any) error {
 			return g.do(ctx, method, path, body, out)
 		},
-		g.host, "", repo, branch,
+		g.host, g.apiURL, "", repo, branch,
 	)
 }
 

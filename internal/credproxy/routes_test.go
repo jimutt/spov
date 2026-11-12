@@ -34,6 +34,7 @@ func TestARouteSetsItsSecretOnlyOnItsHostsAndPaths(t *testing.T) {
 		{http.MethodGet, "https://npm.acme.com/@acme%2fpkg", "Authorization", "Bearer npm_realsecret"},
 		{http.MethodPut, "https://npm.acme.com/@acme/pkg", "Authorization", "Bearer npm_realsecret"},
 		{http.MethodGet, "https://repo.acme.com/artifactory/libs/com/acme/a/1/a-1.jar", "Authorization", maven},
+		{http.MethodPut, "https://repo.acme.com/artifactory/libs/com/acme/a/1/a-1.jar;build.number=7", "Authorization", maven},
 		{http.MethodGet, "https://jfrog.acme.com/api/npm/x", "X-Jfrog-Art-Api", "jfrog-real"},
 		{http.MethodGet, "https://cdn.acme.com/blob", "X-Jfrog-Art-Api", "jfrog-real"},
 	} {
@@ -55,6 +56,10 @@ func TestARouteSetsItsSecretOnlyOnItsHostsAndPaths(t *testing.T) {
 		"https://repo.acme.com/artifactory/libs/%2e%2e/other", // an escape
 		"https://repo.acme.com/artifactory/libs/../other/a",   // a dot segment
 		"https://repo.acme.com/artifactory//libs/a",           // an empty segment
+		"https://repo.acme.com/artifactory/libs/..;/other/a",  // a dot segment a servlet container resolves
+		"https://repo.acme.com/artifactory/libs/..;x=1/..;/a", // the same, with a parameter
+		"https://repo.acme.com/artifactory/libs/.;/a",         // a single dot with parameters
+		"https://repo.acme.com/artifactory/libs/;a/b",         // an empty name with parameters
 		"https://npm.acme.com.evil.example/pkg",               // a lookalike host
 		"https://acme.com/pkg",                                // the parent domain
 	} {

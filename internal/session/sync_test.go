@@ -132,6 +132,10 @@ func (LocalShellExec) Exec(ctx context.Context, command []string) (sandbox.ExecR
 }
 
 func (LocalShellExec) ExecInput(ctx context.Context, command []string, stdin []byte) (sandbox.ExecResult, error) {
+	return (LocalShellExec{}).ExecBounded(ctx, command, stdin, sandbox.MaxExecOutput)
+}
+
+func (LocalShellExec) ExecBounded(ctx context.Context, command []string, stdin []byte, maxOutput int) (sandbox.ExecResult, error) {
 	if len(command) == 0 {
 		return sandbox.ExecResult{}, fmt.Errorf("empty command")
 	}
@@ -152,7 +156,7 @@ func (LocalShellExec) ExecInput(ctx context.Context, command []string, stdin []b
 			return sandbox.ExecResult{}, err
 		}
 	}
-	return sandbox.ExecResult{ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()}, nil
+	return sandbox.BoundOutput(sandbox.ExecResult{ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()}, maxOutput)
 }
 
 // @decision(DL-027)
@@ -445,6 +449,10 @@ type recordingExec struct {
 func (r *recordingExec) ExecInput(_ context.Context, command []string, _ []byte) (sandbox.ExecResult, error) {
 	r.commands = append(r.commands, command)
 	return sandbox.ExecResult{}, nil
+}
+
+func (r *recordingExec) ExecBounded(ctx context.Context, command []string, stdin []byte, _ int) (sandbox.ExecResult, error) {
+	return r.ExecInput(ctx, command, stdin)
 }
 
 // An export from a sandbox that does not hold the recorded base bundles

@@ -174,6 +174,11 @@ type Supervisor struct {
 	//
 	// @decision(DL-050)
 	MaxVerdictEvents int
+	// MaxVerdictBytes overrides the size of what the verdict holds.
+	// Zero means MaxVerdictBytes.
+	//
+	// @decision(DL-131)
+	MaxVerdictBytes int64
 	// SweepInterval overrides how often unfinished jobs are re-queued.
 	// Zero means SweepInterval.
 	//

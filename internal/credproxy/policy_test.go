@@ -82,6 +82,20 @@ func TestAForgejoTokenIsUsedOnlyOnTheSessionsRepositories(t *testing.T) {
 		{"GET", root + "//api/v1/repos/acme/app", false},
 		{"GET", root + "/api/v1/repos/acme/app/", false},
 		{"GET", root + "/acme/app.git/HEAD", false},
+		// The merge of a pull request, spelled any way a router may read.
+		{"POST", root + "/api/v1/repos/acme/app/pulls/1/merge", false},
+		{"POST", root + "/api/v1/repos/acme/app/pulls/1/Merge", false},
+		{"PUT", root + "/api/v1/repos/acme/app/pulls/1/MERGE", false},
+		{"POST", root + "/api/v1/repos/acme/app/pulls/1/merge;x=1", false},
+		{"POST", root + "/api/v1/repos/acme/app/pulls/1/comments", true},
+		// A user or a token named in the query outranks the header.
+		{"GET", root + "/api/v1/repos/acme/app/issues?sudo=alice", false},
+		{"GET", root + "/api/v1/repos/acme/app/issues?state=open&Sudo=alice", false},
+		{"GET", root + "/api/v1/repos/acme/app/issues?token=x", false},
+		{"GET", root + "/api/v1/repos/acme/app/issues?access_token=x", false},
+		{"GET", root + "/api/v1/repos/acme/app/issues?a=b;sudo=alice", false},
+		{"GET", root + "/acme/app.git/info/refs?service=git-upload-pack&sudo=alice", false},
+		{"GET", root + "/api/v1/repos/acme/app/issues?state=open&page=2", true},
 	})
 }
 
@@ -115,6 +129,7 @@ func TestAGitHubPATIsNarrowedExceptOnGraphQL(t *testing.T) {
 		{"POST", "https://api.github.com/repos/acme/app/pulls/3/reviews", true},
 		{"GET", "https://api.github.com/repos/acme/app/pulls/3/merge", true},
 		{"PUT", "https://api.github.com/repos/acme/app/pulls/3/merge", false},
+		{"PUT", "https://api.github.com/repos/acme/app/pulls/3/MERGE", false},
 	})
 	ghe := Platform{Name: "ghe", Kind: KindGitHub, Host: "ghe.example.com", User: "u", Token: "ghp_x",
 		Repos: []string{"acme/app"}}
