@@ -30,11 +30,14 @@ design follows from that:
   can see and control every user's sessions and jobs. Only the operator holds the
   server's environment, database and Modal account.
 
-Two properties have not yet been tested against a live deployment. That the agent
-cannot read the sidecar's memory, configuration or CA key from the main container
-is what the design assumes and a live test on a throwaway Modal workspace has not
-yet confirmed. What an exit snapshot contains has not been checked either. Treat
-both as intended behaviour, not as measured.
+Both of the properties the sidecar exists for were measured on Modal on
+2026-11-12. From a root shell in the main container nothing of the sidecar is
+visible: no process, environment, file, shared memory or loopback listener, and
+only its listening port answers. A launch's forge token and provider key are in
+neither the running main container nor its exit snapshot. The integration tests
+`TestIntegrationSidecarIsolationProbe` and `TestIntegrationAnExitSnapshotHoldsNoSecret`
+repeat both measurements, on a Modal account, after a change to the image or the
+sidecar.
 
 ### What is a guardrail and not a boundary
 
@@ -74,34 +77,42 @@ device flow. An empty allowlist admits nobody.
   none, restoring the seed file and restarting imports it again.
 - **`SPOV_SERVER_TOKEN` is not an admin of the allowlist's organisation.** It is a
   standing credential for a separate user and organisation, `local`. Its holder can
-  launch sessions and jobs there, on the deployment's own credentials and keys. It
-  is not rate limited, is never revoked except by a restart, and has no strength
-  check, so make it long and random.
+  launch sessions and jobs there, on the deployment's own credentials and keys. The
+  request limits count it as one user, it is never revoked except by a restart,
+  and a hosted server refuses to start with one under 32 characters. Make it
+  random.
 
-### What removing someone does today
+### What removing someone does
 
-Removing an address from the allowlist:
+Removing the address of someone who has signed in off-boards them in the same
+call. Once the entry is gone, the server:
 
 - stops that person signing in, and refuses their browser sessions and CLI tokens
   on their next request, on every replica, after at most 10 seconds;
 - deletes their browser sessions, so that adding the address back does not revive
   an old login;
-- leaves an already open event stream running for up to five minutes.
+- cancels their unfinished jobs and stops their live sessions, a held sync job's
+  included, so their sandboxes are terminated and a connection they saved stops
+  working;
+- revokes their CLI tokens, so adding the address back does not bring one back;
+- deletes every credential they stored: forge tokens, provider keys, routed
+  credentials and their OpenCode sign-in;
+- writes an audit row naming the address, the admin and what was ended.
 
-It does **not**:
+Their history stays: their user row, past sessions, transcripts, reports and
+snapshots. If a step fails the others still run, and the call answers 500 saying
+what is left; sending the same `DELETE` again retries. See
+[deploy/README.md](../deploy/README.md#the-allowlist).
 
-- end their running sessions, jobs or sandboxes. They run until they finish, are
-  stopped, or hit their timeout, which can be hours;
-- revoke their CLI tokens. They are refused while the address is absent and work
-  again if it is added back;
-- stop the renewal of the git tokens of their sessions that are still running.
+Some things are outside its reach:
 
-To off-board someone, remove them and then end their sessions yourself. An admin
-sees every user's sessions, in the dashboard and in `spov ls`, and can stop them.
-
-<!-- security-round: off-boarding. When the stream that ends a removed person's
-sandboxes and revokes their tokens lands, replace the "does not" list above with
-what it now does. -->
+- an already open event stream can run for up to five minutes;
+- their OpenCode sign-in is deleted from spov but not revoked at OpenCode;
+- a CLI sign-in they approved in the ten minutes before the removal can still
+  issue a token. It is refused while the address is absent, and a second `DELETE`
+  revokes it, so send one before adding such an address back;
+- a launch another replica accepted in the 10 seconds before it learned of the
+  removal can start after the off-boarding; a second `DELETE` ends it.
 
 ## Shared model keys
 
@@ -193,27 +204,38 @@ What you can do:
   (`MODAL_ENVIRONMENT`) used only by this deployment. spov has no budget of its
   own, so this is the only hard stop.
 - **Set `modal.build_on_demand: false`.** By default any user can start an image
-  build by asking for an add-on or an apt package, and builds are not limited per
-  user. With it off, users get the variants you build with `spov serve image build`.
+  build by asking for an add-on or an apt package. A hosted server lets each user
+  run one build at a time and start five new variants in any 24 hours, but each
+  build is still at your cost. With it off, users get the variants you build with
+  `spov serve image build`.
 
-<!-- security-round: limits. When the stream that adds request rate limits, stream
-caps and per-user build limits lands, add a sentence here and in the checklist
-saying what is limited and how to set it. -->
+The server also limits how often each user may call the API, create sessions and
+jobs, and open live views, and how often one address may start a sign-in
+([Limits](server.md#limits)). These are fixed and kept per replica. They keep one
+user or one address from overloading the server, and do not bound what a user
+spends within them.
 
 ## Before you expose a server: a checklist
 
 Do each of these before a server is reachable by people you do not know.
 
 1. **Put TLS in front of it.** `spov serve` speaks plain HTTP and ends no TLS.
-   Run it behind a reverse proxy that terminates TLS, adds HSTS and limits request
-   rates and connections, and never publish port 8080 directly. The server trusts
-   no forwarded header; it identifies itself by `SPOV_PUBLIC_URL`, so the proxy
-   must pass the original `Host`. The server sets only a header-read timeout, so
-   have the proxy set the others.
+   Run it behind a reverse proxy that terminates TLS, adds HSTS and limits
+   connections, and never publish port 8080 directly. The server identifies itself
+   by `SPOV_PUBLIC_URL`, so the proxy must pass the original `Host`. It limits
+   sign-ins per client address ([Limits](server.md#limits)), and behind a proxy
+   every client has the proxy's address until you name the proxy in
+   `server.trusted_proxies`
+   ([configuration](configuration.md#behind-a-reverse-proxy-servertrusted_proxies)).
+   Name only the proxies you run: the server then reads `X-Forwarded-For` from
+   them and from no one else. The server bounds the time to send headers and a
+   body and closes idle connections, but sets no write timeout, so have the proxy
+   bound a response's time if you want one.
 2. **Set `SPOV_PUBLIC_URL` to the `https://` origin.** Login needs it, and the
-   session cookie is marked `Secure` only when it is https. The server warns when
-   it is not.
-3. **Generate `SPOV_SERVER_TOKEN` yourself:** `openssl rand -hex 32`. Keep it in
+   session cookie is marked `Secure`, and named `__Host-spov_session`, only when it
+   is https. The server warns when it is not.
+3. **Generate `SPOV_SERVER_TOKEN` yourself:** `openssl rand -hex 32`. A hosted
+   server refuses to start with one under 32 characters. Keep it in
    the same secret store as `SPOV_CREDENTIAL_KEY`. Do not give it to users; they
    should use `spov login`.
 4. **Set `SPOV_CREDENTIAL_KEY`** (`openssl rand -base64 32`), and back it up
@@ -223,13 +245,14 @@ Do each of these before a server is reachable by people you do not know.
    give you, and never set `SPOV_TOKENS_IN_SANDBOX`.
 5. **Protect the database and its backups.** Postgres holds sealed credentials
    and, in clear, every session's transcript and events and every job's reports.
-   It also holds browser session tokens as issued, so a person who can read the
-   `web_sessions` table can act as a signed-in user, an admin included, until
-   those expire (after at most seven days). Give the database its own credentials
-   and TLS, restrict who can read it and its backups, and size its disk. Hosted
-   mode keeps sessions, events, messages and job files until you delete them by
-   hand, and has no retention setting yet. (`history.retention` applies to a local
-   server only.)
+   Browser session tokens and CLI tokens are stored only as hashes, so reading
+   the tables does not give a working login. Give the database its own credentials
+   and TLS, restrict who can read it and its backups, and size its disk. One
+   session stores at most `history.max_session_mib` (1024 MiB by default) of
+   events and messages, after which its recording stops and its sandbox runs on.
+   Hosted mode keeps sessions, events, messages and job files until you delete
+   them by hand, and has no retention setting yet. (`history.retention` applies to
+   a local server only.)
 6. **Choose the allowlist deliberately, with at least two admins.** Each person on
    it can run the quotas above around the clock, and uses the organisation's
    credentials. Under the organisation's GitHub App that means any repository the
@@ -261,9 +284,6 @@ Do each of these before a server is reachable by people you do not know.
     [releasing.md](releasing.md#checking-a-release) describe, and deploy the image
     by its `sha256` digest rather than a tag. A server is as patched as its
     release's build day, so watch for new releases and update.
-
-<!-- security-round: trusted proxies. When `server.trusted_proxies` lands, say in
-item 1 what it does and when to set it. -->
 
 ## Reporting a vulnerability
 
