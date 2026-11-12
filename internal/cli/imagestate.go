@@ -11,6 +11,22 @@ import (
 	"github.com/jimutt/spov/internal/store/postgres"
 )
 
+// templateStore is where the deployment keeps sandbox templates: the
+// database for a server on Postgres, a file beside server.json
+// otherwise, and memory when no state directory can be found.
+//
+// @decision(DL-119)
+func (e *Env) templateStore(st store.Store) store.TemplateStore {
+	if pg, ok := st.(*postgres.Store); ok {
+		return pg.Templates()
+	}
+	dir, err := e.stateDir()
+	if err != nil {
+		return &store.FileTemplates{}
+	}
+	return &store.FileTemplates{Path: filepath.Join(dir, store.TemplatesName)}
+}
+
 // imageRegistry is where the deployment records its images: the
 // database's registry for a server on Postgres, the state file beside
 // server.json otherwise. file is that state file, or nil. A state

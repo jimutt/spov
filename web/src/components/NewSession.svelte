@@ -4,15 +4,17 @@
   // /api/v1/sessions and leaves for the session's page, which shows the
   // launch. The logic is in ../lib/sessionform.ts.
   //
-  // @decision(DL-061)
+  // @decision(DL-061) @decision(DL-121)
   import { api, nav, unwrap } from '../lib/api/client';
   import { resource } from '../lib/resource.svelte';
   import { Committed, defaultOptionLabel, keyNote, modelGroups, type RepoRef } from '../lib/jobform';
   import { sessionProblems, startAndGo } from '../lib/sessionform';
   import { sentence } from '../lib/format';
+  import { listTemplates } from '../lib/templates';
   import ModelPicker from './ModelPicker.svelte';
   import Problem from './Problem.svelte';
   import RepoPicker from './RepoPicker.svelte';
+  import TemplatePicker from './TemplatePicker.svelte';
   import { help, label, pageTitle, primaryLarge } from './ui';
 
   const repos = resource(async (signal) => unwrap(await api.GET('/api/v1/repos', { signal })));
@@ -20,7 +22,12 @@
   const models = resource(async (signal) => unwrap(await api.GET('/api/v1/models', { signal })));
   const me = resource(async (signal) => unwrap(await api.GET('/api/v1/me', { signal })));
 
+  // A failed read draws no picker and stops no launch. @decision(DL-121)
+  const templates = resource(listTemplates);
+
   let selected = $state<RepoRef[]>([]);
+  // None on every load, and never remembered. @decision(DL-121)
+  let template = $state('');
   let model = $state('');
   const groups = $derived(modelGroups(models.data?.providers));
   const keys = $derived(keyNote(groups));
@@ -35,7 +42,7 @@
     starting = true;
     failure = undefined;
     try {
-      await startAndGo(selected, (body) => api.POST('/api/v1/sessions', { body }), nav.go, model);
+      await startAndGo(selected, (body) => api.POST('/api/v1/sessions', { body }), nav.go, model, template);
     } catch (err) {
       failure = err;
       // Re-enabled only for a refusal: a Committed session exists, and a
@@ -70,6 +77,9 @@
         Each one is cloned into <code class="font-mono text-ink">/workspace</code>.
       </p>
     </fieldset>
+
+    <!-- @decision(DL-121) -->
+    <TemplatePicker id="session-template" bind:value={template} templates={templates.data} />
 
     <!-- Optional: left alone, the session runs on your default.
          @decision(DL-061) -->
