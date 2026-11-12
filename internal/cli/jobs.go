@@ -211,6 +211,11 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 			return errors.New("a sync job works in one repository, the checkout's; drop the extra --repo flags")
 		}
 		ref, req, checkout, err := env.resolveSyncLaunch(ctx, c, cfg, opts.Repos)
+		var mismatch repoMismatchError
+		if errors.As(err, &mismatch) {
+			return fmt.Errorf("a sync job starts from the checkout it is created in (%s), which does not match --repo %s; drop --repo",
+				mismatch.checkout, mismatch.flag)
+		}
 		if err != nil {
 			return fmt.Errorf("a sync job starts from the checkout it is created in: %w", err)
 		}
