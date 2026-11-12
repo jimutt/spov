@@ -2,10 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"log"
 	"net/http"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -765,6 +769,11 @@ func toHumaError(err error) error {
 	// @decision(DL-009)
 	case errors.Is(err, ErrQuotaExceeded):
 		return huma.Error429TooManyRequests(err.Error())
+	// A launch that reached the build limit after its create passed.
+	//
+	// @decision(DL-134)
+	case errors.As(err, new(*session.BuildLimitError)):
+		return huma.Error429TooManyRequests(err.Error())
 	case errors.Is(err, ErrPasswordUnavailable), errors.Is(err, session.ErrNoPassword):
 		// Never a fabricated password: it would authenticate nowhere and
 		// fail at the proxy with a far less obvious message.
@@ -786,9 +795,58 @@ func toHumaError(err error) error {
 		return e
 	case errors.Is(err, context.DeadlineExceeded):
 		return huma.Error504GatewayTimeout(redact.Error(err))
+	// An unexpected store error names the database's host, user and
+	// statement; the client gets a fixed answer and the log the detail.
+	//
+	// @decision(DL-135)
+	case unexpectedStoreError(err):
+		return internalProblem(err)
 	default:
 		return huma.Error502BadGateway(redact.Error(err))
 	}
+}
+
+// storeSentinels are the store's own deliberate errors, which a caller
+// may show.
+var storeSentinels = []error{
+	store.ErrNotFound, store.ErrConflict, store.ErrNestedTx, store.ErrInvalidEvent,
+	store.ErrInvalidTransition, store.ErrInvalidJob, store.ErrJournalLocked,
+}
+
+// unexpectedStoreError reports whether err is one a store raised that is
+// not one of its sentinels: every store error's text begins "store: ",
+// at any depth of the wrapping.
+//
+// @decision(DL-135)
+func unexpectedStoreError(err error) bool {
+	for _, s := range storeSentinels {
+		if errors.Is(err, s) {
+			return false
+		}
+	}
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if strings.HasPrefix(e.Error(), "store: ") {
+			return true
+		}
+	}
+	return false
+}
+
+// internalLog is where the detail of an internal error goes: the
+// process's standard logger, which `spov serve` points at stderr beside
+// its own warnings.
+var internalLog = log.New(os.Stderr, "spov serve: ", log.LstdFlags)
+
+// internalProblem answers 500 with a fixed message and a reference, and
+// logs the detail under that reference.
+//
+// @decision(DL-135)
+func internalProblem(err error) error {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	ref := hex.EncodeToString(b[:])
+	internalLog.Printf("internal error %s: %s", ref, redact.Error(err))
+	return huma.Error500InternalServerError("internal error (reference " + ref + "); the detail is in the server log")
 }
 
 func principal(ctx context.Context) auth.Principal {
@@ -1022,9 +1080,13 @@ func (s *Server) registerRepos() {
 		// Both tiers, each repository marked with the tiers that reach
 		// it; the platforms say which one a browser launch uses.
 		//
-		// @decision(DL-042)
+		// Each tier's listing is kept for RepoListTTL per user, so the
+		// forge is asked at most that often however often this is
+		// called.
+		//
+		// @decision(DL-042) @decision(DL-134)
 		if s.deps.UserRepos != nil && p.UserID != "" {
-			tiered, warnings, err := s.deps.UserRepos(ctx, p.OrgID, p.UserID)
+			tiered, warnings, err := s.svc.tieredListing(ctx, p)
 			if err != nil {
 				return nil, toHumaError(err)
 			}
@@ -1032,18 +1094,12 @@ func (s *Server) registerRepos() {
 			out.Body.Repos = mergeTiers(tiered)
 			return out, nil
 		}
-		repos, warnings, err := forge.ListRepos(ctx)
+		views, warnings, err := s.svc.plainListing(ctx, p, forge, tiers)
 		if err != nil {
 			return nil, toHumaError(err)
 		}
 		out.Body.Warnings = warnings
-		out.Body.Repos = make([]RepoView, 0, len(repos))
-		for _, r := range repos {
-			out.Body.Repos = append(out.Body.Repos, RepoView{
-				Platform: r.Platform.Name(), Owner: r.Repo.Owner, Name: r.Repo.Name,
-				Private: r.Repo.Private, Archived: r.Repo.Archived, UpdatedAt: r.Repo.UpdatedAt,
-			})
-		}
+		out.Body.Repos = views
 		return out, nil
 	})
 }

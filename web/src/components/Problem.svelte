@@ -6,17 +6,15 @@
   // The body is shown as it arrived: the scrub that keeps secrets out of
   // a problem response is the server's, and stays there.
   //
-  // @decision(DL-055) @decision(DL-005) @decision(DL-056)
-  import { ApiError } from '../lib/api/client';
+  // @decision(DL-055) @decision(DL-005) @decision(DL-056) @decision(DL-133)
+  import { describeProblem } from '../lib/problem';
 
   let { error, what = 'this page' }: { error: unknown; what?: string } = $props();
 
-  const api = $derived(error instanceof ApiError ? error : undefined);
-  const title = $derived(
-    api?.problem?.title ?? (error instanceof Error ? error.message : String(error ?? '')),
-  );
-  const detail = $derived(api?.problem?.detail);
-  const status = $derived(api?.status);
+  const described = $derived(describeProblem(error));
+  const title = $derived(described.title);
+  const detail = $derived(described.detail);
+  const status = $derived(described.status);
 </script>
 
 <div class="border border-rust/40 bg-rust/[0.07] px-4 py-3" role="alert">

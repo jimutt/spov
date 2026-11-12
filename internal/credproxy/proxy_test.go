@@ -9,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"net/url"
 	"slices"
 	"strings"
@@ -497,6 +499,90 @@ func TestGitLabsCredentialHeadersNeverReachTheUpstream(t *testing.T) {
 	for name := range seen.Header {
 		if c := http.CanonicalHeaderKey(strings.ReplaceAll(name, "_", "-")); slices.Contains(credentialHeaders, c) && c != "Authorization" {
 			t.Errorf("%s reached the upstream", name)
+		}
+	}
+}
+
+// A credentialed response the scrub cannot cover safely is refused: a
+// part of a body, which can cut the secret in two; and early hints, whose
+// headers the scrub never sees. The escaped spellings of the secret go
+// too.
+//
+// @decision(DL-135)
+func TestAnEchoedCredentialInAnotherFormNeverReachesTheClient(t *testing.T) {
+	ca, _ := testCA(t, "forge.example.com")
+	const secret = "real-token/with+chars"
+	secrets := func(*http.Request) []string { return []string{secret} }
+	r := newRig(t, Config{CA: ca, Decrypt: forgeOnly, Rewrite: addToken, Secrets: secrets},
+		func(w http.ResponseWriter, req *http.Request) {
+			switch req.URL.Path {
+			case "/escaped":
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"auth":"`+strings.ReplaceAll(secret, "/", `\/`)+`"}`)
+			case "/urlencoded":
+				_, _ = io.WriteString(w, "token="+url.QueryEscape(secret))
+			case "/range":
+				w.Header().Set("Content-Range", "bytes 0-9/20")
+				w.WriteHeader(http.StatusPartialContent)
+				_, _ = io.WriteString(w, secret[:10])
+			case "/pack-range":
+				w.Header().Set("Content-Type", "application/octet-stream")
+				w.WriteHeader(http.StatusPartialContent)
+				_, _ = io.WriteString(w, "bytes")
+			case "/hints":
+				w.Header().Set("Link", "</x>; rel=preload")
+				w.Header().Set("X-Early-Echo", "Bearer "+secret)
+				w.WriteHeader(http.StatusEarlyHints)
+				w.Header().Del("Link")
+				w.Header().Del("X-Early-Echo")
+				_, _ = io.WriteString(w, "done")
+			}
+		})
+	get := func(path string, trace *httptrace.ClientTrace) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, "https://forge.example.com"+path, nil)
+		if trace != nil {
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+		}
+		resp, err := r.client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+
+	if _, body := get("/escaped", nil); strings.Contains(body, "real-token") || !strings.Contains(body, scrubbed) {
+		t.Errorf("a slash-escaped echo reached the client: %s", body)
+	}
+	if _, body := get("/urlencoded", nil); strings.Contains(body, "real-token") {
+		t.Errorf("a URL-encoded echo reached the client: %s", body)
+	}
+	if status, body := get("/range", nil); status == http.StatusPartialContent || strings.Contains(body, "real-token") {
+		t.Errorf("a partial response was passed on: %d %s", status, body)
+	}
+	if status, body := get("/pack-range", nil); status != http.StatusPartialContent || body != "bytes" {
+		t.Errorf("a partial binary response was refused: %d %s", status, body)
+	}
+	var hinted http.Header
+	status, body := get("/hints", &httptrace.ClientTrace{Got1xxResponse: func(_ int, h textproto.MIMEHeader) error {
+		hinted = http.Header(h)
+		return nil
+	}})
+	if len(hinted) != 0 {
+		t.Errorf("early hint headers reached the client: %v", hinted)
+	}
+	if status != http.StatusOK || body != "done" {
+		t.Errorf("the final response after a hint = %d %q", status, body)
+	}
+	got := r.audits(5)
+	if len(got) < 5 {
+		t.Fatalf("audits = %v", got)
+	}
+	for _, e := range got {
+		if e.Path == "/hints" && e.Status != http.StatusOK {
+			t.Errorf("the audit recorded the hint's status: %d", e.Status)
 		}
 	}
 }

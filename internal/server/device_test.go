@@ -28,8 +28,18 @@ type deviceFixture struct {
 
 func newDeviceFixture(t *testing.T, allowlist string) *deviceFixture {
 	t.Helper()
+	return newDeviceFixtureWith(t, allowlist, nil)
+}
+
+// newDeviceFixtureWith builds the fixture and lets a test adjust Deps
+// after the device flow is wired in.
+func newDeviceFixtureWith(t *testing.T, allowlist string, adjust func(*Deps)) *deviceFixture {
+	t.Helper()
 	f := &deviceFixture{now: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)}
 	f.loginFixture = newLoginFixtureWith(t, allowlist, func(d *Deps, l *Login) {
+		if adjust != nil {
+			defer adjust(d)
+		}
 		f.device = &Device{
 			Store: d.Store,
 			Login: l,

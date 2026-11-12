@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { logStream, sessionsStream } from './live';
+import { describeProblem } from '../problem';
 
 /** serve replies to each successive fetch with the next response, and
  *  hangs once they run out — a stream that stays open, rather than one
@@ -222,6 +223,28 @@ describe('refusals', () => {
       for await (const _ of sessionsStream({ signal: ctl.signal })) void _;
     }).rejects.toThrow(/Forbidden/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // A limit's refusal is final like any other, so a page over its
+  // stream limit does not reopen in a loop; it keeps the server's
+  // detail for the page to show. @decision(DL-133)
+  test('a 429 is final, is not retried, and keeps the server detail', async () => {
+    const detail = 'You have 20 live views open, the most this server allows. Try again in 10 seconds.';
+    const fetchMock = serve(
+      new Response(JSON.stringify({ title: 'Too Many Requests', status: 429, detail }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/problem+json', 'Retry-After': '10' },
+      }),
+    );
+    const ctl = new AbortController();
+    let caught: unknown;
+    try {
+      for await (const _ of logStream('s1', { signal: ctl.signal })) void _;
+    } catch (err) {
+      caught = err;
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(describeProblem(caught)).toEqual({ title: 'Too Many Requests', detail, status: 429 });
   });
 
   test('an error event ends the stream rather than reopening it', async () => {

@@ -62,7 +62,7 @@ func TestServeListensAndStopsOnCancel(t *testing.T) {
 	env := Env{
 		Err:      &errBuf,
 		Out:      &strings.Builder{},
-		Environ:  config.MapEnv{Vars: map[string]string{ServerTokenEnvVar: "tok", TokensInSandboxEnvVar: "1"}},
+		Environ:  config.MapEnv{Vars: map[string]string{ServerTokenEnvVar: testServerToken, TokensInSandboxEnvVar: "1"}},
 		Workdir:  t.TempDir(),
 		Provider: sandbox.NewFake(),
 	}
@@ -90,7 +90,7 @@ func TestServeListensAndStopsOnCancel(t *testing.T) {
 		t.Errorf("unauthenticated me = %d, want 401", resp.StatusCode)
 	}
 	req, _ := http.NewRequest(http.MethodGet, addr+"/api/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Authorization", "Bearer "+testServerToken)
 	resp, err = client.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +136,7 @@ func oneConnClient(t *testing.T) *http.Client {
 const shutdownBound = 12 * time.Second
 
 func TestServeReportsAListenFailure(t *testing.T) {
-	env := Env{Environ: config.MapEnv{Vars: map[string]string{ServerTokenEnvVar: "tok", TokensInSandboxEnvVar: "1"}}, Provider: sandbox.NewFake()}
+	env := Env{Environ: config.MapEnv{Vars: map[string]string{ServerTokenEnvVar: testServerToken, TokensInSandboxEnvVar: "1"}}, Provider: sandbox.NewFake()}
 	if _, _, err := runWith(t, env, "serve", "--listen", "256.256.256.256:1"); err == nil || !strings.Contains(err.Error(), "listen") {
 		t.Errorf("err = %v", err)
 	}
@@ -252,7 +252,7 @@ func TestServeAcceptsAPublicURL(t *testing.T) {
 		Err: &errBuf,
 		Out: &strings.Builder{},
 		Environ: config.MapEnv{Vars: map[string]string{
-			ServerTokenEnvVar:     "tok",
+			ServerTokenEnvVar:     testServerToken,
 			TokensInSandboxEnvVar: "1",
 			PublicURLEnvVar:       "https://spov.example.test",
 		}},
@@ -266,7 +266,7 @@ func TestServeAcceptsAPublicURL(t *testing.T) {
 
 	url := waitForURL(t, &errBuf)
 	req, _ := http.NewRequest(http.MethodGet, url+"/api/v1/me", nil)
-	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Authorization", "Bearer "+testServerToken)
 	req.Host = "spov.example.test"
 	resp, err := oneConnClient(t).Do(req)
 	if err != nil {
@@ -290,7 +290,7 @@ func TestServeAcceptsAPublicURL(t *testing.T) {
 func TestServeRefusesAMalformedPublicURL(t *testing.T) {
 	env := Env{
 		Environ: config.MapEnv{Vars: map[string]string{
-			ServerTokenEnvVar:     "tok",
+			ServerTokenEnvVar:     testServerToken,
 			TokensInSandboxEnvVar: "1",
 			PublicURLEnvVar:       "spov.example.test",
 		}},
@@ -418,5 +418,30 @@ func TestTheForgesPlatformsAreTheOnesWithACredential(t *testing.T) {
 	}
 	if len(platforms) != 1 || platforms[0].Name() != "codefloe" {
 		t.Errorf("platforms = %v", platforms)
+	}
+}
+
+// testServerToken is long enough for a hosted server to accept.
+const testServerToken = "0123456789abcdef0123456789abcdef0123456789abcdef"
+
+// TestAHostedServerRefusesAWeakSharedToken: the shared bearer is a
+// standing administrator's credential, so a short one is refused at
+// start and the message says how to make a good one.
+//
+// @decision(DL-135)
+func TestAHostedServerRefusesAWeakSharedToken(t *testing.T) {
+	env := Env{
+		Environ:  config.MapEnv{Vars: map[string]string{ServerTokenEnvVar: "probe", TokensInSandboxEnvVar: "1"}},
+		Provider: sandbox.NewFake(),
+	}
+	_, _, err := runWith(t, env, "serve", "--listen", "127.0.0.1:0")
+	if err == nil || !strings.Contains(err.Error(), "openssl rand -hex 32") {
+		t.Fatalf("err = %v, want a refusal naming how to generate a token", err)
+	}
+	if checkServerToken(strings.Repeat("a", MinServerTokenLength)) != nil {
+		t.Error("a token of the minimum length was refused")
+	}
+	if checkServerToken(strings.Repeat("a", MinServerTokenLength-1)) == nil {
+		t.Error("a token one short of the minimum was accepted")
 	}
 }

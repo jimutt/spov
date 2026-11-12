@@ -11,7 +11,7 @@ Recorded in [DL-010](../decisions/records/server/DL-010.md).
 |---|---|
 | `SPOV_PUBLIC_URL` | The externally visible origin. **Required behind a proxy**: the `Host` header names it rather than the listen address, and the browser guard runs before authentication — omit it and every request is refused with 403. It is also the OAuth redirect base and the cookie origin. |
 | `SPOV_DATABASE_URL` | Postgres. Environment-only; a database URL carries a password. Without it the server runs on an in-memory store that a restart empties, and jobs and browser login are unavailable. |
-| `SPOV_SERVER_TOKEN` | A single shared bearer token. The server refuses to start without one. Prefer per-user CLI tokens (`spov login`, below) for people; this one identifies nobody and cannot be revoked without restarting the server. |
+| `SPOV_SERVER_TOKEN` | A single shared bearer token. The server refuses to start without one, or with one under 32 characters (`openssl rand -hex 32`). Prefer per-user CLI tokens (`spov login`, below) for people; this one identifies nobody and cannot be revoked without restarting the server. |
 | `MODAL_TOKEN_ID`, `MODAL_TOKEN_SECRET` | The deployment's own Modal credential, minted separately rather than reused from a laptop. |
 | `MODAL_ENVIRONMENT` | The Modal environment sandboxes are created in. Use a dedicated one: DL-004's reaper terminates any `spov=1` sandbox past its deadline, and sharing an environment with your local work puts that work in range. |
 
@@ -34,6 +34,12 @@ set as `SPOV_<PATH>` (for example `SPOV_SANDBOX_TIMEOUT`); the server reads its
 user file and the environment only, never a `.spov.yaml`. See
 [`docs/configuration.md`](../docs/configuration.md).
 
+Behind a reverse proxy, also name the proxy in `server.trusted_proxies` in the
+server's config file. Until then every client shares the proxy's address for
+the per-address sign-in limits, so one client can use up everyone's sign-ins.
+The limits, and what each refusal looks like, are in
+[`docs/server.md`](../docs/server.md#limits).
+
 ## The credential proxy
 
 Forge tokens and model provider keys reach a sandbox through a proxy sidecar
@@ -52,6 +58,19 @@ Modal environment; it returns at once when the image is already published, so
 it is safe before every deploy. Add-on variants are built on first use unless
 `modal.build_on_demand` is false. See
 [`docs/configuration.md`](../docs/configuration.md#add-ons).
+
+Because any valid add-on or `apt` selection is a new image, building on demand
+costs the operator's Modal account, and a hosted server limits it per user (DL-134; a local server does not):
+one build running at a time and five new variants in any 24 hours, each counted
+in the replica's memory. A deployment open to people the operator does not know
+should set `modal.build_on_demand: false` and prebuild the variants it wants
+with `spov serve image build`. Two builds at once per replica remain the bound
+for everyone together.
+
+The repository listing (`GET /api/v1/repos`) is kept for 60 seconds for each
+user and credential tier, also in memory per replica, so one user cannot spend
+the organisation's GitHub App rate limit by listing repeatedly. Storing or
+removing a credential, or the organisation's App, drops the affected entries.
 
 ## Browser login
 
@@ -109,10 +128,38 @@ curl -H "Authorization: Bearer $TOKEN" https://spov.example.com/api/v1/allowlist
 curl -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"admin":false}' https://spov.example.com/api/v1/allowlist/bob@example.com
 
-# Remove someone. This also ends their browser sessions.
+# Remove someone, and end everything they have running and stored.
 curl -X DELETE -H "Authorization: Bearer $TOKEN" \
   https://spov.example.com/api/v1/allowlist/bob@example.com
 ```
+
+Removing someone who has signed in off-boards them in the same call
+(DL-132). After the entry is gone, the server:
+
+- ends their browser sessions;
+- cancels their unfinished jobs and stops their live sessions, held sync
+  jobs included, so their sandboxes are terminated and any connection
+  they saved stops working;
+- revokes every CLI token of theirs, so adding the address again does
+  not bring one back;
+- deletes every credential they stored: forge tokens, provider keys,
+  routed credentials and their OpenCode sign-in;
+- writes an audit row naming the address, you, and what was ended.
+
+Their history stays: their user row, past sessions, transcripts, reports
+and snapshots. Every step is done as you, so a cancelled job says who
+cancelled it. If a step fails, the others still run, and the call
+answers 500 saying the address is removed, what is left, and that the
+same `DELETE` retries. A `DELETE` of an address that is no longer on the
+allowlist, but whose person has signed in, runs the steps again and
+answers 204. One that was never used is simply removed.
+
+Two things are outside what a removal can reach. Their OpenCode sign-in
+is deleted from spov but not revoked at OpenCode; they can end it there.
+And a CLI sign-in they approved in the ten minutes before the removal
+can still issue a token, which is refused while the address is off the
+allowlist. Before adding such an address back, send the `DELETE` once
+more: it revokes any token issued since.
 
 Each replica keeps a cached copy, refreshed every 10 s, and consults it
 on every request — so removing an entry locks that person out on their
@@ -179,7 +226,10 @@ Sessions are server-side rows (`web_sessions`), so revoking one is a
 delete: `GET /api/v1/me/sessions` lists a user's logins and
 `DELETE /api/v1/me/sessions/{id}` ends one. The cookie is
 `HttpOnly; SameSite=Lax; Path=/`, and `Secure` whenever `SPOV_PUBLIC_URL`
-is https — on a plain-http trial it is not, and the server warns.
+is https — on a plain-http trial it is not, and the server warns. A
+`Secure` cookie is named `__Host-spov_session`, so a browser refuses one set
+by a sibling subdomain; on plain http it is `spov_session`. A deployment that
+upgrades to this naming signs everyone in once more.
 
 `SPOV_MIGRATE_ON_START=true` applies migrations before listening. It is
 for compose and development. A real deployment migrates in a step that

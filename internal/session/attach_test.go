@@ -335,3 +335,14 @@ func TestDisplayRef(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// TestAPasswordReadIsBounded is DL-130: printenv runs inside the
+// sandbox, where the agent can replace it with anything.
+func TestAPasswordReadIsBounded(t *testing.T) {
+	p := sandbox.NewFake()
+	h := runningSandbox(t, p, "bounded")
+	p.ExecResults["printenv "+opencode.PasswordEnvVar] = sandbox.ExecResult{Stdout: strings.Repeat("x", maxPasswordOutput+1)}
+	if _, err := PasswordFromSandbox(t.Context(), h); !errors.Is(err, sandbox.ErrOutputTooLarge) {
+		t.Errorf("err = %v, want ErrOutputTooLarge", err)
+	}
+}
