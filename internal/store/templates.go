@@ -165,6 +165,10 @@ func findTemplate(all []fileTemplate, orgID, userID, name string) int {
 	})
 }
 
+// read and write begin every error with "store: ", so an API answer
+// gives the client a fixed message and the path goes to the log.
+//
+// @decision(DL-135)
 func (f *FileTemplates) read() ([]fileTemplate, error) {
 	if f.Path == "" {
 		return slices.Clone(f.mem), nil
@@ -174,14 +178,14 @@ func (f *FileTemplates) read() ([]fileTemplate, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("sandbox templates: %w", err)
+		return nil, fmt.Errorf("store: sandbox templates: %w", err)
 	}
 	var file templateFile
 	if err := json.Unmarshal(b, &file); err != nil {
-		return nil, fmt.Errorf("sandbox templates: read %s: %w", f.Path, err)
+		return nil, fmt.Errorf("store: sandbox templates: read %s: %w", f.Path, err)
 	}
 	if file.Version != 1 {
-		return nil, fmt.Errorf("sandbox templates: %s has version %d, which this build does not read", f.Path, file.Version)
+		return nil, fmt.Errorf("store: sandbox templates: %s has version %d, which this build does not read", f.Path, file.Version)
 	}
 	return file.Templates, nil
 }
@@ -201,26 +205,26 @@ func (f *FileTemplates) write(all []fileTemplate) error {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(f.Path), 0o700); err != nil {
-		return fmt.Errorf("sandbox templates: %w", err)
+		return fmt.Errorf("store: sandbox templates: %w", err)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(f.Path), TemplatesName+".*")
 	if err != nil {
-		return fmt.Errorf("sandbox templates: %w", err)
+		return fmt.Errorf("store: sandbox templates: %w", err)
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	if err := tmp.Chmod(0o600); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("sandbox templates: %w", err)
+		return fmt.Errorf("store: sandbox templates: %w", err)
 	}
 	if _, err := tmp.Write(append(b, '\n')); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("sandbox templates: %w", err)
+		return fmt.Errorf("store: sandbox templates: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("sandbox templates: %w", err)
+		return fmt.Errorf("store: sandbox templates: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), f.Path); err != nil {
-		return fmt.Errorf("sandbox templates: %w", err)
+		return fmt.Errorf("store: sandbox templates: %w", err)
 	}
 	return nil
 }

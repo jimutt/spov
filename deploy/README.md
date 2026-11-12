@@ -147,7 +147,8 @@ Removing someone who has signed in off-boards them in the same call
 - writes an audit row naming the address, you, and what was ended.
 
 Their history stays: their user row, past sessions, transcripts, reports
-and snapshots. Every step is done as you, so a cancelled job says who
+and snapshots. Their sandbox templates stay too, since a template holds
+settings and credential names but no secret. Every step is done as you, so a cancelled job says who
 cancelled it. If a step fails, the others still run, and the call
 answers 500 saying the address is removed, what is left, and that the
 same `DELETE` retries. A `DELETE` of an address that is no longer on the
