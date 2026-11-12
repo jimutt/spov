@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -575,11 +574,16 @@ func (h *modalHandle) Exec(ctx context.Context, command []string) (ExecResult, e
 //
 // @decision(DL-021)
 func (h *modalHandle) ExecInput(ctx context.Context, command []string, stdin []byte) (ExecResult, error) {
+	return h.ExecBounded(ctx, command, stdin, MaxExecOutput)
+}
+
+// @decision(DL-130)
+func (h *modalHandle) ExecBounded(ctx context.Context, command []string, stdin []byte, maxOutput int) (ExecResult, error) {
 	proc, err := h.sb.Exec(ctx, command, nil)
 	if err != nil {
 		return ExecResult{}, fmt.Errorf("sandbox: exec: %w", err)
 	}
-	return runProcess(ctx, proc, stdin)
+	return runProcess(ctx, proc, stdin, maxOutput)
 }
 
 // SidecarExecInput runs a command in a sidecar, as ExecInput does in
@@ -598,7 +602,7 @@ func (h *modalHandle) SidecarExecInput(ctx context.Context, sidecar string, comm
 	if err != nil {
 		return ExecResult{}, fmt.Errorf("sandbox: exec in sidecar %q: %w", sidecar, err)
 	}
-	return runProcess(ctx, proc, stdin)
+	return runProcess(ctx, proc, stdin, MaxExecOutput)
 }
 
 // SidecarRunning looks the sidecar up and polls it.
@@ -653,8 +657,11 @@ func (h *modalHandle) AddTags(ctx context.Context, tags map[string]string) error
 	return nil
 }
 
-// runProcess feeds stdin to a started process and waits for it.
-func runProcess(ctx context.Context, proc *modal.ContainerProcess, stdin []byte) (ExecResult, error) {
+// runProcess feeds stdin to a started process, waits for it and reads
+// at most maxOutput bytes of each output stream.
+//
+// @decision(DL-130)
+func runProcess(ctx context.Context, proc *modal.ContainerProcess, stdin []byte, maxOutput int) (ExecResult, error) {
 	if len(stdin) > 0 {
 		if _, err := proc.Stdin.Write(stdin); err != nil {
 			return ExecResult{}, fmt.Errorf("sandbox: exec stdin: %w", err)
@@ -663,13 +670,25 @@ func runProcess(ctx context.Context, proc *modal.ContainerProcess, stdin []byte)
 	if err := proc.Stdin.Close(); err != nil {
 		return ExecResult{}, fmt.Errorf("sandbox: exec stdin close: %w", err)
 	}
+	// A read that stops at its bound leaves the SDK's reader blocked on
+	// the rest; closing the stream ends it.
+	defer func() {
+		_ = proc.Stdout.Close()
+		_ = proc.Stderr.Close()
+	}()
 	code, err := proc.Wait(ctx, nil)
 	if err != nil {
 		return ExecResult{}, fmt.Errorf("sandbox: exec wait: %w", err)
 	}
-	stdout, _ := io.ReadAll(proc.Stdout)
-	stderr, _ := io.ReadAll(proc.Stderr)
-	return ExecResult{ExitCode: code, Stdout: string(stdout), Stderr: string(stderr)}, nil
+	stdout, err := readBounded(proc.Stdout, maxOutput)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	stderr, err := readBounded(proc.Stderr, maxOutput)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	return ExecResult{ExitCode: code, Stdout: stdout, Stderr: stderr}, nil
 }
 
 // Terminate stops the sandbox and waits, so that the caller knows billing
