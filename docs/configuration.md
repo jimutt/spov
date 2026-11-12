@@ -284,7 +284,8 @@ unless `modal.build_on_demand` is false. In that case an operator prebuilds it
 with `spov serve image build --addons ... --apt ...`. The default toolchain and
 the add-ons are described in [The sandbox](sandbox.md).
 
-On-demand builds are limited per person: one running at a time (a second launch
+On a shared (hosted) server, on-demand builds are limited per person; a local
+server has no such limit. The limits are one running at a time (a second launch
 waits), and five new image variants in any 24 hours, after which a launch or job
 create is refused with a 429 naming the time the next is allowed. The server
 keeps these counts in memory, so they are per replica and start again with a

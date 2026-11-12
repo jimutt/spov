@@ -701,7 +701,11 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 	// @decision(DL-016)
 	builder, _ := provider.(sandbox.ImageBuilder)
 	if builder != nil {
-		launcher.Variants = &session.VariantBuilder{Builder: builder, Warn: warn}
+		// The per-user build limits are for a shared server; a local one
+		// has one user on their own Modal account.
+		//
+		// @decision(DL-134)
+		launcher.Variants = &session.VariantBuilder{Builder: builder, Warn: warn, PerOwnerLimits: !localMode}
 	}
 	sb := cfg.Sandbox
 	// Against every add-on, since a request's own add-ons replace the

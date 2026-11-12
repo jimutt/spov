@@ -92,6 +92,11 @@ type VariantBuilder struct {
 	// Warn is told of a background build that failed.
 	Warn func(string)
 
+	// PerOwnerLimits turns the limits below on. A shared (hosted) server
+	// sets it; the zero value, which a local server keeps, is unlimited.
+	//
+	// @decision(DL-134)
+	PerOwnerLimits bool
 	// MaxRunningPerOwner, MaxNewPerOwner and OwnerWindow bound what one
 	// owner's requests start, in this process only; zero means the
 	// Default constants. An empty owner is not limited, which is how
@@ -199,7 +204,7 @@ func (v *VariantBuilder) now() time.Time {
 // every owner's starts that have left the window, so the map holds only
 // users with a build in the last day.
 func (v *VariantBuilder) limit(owner string, now time.Time) error {
-	if owner == "" {
+	if owner == "" || !v.PerOwnerLimits {
 		return nil
 	}
 	window, max := v.ownerWindow(), v.maxNewPerOwner()
@@ -252,6 +257,9 @@ func (v *VariantBuilder) maxRunningPerOwner() int {
 // @decision(DL-134)
 func (v *VariantBuilder) start(ctx context.Context, owner string, spec sandbox.ImageSpec, rebuild, queue bool) (*variantBuild, <-chan struct{}, error) {
 	name := spec.Name()
+	if !v.PerOwnerLimits {
+		owner = ""
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.running == nil {

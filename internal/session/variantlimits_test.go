@@ -35,7 +35,7 @@ func aptSpec(i int) sandbox.ImageSpec {
 // @decision(DL-134)
 func TestASecondBuildForTheSameUserWaitsWhileAnotherUsersProceeds(t *testing.T) {
 	b := &fakeBuilder{release: make(chan struct{})}
-	v := &VariantBuilder{Builder: b, MaxBuilds: 2}
+	v := &VariantBuilder{Builder: b, MaxBuilds: 2, PerOwnerLimits: true}
 	ctx := context.Background()
 	rust, ruby, dotnet := variantSpec(t, "rust"), variantSpec(t, "ruby"), variantSpec(t, "dotnet")
 	done := make(chan error, 3)
@@ -75,7 +75,7 @@ func TestASecondBuildForTheSameUserWaitsWhileAnotherUsersProceeds(t *testing.T) 
 // @decision(DL-134)
 func TestAWaitingBuildGivesUpWithItsLaunch(t *testing.T) {
 	b := &fakeBuilder{release: make(chan struct{})}
-	v := &VariantBuilder{Builder: b, MaxBuilds: 2}
+	v := &VariantBuilder{Builder: b, MaxBuilds: 2, PerOwnerLimits: true}
 	go func() { _ = v.Ensure(context.Background(), "ann", variantSpec(t, "rust"), false, noNote) }()
 	waitForBuilds(t, b, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
@@ -95,7 +95,7 @@ func TestAWaitingBuildGivesUpWithItsLaunch(t *testing.T) {
 // @decision(DL-134)
 func TestABackgroundBuildDoesNotQueueBehindTheUsersOwn(t *testing.T) {
 	b := &fakeBuilder{release: make(chan struct{})}
-	v := &VariantBuilder{Builder: b, MaxBuilds: 2}
+	v := &VariantBuilder{Builder: b, MaxBuilds: 2, PerOwnerLimits: true}
 	ctx := context.Background()
 	if !v.Start(ctx, "ann", variantSpec(t, "rust"), false) {
 		t.Fatal("the first build should start")
@@ -119,7 +119,7 @@ func TestTheSixthNewVariantInADayIsRefusedAndTheWindowFrees(t *testing.T) {
 	var mu sync.Mutex
 	clock := func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
 	advance := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
-	v := &VariantBuilder{Builder: b, MaxBuilds: 2, Now: clock}
+	v := &VariantBuilder{Builder: b, MaxBuilds: 2, PerOwnerLimits: true, Now: clock}
 	ctx := context.Background()
 	var limit *BuildLimitError
 	for i := range 5 {
@@ -165,7 +165,7 @@ func TestTheSixthNewVariantInADayIsRefusedAndTheWindowFrees(t *testing.T) {
 func TestAnExistingVariantNeverCountsOrWaits(t *testing.T) {
 	rust := variantSpec(t, "rust")
 	b := &fakeBuilder{published: map[string]bool{rust.Name(): true}, release: make(chan struct{})}
-	v := &VariantBuilder{Builder: b, MaxBuilds: 2, MaxNewPerOwner: 1}
+	v := &VariantBuilder{Builder: b, MaxBuilds: 2, PerOwnerLimits: true, MaxNewPerOwner: 1}
 	ctx := context.Background()
 	for range 10 {
 		if err := v.Ensure(ctx, "ann", rust, false, noNote); err != nil {
@@ -204,7 +204,7 @@ func TestAnExistingVariantNeverCountsOrWaits(t *testing.T) {
 // @decision(DL-134)
 func TestAnEmptyOwnerIsNotLimited(t *testing.T) {
 	b := &fakeBuilder{}
-	v := &VariantBuilder{Builder: b, MaxNewPerOwner: 1}
+	v := &VariantBuilder{Builder: b, PerOwnerLimits: true, MaxNewPerOwner: 1}
 	for i := range 3 {
 		if err := v.Ensure(context.Background(), "", aptSpec(i), false, noNote); err != nil {
 			t.Fatal(err)

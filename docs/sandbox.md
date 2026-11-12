@@ -52,7 +52,8 @@ unless `modal.build_on_demand` is false, in which case
 images nobody has used for a while. Versions and defaults are in
 [configuration.md](configuration.md#add-ons).
 
-A server limits how much one person can build. Each person has one image build
+A shared (hosted) server limits how much one person can build; a local server
+does not, since it has one user on their own Modal account. Each person has one image build
 running at a time: a second launch of theirs waits for the first build to end.
 A request may start at most five new images in any 24 hours, failed builds
 included, and a launch past that is refused with a 429 that says when the next
