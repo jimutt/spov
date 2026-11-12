@@ -206,6 +206,12 @@ type Deps struct {
 	//
 	// @decision(DL-007)
 	Login *Login
+	// GitHubAccounts resolves the GitHub login an allowlist entry names
+	// to its account. Nil refuses account entries; serve sets the real
+	// lookup, and a test sets a fake.
+	//
+	// @decision(DL-128)
+	GitHubAccounts auth.AccountLookup
 	// Device, when set, serves the CLI device flow: the endpoints a
 	// terminal polls and the page a human approves on. Nil in local
 	// mode, which needs no login at all.

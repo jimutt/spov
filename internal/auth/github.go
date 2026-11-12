@@ -26,8 +26,13 @@ var GitHubScopes = []string{"read:user", "user:email"}
 
 // GitHubIdentity is what a completed login proves.
 //
-// @decision(DL-007)
+// @decision(DL-007) @decision(DL-128)
 type GitHubIdentity struct {
+	// ID is the account's numeric ID, which is the identity; Login and
+	// Name are labels.
+	//
+	// @decision(DL-128)
+	ID int64
 	// Email is the address that was both primary and verified.
 	Email string
 	Login string
@@ -88,11 +93,19 @@ func (g *GitHubOAuth) Exchange(ctx context.Context, code, verifier string) (GitH
 	client := g.Config.Client(ctx, token)
 
 	var profile struct {
+		ID    int64  `json:"id"`
 		Login string `json:"login"`
 		Name  string `json:"name"`
 	}
 	if err := g.get(ctx, client, "/user", &profile); err != nil {
 		return GitHubIdentity{}, err
+	}
+	// The ID is who the person is, and the login is printed on pages
+	// and in logs, so an answer without either in shape is refused.
+	//
+	// @decision(DL-128)
+	if profile.ID <= 0 || !ValidGitHubLogin(profile.Login) {
+		return GitHubIdentity{}, errors.New("auth: github: /user named no account")
 	}
 	var emails []struct {
 		Email    string `json:"email"`
@@ -107,7 +120,9 @@ func (g *GitHubOAuth) Exchange(ctx context.Context, code, verifier string) (GitH
 	// allowlist into an open door.
 	for _, e := range emails {
 		if e.Primary && e.Verified {
-			return GitHubIdentity{Email: normalizeEmail(e.Email), Login: profile.Login, Name: profile.Name}, nil
+			return GitHubIdentity{
+				ID: profile.ID, Email: normalizeEmail(e.Email), Login: profile.Login, Name: CleanLabel(profile.Name),
+			}, nil
 		}
 	}
 	return GitHubIdentity{}, ErrNoVerifiedEmail

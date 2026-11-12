@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/config"
 	"github.com/jimutt/spov/internal/credentials"
 	"github.com/jimutt/spov/internal/git"
@@ -72,6 +73,12 @@ type Env struct {
 	// SpawnTimeout bounds the wait for a spawned server; zero means
 	// SpawnTimeout.
 	SpawnTimeout time.Duration
+	// GitHubAccounts resolves the GitHub logins of allowlist entries,
+	// at the seed and through the API. Nil means GitHub's own API; a
+	// test sets a fake.
+	//
+	// @decision(DL-128)
+	GitHubAccounts auth.AccountLookup
 	// ServerConfig loads configuration from the user file and the
 	// environment only, without the project file: `spov serve` sets it.
 	//

@@ -77,7 +77,43 @@ allowlist.
 - **Tokens**: your CLI tokens, which you can revoke.
 - **Settings**: your stored credentials and OpenCode connection, default
   model, git access, job time limit and git identity. An admin also stores the
-  organisation's GitHub App here (see [credentials.md](credentials.md#github)).
+  organisation's GitHub App here (see [credentials.md](credentials.md#github)),
+  and manages who may sign in under **People** ([below](#who-may-sign-in)).
+
+## Who may sign in
+
+A hosted server admits only the people on its allowlist. An administrator
+manages it on the Settings page, under **People**: add a person by their GitHub
+username, or by an address, and tick "administrator" for someone who should
+manage the list too.
+
+- **Use the GitHub username.** The server looks it up on GitHub when you add it
+  and shows the name GitHub has for that account, so you can see at once whether
+  you typed the right one. The entry is the account itself, not its name: it
+  keeps working after the person renames their account, and it does not admit
+  whoever takes a released name.
+- **An address works too**, but it must be the address the person's GitHub
+  account has as its primary, verified address, which is often a personal one.
+  When someone is refused, the page they see names both their account and their
+  address, so they can tell you either.
+- The list shows "never signed in" beside an entry nobody has used yet.
+- **Switch someone to the username form only after they have signed in once.**
+  A person on the list by address since before usernames were recorded is known
+  to the server by that address until their next sign-in. The list marks them
+  ("has not signed in since accounts were added"); removing their address before
+  they sign in ends everything of theirs even if their username is on the list.
+- Someone admitted only by username whose GitHub address belongs to an earlier
+  user of the server is refused, so that they cannot take over that user's
+  credentials and history. Add the address as well if they are that person.
+- **Removing a person** ends their browser sessions, cancels their jobs, stops
+  their sessions, revokes their CLI tokens and deletes their stored credentials.
+  Their history and templates are kept. If another entry still covers them (an
+  address and a username for the same person), they keep their access and
+  nothing of theirs is ended.
+
+The same list is the `/api/v1/allowlist` API, for scripts, and a new deployment
+is seeded from a file. [`deploy/README.md`](../deploy/README.md#the-allowlist)
+covers both.
 
 The browser never talks to a sandbox directly. The page shows what the server
 has recorded, and an open tab does not keep a sandbox alive.

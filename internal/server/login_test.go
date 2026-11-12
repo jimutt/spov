@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ type loginFixture struct {
 	login         *Login
 	allowlistPath string
 	github        *githubStub
+	accounts      *fakeGitHubAccounts
 	warnings      []string
 }
 
@@ -42,12 +44,13 @@ type loginFixture struct {
 type githubStub struct {
 	*httptest.Server
 	emails      []map[string]any
+	id          int64
 	login, name string
 }
 
 func newGitHubStub(t *testing.T) *githubStub {
 	t.Helper()
-	s := &githubStub{login: "octocat", name: "The Octocat"}
+	s := &githubStub{id: 583231, login: "octocat", name: "The Octocat"}
 	s.emails = []map[string]any{{"email": "alice@example.com", "primary": true, "verified": true}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /login/oauth/access_token", func(w http.ResponseWriter, _ *http.Request) {
@@ -55,7 +58,7 @@ func newGitHubStub(t *testing.T) *githubStub {
 		_, _ = w.Write([]byte(`{"access_token":"gho_stub","token_type":"bearer"}`))
 	})
 	mux.HandleFunc("GET /user", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"login": s.login, "name": s.name})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": s.id, "login": s.login, "name": s.name})
 	})
 	mux.HandleFunc("GET /user/emails", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(s.emails)
@@ -78,12 +81,26 @@ func (f *loginFixture) setAllowlist(entries map[string]bool) {
 		f.t.Fatal(err)
 	}
 	for _, e := range cur {
-		if err := al.Delete(ctx, DefaultOrgID, e.Email); err != nil {
+		if e.GithubID != 0 {
+			err = al.DeleteAccount(ctx, DefaultOrgID, e.GithubID)
+		} else {
+			err = al.Delete(ctx, DefaultOrgID, e.Email)
+		}
+		if err != nil {
 			f.t.Fatal(err)
 		}
 	}
-	for email, admin := range entries {
-		if err := al.Put(ctx, store.AllowlistEntry{OrgID: DefaultOrgID, Email: email, Admin: admin}); err != nil {
+	for ref, admin := range entries {
+		e := store.AllowlistEntry{OrgID: DefaultOrgID, Email: ref, Admin: admin}
+		// "#<id>" is an account entry, for the tests of DL-128.
+		if id, ok := strings.CutPrefix(ref, "#"); ok {
+			n, convErr := strconv.ParseInt(id, 10, 64)
+			if convErr != nil {
+				f.t.Fatal(convErr)
+			}
+			e = store.AllowlistEntry{OrgID: DefaultOrgID, GithubID: n, GithubLogin: "acct" + id, Admin: admin}
+		}
+		if err := al.Put(ctx, e); err != nil {
 			f.t.Fatal(err)
 		}
 	}
@@ -101,7 +118,7 @@ func newLoginFixture(t *testing.T, allowlist string) *loginFixture {
 // and the Login they hang off — before the server is constructed.
 func newLoginFixtureWith(t *testing.T, allowlist string, adjust func(*Deps, *Login)) *loginFixture {
 	t.Helper()
-	f := &loginFixture{t: t, store: store.NewMemory(), github: newGitHubStub(t)}
+	f := &loginFixture{t: t, store: store.NewMemory(), github: newGitHubStub(t), accounts: newFakeGitHubAccounts()}
 
 	f.allowlistPath = filepath.Join(t.TempDir(), "allowlist")
 	if err := os.WriteFile(f.allowlistPath, []byte(allowlist), 0o600); err != nil {
@@ -113,7 +130,7 @@ func newLoginFixtureWith(t *testing.T, allowlist string, adjust func(*Deps, *Log
 	//
 	// @decision(DL-007)
 	ctx := context.Background()
-	if _, err := auth.SeedAllowlist(ctx, f.store, DefaultOrgID, f.allowlistPath, warn); err != nil {
+	if _, err := auth.SeedAllowlist(ctx, f.store, DefaultOrgID, f.allowlistPath, f.accounts.lookup, warn); err != nil {
 		t.Fatal(err)
 	}
 	list, err := auth.NewAllowlist(ctx,
@@ -144,7 +161,7 @@ func newLoginFixtureWith(t *testing.T, allowlist string, adjust func(*Deps, *Log
 
 	f.login = &Login{
 		OAuth: oauthApp, Sessions: sessions, Users: f.store.Users(),
-		Allowlist: list, OrgID: DefaultOrgID,
+		Allowlist: list, Entries: f.store.Allowlist(), Store: f.store, OrgID: DefaultOrgID,
 		Warn: func(s string) { f.warnings = append(f.warnings, s); t.Log(s) },
 	}
 
@@ -160,7 +177,9 @@ func newLoginFixtureWith(t *testing.T, allowlist string, adjust func(*Deps, *Log
 		// @decision(DL-006)
 		BrowserAuth: cookies,
 		Login:       f.login,
-		Warn:        func(s string) { t.Log(s) },
+		// @decision(DL-128)
+		GitHubAccounts: f.accounts.lookup,
+		Warn:           func(s string) { t.Log(s) },
 	}
 	if adjust != nil {
 		adjust(&deps, f.login)
@@ -521,7 +540,11 @@ func TestRevokeSessionsDeletesTheirSessions(t *testing.T) {
 	f.doLogin("")
 
 	f.setAllowlist(map[string]bool{"bob@example.com": false})
-	if err := f.login.RevokeSessions(context.Background(), DefaultOrgID, "alice@example.com"); err != nil {
+	alice, err := f.store.Users().ByEmail(context.Background(), DefaultOrgID, "alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.login.RevokeSessions(context.Background(), []store.User{alice}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -540,8 +563,10 @@ func TestRevokeSessionsDeletesTheirSessions(t *testing.T) {
 func TestRevokeSessionsForSomeoneWhoNeverLoggedIn(t *testing.T) {
 	f := newLoginFixture(t, "alice@example.com\n")
 	f.doLogin("")
-	if err := f.login.RevokeSessions(context.Background(), DefaultOrgID, "nobody@example.com"); err != nil {
-		t.Fatalf("revoking an address with no user: %v", err)
+	for _, users := range [][]store.User{nil, {{ID: "01ARZ3NDEKTSV4RRFFQ69G5FZZ", OrgID: DefaultOrgID}}} {
+		if err := f.login.RevokeSessions(context.Background(), users); err != nil {
+			t.Fatalf("revoking %v: %v", users, err)
+		}
 	}
 	// And it revoked nothing else on the way past.
 	if got := f.get("/api/v1/me"); got.StatusCode != http.StatusOK {
@@ -874,25 +899,23 @@ func TestAUserWithNoGitHubNameFallsBackToTheLogin(t *testing.T) {
 	}
 }
 
-// TestRevokeSessionsReportsAFailedLookup rather than panicking or
-// revoking everything. The entry is already gone by then, so the caller
-// warns rather than failing the delete — but it has to be told.
+// TestALoginWhoseAddressLookupFailsIsNotSignedIn: a first sign-in looks
+// for a row from before accounts were recorded, and a failed read of it
+// must not create a second row or sign anyone in.
 //
-// @decision(DL-007)
-func TestRevokeSessionsReportsAFailedLookup(t *testing.T) {
+// @decision(DL-007) @decision(DL-128)
+func TestALoginWhoseAddressLookupFailsIsNotSignedIn(t *testing.T) {
 	f := newLoginFixture(t, "alice@example.com\n")
-	f.doLogin("")
 	f.login.Users = failingUsers{UserStore: f.store.Users(), byEmailErr: errors.New("the database is down")}
 
-	if err := f.login.RevokeSessions(context.Background(), DefaultOrgID, "alice@example.com"); err == nil {
-		t.Error("a failed lookup was reported as success")
+	if resp := f.doLogin(""); resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("a failed lookup = %d, want 500", resp.StatusCode)
 	}
-
-	// The session is untouched: a lookup that failed says nothing about
-	// whose sessions to end.
-	f.login.Users = f.store.Users()
-	if got := f.get("/api/v1/me"); got.StatusCode != http.StatusOK {
-		t.Errorf("me = %d after a failed lookup, want it left alone", got.StatusCode)
+	if users, _ := f.store.Users().List(context.Background(), DefaultOrgID); len(users) != 0 {
+		t.Errorf("a failed lookup created %+v", users)
+	}
+	if got := f.get("/api/v1/me"); got.StatusCode != http.StatusUnauthorized {
+		t.Errorf("me = %d after a failed lookup, want 401", got.StatusCode)
 	}
 }
 
@@ -901,7 +924,7 @@ func TestRevokeSessionsReportsAFailedLookup(t *testing.T) {
 //
 // @decision(DL-007)
 func TestRevokeSessionsWithoutAStoreDoesNothing(t *testing.T) {
-	if err := (&Login{}).RevokeSessions(context.Background(), DefaultOrgID, "alice@example.com"); err != nil {
+	if err := (&Login{}).RevokeSessions(context.Background(), []store.User{{ID: "u"}}); err != nil {
 		t.Fatal(err)
 	}
 }

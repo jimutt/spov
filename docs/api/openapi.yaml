@@ -28,17 +28,52 @@ components:
           readOnly: true
           type: string
         admin:
-          description: Whether this address administers the org
+          description: Whether this entry administers the org
           type: boolean
+        also_covered_by:
+          description: Other entries (an address or @login) that cover a user this entry covers; removing this one leaves that user their access
+          items:
+            type: string
+          type:
+            - array
+            - "null"
         created_at:
           format: date-time
           type: string
         email:
-          description: The address, lower-cased
+          description: The address, lower-cased; empty on an account entry
           type: string
+        github_id:
+          description: The account's numeric GitHub ID, which the entry admits
+          format: int64
+          type: integer
+        github_login:
+          description: The account's login as GitHub spells it
+          type: string
+        kind:
+          description: An address entry, or a GitHub account entry
+          enum:
+            - email
+            - github
+          type: string
+        last_login_at:
+          description: The newest sign-in of a user this entry covers
+          format: date-time
+          type: string
+        name:
+          description: The account's display name, or the name of the user an address entry covers
+          type: string
+        unbound:
+          description: An address entry covering a user who has not signed in since accounts were recorded; removing it ends everything of theirs even if their account has an entry
+          type: boolean
+        you:
+          description: Whether this entry covers the caller
+          type: boolean
       required:
+        - kind
         - email
         - admin
+        - you
         - created_at
       type: object
     AllowlistOutputBody:
@@ -1438,7 +1473,7 @@ components:
           readOnly: true
           type: string
         admin:
-          description: Whether this address administers the org
+          description: Whether this entry administers the org
           type: boolean
       required:
         - admin
@@ -2696,20 +2731,20 @@ paths:
           description: Internal Server Error
       security:
         - bearer: []
-      summary: The addresses that may log in
+      summary: The addresses and GitHub accounts that may log in
       tags:
         - admin
-  /api/v1/allowlist/{email}:
+  /api/v1/allowlist/{entry}:
     delete:
-      description: Removes the entry, ends the person's browser sessions, cancels their unfinished jobs, stops their live sessions (a held sync job's included), revokes their CLI tokens and deletes their stored credentials, then writes an audit row. Their history is kept. Deleting an address that is no longer on the allowlist, but has signed in, runs those steps again.
+      description: Removes the entry. For each user it covered whom no other entry still covers, it ends their browser sessions, cancels their unfinished jobs, stops their live sessions (a held sync job's included), revokes their CLI tokens and deletes their stored credentials, then writes an audit row. Their history is kept. Deleting an address or @login that is no longer on the allowlist, but names a user who signed in and whom no entry covers, runs those steps again. An account entry may be named id:<github_id>, which a retry matches against the user's account.
       operationId: delete-allowlist-entry
       parameters:
-        - description: The address to remove
+        - description: The address, the GitHub account written @login, or the account entry written id:<github_id>, to remove
           in: path
-          name: email
+          name: entry
           required: true
           schema:
-            description: The address to remove
+            description: The address, the GitHub account written @login, or the account entry written id:<github_id>, to remove
             type: string
       responses:
         "204":
@@ -2732,6 +2767,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorModel"
           description: Not Found
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
         "422":
           content:
             application/problem+json:
@@ -2746,18 +2787,19 @@ paths:
           description: Internal Server Error
       security:
         - bearer: []
-      summary: Stop an address logging in, and end what it has running and stored
+      summary: Stop an address or a GitHub account logging in, and end what it has running and stored
       tags:
         - admin
     put:
+      description: The entry is an address, a GitHub account written @login, or an existing account entry written id:<github_id>. A new account entry is always resolved with GitHub and stored by its numeric ID; an existing one is matched by its stored login, or by its ID, without asking GitHub.
       operationId: put-allowlist-entry
       parameters:
-        - description: The address to allow
+        - description: An address, a GitHub account written @login, or an existing account entry written id:<github_id>
           in: path
-          name: email
+          name: entry
           required: true
           schema:
-            description: The address to allow
+            description: An address, a GitHub account written @login, or an existing account entry written id:<github_id>
             type: string
       requestBody:
         content:
@@ -2784,6 +2826,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorModel"
           description: Forbidden
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
         "422":
           content:
             application/problem+json:
@@ -2796,9 +2844,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorModel"
           description: Internal Server Error
+        "501":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Not Implemented
+        "502":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Bad Gateway
       security:
         - bearer: []
-      summary: Allow an address to log in, or change its admin rights
+      summary: Allow an address or a GitHub account to log in, or change its admin rights
       tags:
         - admin
   /api/v1/jobs:

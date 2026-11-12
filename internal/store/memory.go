@@ -2,10 +2,12 @@ package store
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -733,6 +735,10 @@ func (s memUsers) Create(_ context.Context, u User) error {
 	if s.byEmail(u.OrgID, u.Email) != nil {
 		return ErrConflict
 	}
+	// @decision(DL-128)
+	if u.GithubID != 0 && s.byGithubID(u.OrgID, u.GithubID) != nil {
+		return ErrConflict
+	}
 	now := s.m.now()
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = now
@@ -751,6 +757,62 @@ func (s memUsers) byEmail(orgID, email string) *User {
 			return &u
 		}
 	}
+	return nil
+}
+
+func (s memUsers) byGithubID(orgID string, githubID int64) *User {
+	if githubID == 0 {
+		return nil
+	}
+	for _, u := range s.m.users {
+		if u.OrgID == orgID && u.GithubID == githubID {
+			return &u
+		}
+	}
+	return nil
+}
+
+// @decision(DL-128)
+func (s memUsers) ByGithubID(_ context.Context, orgID string, githubID int64) (User, error) {
+	defer s.m.lock()()
+	if u := s.byGithubID(orgID, githubID); u != nil {
+		return copyUser(*u), nil
+	}
+	return User{}, ErrNotFound
+}
+
+// @decision(DL-128)
+func (s memUsers) ByGithubLogin(_ context.Context, orgID, login string) ([]User, error) {
+	defer s.m.lock()()
+	var out []User
+	for _, u := range s.m.users {
+		if u.OrgID == orgID && u.GithubID != 0 && login != "" && strings.EqualFold(u.GithubLogin, login) {
+			out = append(out, copyUser(u))
+		}
+	}
+	slices.SortFunc(out, func(a, b User) int { return strings.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
+// @decision(DL-128)
+func (s memUsers) BindGithub(_ context.Context, orgID, userID string, githubID int64) error {
+	defer s.m.lock()()
+	u, ok := s.m.users[userID]
+	if !ok || u.OrgID != orgID {
+		return ErrNotFound
+	}
+	switch {
+	case u.GithubID == githubID:
+		return nil
+	case u.GithubID != 0, githubID == 0:
+		return ErrConflict
+	}
+	if other := s.byGithubID(orgID, githubID); other != nil {
+		return ErrConflict
+	}
+	u.GithubID = githubID
+	u.UpdatedAt = s.m.now()
+	s.m.users[userID] = u
 	return nil
 }
 
@@ -792,6 +854,10 @@ func (s memUsers) Update(_ context.Context, u User) error {
 		return ErrConflict
 	}
 	u.CreatedAt = cur.CreatedAt
+	// Only Create and BindGithub set the account.
+	//
+	// @decision(DL-128)
+	u.GithubID = cur.GithubID
 	u.UpdatedAt = s.m.now()
 	s.m.users[u.ID] = copyUser(u)
 	return nil
@@ -1094,14 +1160,21 @@ func copyCredential(c UserCredential) UserCredential {
 
 type memAllowlist struct{ m *Memory }
 
-// allowKey is the entry's identity. The e-mail is lowercased here so
-// that a caller passing whatever case a person typed finds the same
-// row, matching the Postgres store's normalisation rather than relying
-// on every caller to normalise first.
+// allowKey is an address entry's identity. The e-mail is lowercased
+// here so that a caller passing whatever case a person typed finds the
+// same row, matching the Postgres store's normalisation rather than
+// relying on every caller to normalise first.
 //
 // @decision(DL-007)
 func allowKey(orgID, email string) string {
-	return orgID + "\x00" + normalizeAllowEmail(email)
+	return orgID + "\x00a\x00" + normalizeAllowEmail(email)
+}
+
+// accountKey is an account entry's identity, its numeric GitHub ID.
+//
+// @decision(DL-128)
+func accountKey(orgID string, githubID int64) string {
+	return orgID + "\x00g\x00" + strconv.FormatInt(githubID, 10)
 }
 
 func normalizeAllowEmail(email string) string {
@@ -1116,12 +1189,22 @@ func (s memAllowlist) List(_ context.Context, orgID string) ([]AllowlistEntry, e
 			out = append(out, e)
 		}
 	}
-	slices.SortFunc(out, func(a, b AllowlistEntry) int { return strings.Compare(a.Email, b.Email) })
+	// Account entries have no address and sort first, by ID, as the
+	// Postgres store orders them.
+	slices.SortFunc(out, func(a, b AllowlistEntry) int {
+		if c := strings.Compare(a.Email, b.Email); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.GithubID, b.GithubID)
+	})
 	return out, nil
 }
 
 func (s memAllowlist) Get(_ context.Context, orgID, email string) (AllowlistEntry, error) {
 	defer s.m.lock()()
+	if normalizeAllowEmail(email) == "" {
+		return AllowlistEntry{}, ErrNotFound
+	}
 	e, ok := s.m.allowlist[allowKey(orgID, email)]
 	if !ok {
 		return AllowlistEntry{}, ErrNotFound
@@ -1129,10 +1212,42 @@ func (s memAllowlist) Get(_ context.Context, orgID, email string) (AllowlistEntr
 	return e, nil
 }
 
+// @decision(DL-128)
+func (s memAllowlist) GetAccount(_ context.Context, orgID string, githubID int64) (AllowlistEntry, error) {
+	defer s.m.lock()()
+	e, ok := s.m.allowlist[accountKey(orgID, githubID)]
+	if !ok || githubID == 0 {
+		return AllowlistEntry{}, ErrNotFound
+	}
+	return e, nil
+}
+
+// @decision(DL-128)
+func (s memAllowlist) ByLogin(_ context.Context, orgID, login string) ([]AllowlistEntry, error) {
+	defer s.m.lock()()
+	var out []AllowlistEntry
+	for _, e := range s.m.allowlist {
+		if e.OrgID == orgID && e.GithubID != 0 && login != "" && strings.EqualFold(e.GithubLogin, login) {
+			out = append(out, e)
+		}
+	}
+	slices.SortFunc(out, func(a, b AllowlistEntry) int { return cmp.Compare(a.GithubID, b.GithubID) })
+	return out, nil
+}
+
 func (s memAllowlist) Put(_ context.Context, e AllowlistEntry) error {
 	defer s.m.lock()()
 	e.Email = normalizeAllowEmail(e.Email)
-	key := allowKey(e.OrgID, e.Email)
+	var key string
+	switch {
+	case e.Email != "" && e.GithubID == 0:
+		key = allowKey(e.OrgID, e.Email)
+		e.GithubLogin, e.GithubName = "", ""
+	case e.Email == "" && e.GithubID != 0:
+		key = accountKey(e.OrgID, e.GithubID)
+	default:
+		return ErrMixedEntry
+	}
 	if cur, ok := s.m.allowlist[key]; ok {
 		e.CreatedAt = cur.CreatedAt
 	} else if e.CreatedAt.IsZero() {
@@ -1142,10 +1257,34 @@ func (s memAllowlist) Put(_ context.Context, e AllowlistEntry) error {
 	return nil
 }
 
+// @decision(DL-128)
+func (s memAllowlist) Relabel(_ context.Context, orgID string, githubID int64, login, name string) error {
+	defer s.m.lock()()
+	key := accountKey(orgID, githubID)
+	e, ok := s.m.allowlist[key]
+	if !ok {
+		return nil
+	}
+	e.GithubLogin, e.GithubName = login, name
+	s.m.allowlist[key] = e
+	return nil
+}
+
 func (s memAllowlist) Delete(_ context.Context, orgID, email string) error {
 	defer s.m.lock()()
 	key := allowKey(orgID, email)
-	if _, ok := s.m.allowlist[key]; !ok {
+	if _, ok := s.m.allowlist[key]; !ok || normalizeAllowEmail(email) == "" {
+		return ErrNotFound
+	}
+	delete(s.m.allowlist, key)
+	return nil
+}
+
+// @decision(DL-128)
+func (s memAllowlist) DeleteAccount(_ context.Context, orgID string, githubID int64) error {
+	defer s.m.lock()()
+	key := accountKey(orgID, githubID)
+	if _, ok := s.m.allowlist[key]; !ok || githubID == 0 {
 		return ErrNotFound
 	}
 	delete(s.m.allowlist, key)

@@ -59,13 +59,16 @@ func (a *CookieAuthenticator) Authenticate(r *http.Request) (Principal, error) {
 		}
 		return Principal{}, fmt.Errorf("auth: loading the session's user: %w", err)
 	}
-	admin, ok := a.Allowlist.Lookup(user.Email)
+	// @decision(DL-128)
+	admin, ok := a.Allowlist.Lookup(user.GithubID, user.Email)
 	if !ok {
 		return Principal{}, fmt.Errorf("%w: %s is no longer on the allowlist", ErrBadCredential, user.Email)
 	}
 	// The allowlist is the authority on admin, not the stored row: an
 	// operator edits the file, and the change must not wait for a login.
-	return Principal{UserID: user.ID, OrgID: user.OrgID, Email: user.Email, Admin: admin}, nil
+	return Principal{
+		UserID: user.ID, OrgID: user.OrgID, Email: user.Email, GitHubID: user.GithubID, Admin: admin,
+	}, nil
 }
 
 // Chain tries each authenticator in order and returns the first that

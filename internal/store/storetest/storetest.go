@@ -1101,6 +1101,95 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("a deleted user is still there: %v", err)
 		}
 	},
+	// A row is bound to one GitHub account once and never moved, and two
+	// rows never share an account.
+	//
+	// @decision(DL-128)
+	"users: a row is bound to one GitHub account and never moved": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		users := s.Users()
+		old := store.User{ID: store.NewID(t0), OrgID: "org", Email: "old@example.com", GithubLogin: "Ada"}
+		bound := store.User{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", Email: "b@example.com",
+			GithubID: 7, GithubLogin: "bob"}
+		for _, u := range []store.User{old, bound} {
+			if err := users.Create(ctx, u); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got, err := users.ByGithubID(ctx, "org", 7); err != nil || got.ID != bound.ID {
+			t.Fatalf("by github id = %+v, %v", got, err)
+		}
+		if _, err := users.ByGithubID(ctx, "other", 7); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("another org saw the account: %v", err)
+		}
+		if _, err := users.ByGithubID(ctx, "org", 0); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("an unbound account found a row: %v", err)
+		}
+		// A login is matched only on a bound row.
+		if got, err := users.ByGithubLogin(ctx, "org", "ada"); err != nil || len(got) != 0 {
+			t.Errorf("an unbound row matched its login: %+v, %v", got, err)
+		}
+		if got, err := users.ByGithubLogin(ctx, "org", "BOB"); err != nil || len(got) != 1 || got[0].ID != bound.ID {
+			t.Errorf("by login = %+v, %v", got, err)
+		}
+		if got, err := users.ByGithubLogin(ctx, "other", "bob"); err != nil || len(got) != 0 {
+			t.Errorf("another org matched the login: %+v, %v", got, err)
+		}
+		// Another row cannot take an account already held.
+		if err := users.BindGithub(ctx, "org", old.ID, 7); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a second row took a held account: %v", err)
+		}
+		dup := store.User{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", Email: "c@example.com", GithubID: 7}
+		if err := users.Create(ctx, dup); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a new row was created on a held account: %v", err)
+		}
+		if err := users.BindGithub(ctx, "org", old.ID, 9); err != nil {
+			t.Fatal(err)
+		}
+		// Binding again to the same account is no change; to another is
+		// refused.
+		if err := users.BindGithub(ctx, "org", old.ID, 9); err != nil {
+			t.Errorf("binding twice to the same account: %v", err)
+		}
+		if err := users.BindGithub(ctx, "org", old.ID, 10); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a bound row was moved to another account: %v", err)
+		}
+		if err := users.BindGithub(ctx, "other", old.ID, 10); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("another org bound the row: %v", err)
+		}
+		// Update never writes the account.
+		got, _ := users.Get(ctx, "org", old.ID)
+		got.GithubID = 11
+		got.Name = "Ada"
+		if err := users.Update(ctx, got); err != nil {
+			t.Fatal(err)
+		}
+		if again, _ := users.Get(ctx, "org", old.ID); again.GithubID != 9 || again.Name != "Ada" {
+			t.Errorf("after an update the row is %+v, want account 9 kept", again)
+		}
+	},
+	// A failed bind inside a transaction rolls back with it.
+	//
+	// @decision(DL-128)
+	"users: a bind rolls back with its transaction": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		u := store.User{ID: store.NewID(t0), OrgID: "org", Email: "a@example.com"}
+		if err := s.Users().Create(ctx, u); err != nil {
+			t.Fatal(err)
+		}
+		err := s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Users().BindGithub(ctx, "org", u.ID, 5); err != nil {
+				return err
+			}
+			return errors.New("roll back")
+		})
+		if err == nil {
+			t.Fatal("the transaction did not fail")
+		}
+		if got, _ := s.Users().Get(ctx, "org", u.ID); got.GithubID != 0 {
+			t.Errorf("a rolled-back bind is visible: %+v", got)
+		}
+	},
 	"tokens are found by hash across orgs, touched and revoked": func(t *testing.T, s store.Store) {
 		ctx := context.Background()
 		exp := t0.Add(90 * 24 * time.Hour)
@@ -1546,6 +1635,95 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if err := al.Delete(ctx, "org", "zoe@example.com"); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("deleting twice: %v", err)
+		}
+	},
+
+	// An account entry is keyed on the numeric ID; its login and name
+	// are labels, and it lives beside address entries without either
+	// shadowing the other.
+	//
+	// @decision(DL-128)
+	"allowlist: account entries are keyed on the GitHub ID": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		al := s.Allowlist()
+		first := t0.Add(-time.Hour)
+		for _, e := range []store.AllowlistEntry{
+			{OrgID: "org", Email: "ada@example.com"},
+			{OrgID: "org", GithubID: 42, GithubLogin: "Bob", GithubName: "Bob B", CreatedAt: first},
+			{OrgID: "org", GithubID: 7, GithubLogin: "carol", Admin: true},
+			{OrgID: "other", GithubID: 42, GithubLogin: "bob"},
+		} {
+			if err := al.Put(ctx, e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := al.GetAccount(ctx, "org", 42)
+		if err != nil || got.GithubLogin != "Bob" || got.GithubName != "Bob B" || got.Email != "" || got.Admin {
+			t.Fatalf("get account = %+v, %v", got, err)
+		}
+		if _, err := al.GetAccount(ctx, "org", 0); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("account 0 found an entry: %v", err)
+		}
+		if _, err := al.Get(ctx, "org", ""); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("an empty address found an account entry: %v", err)
+		}
+		// Account entries sort first, by ID, then addresses.
+		list, err := al.List(ctx, "org")
+		if err != nil || len(list) != 3 || list[0].GithubID != 7 || list[1].GithubID != 42 ||
+			list[2].Email != "ada@example.com" {
+			t.Fatalf("list = %+v, %v", list, err)
+		}
+		// A put on the same ID updates it, keeps created_at, and takes
+		// the new labels.
+		if err := al.Put(ctx, store.AllowlistEntry{OrgID: "org", GithubID: 42, GithubLogin: "bobby",
+			GithubName: "Bobby", Admin: true, CreatedAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = al.GetAccount(ctx, "org", 42)
+		if !got.Admin || got.GithubLogin != "bobby" || !got.CreatedAt.Equal(first) {
+			t.Errorf("after a second put = %+v", got)
+		}
+		// The login matches case-insensitively, in this org only.
+		if byLogin, err := al.ByLogin(ctx, "org", "BOBBY"); err != nil || len(byLogin) != 1 || byLogin[0].GithubID != 42 {
+			t.Errorf("by login = %+v, %v", byLogin, err)
+		}
+		if byLogin, err := al.ByLogin(ctx, "org", "bob"); err != nil || len(byLogin) != 0 {
+			t.Errorf("an old label still matched: %+v, %v", byLogin, err)
+		}
+		// Relabel changes only the labels.
+		if err := al.Relabel(ctx, "org", 42, "rob", "Rob"); err != nil {
+			t.Fatal(err)
+		}
+		got, _ = al.GetAccount(ctx, "org", 42)
+		if got.GithubLogin != "rob" || got.GithubName != "Rob" || !got.Admin {
+			t.Errorf("after relabel = %+v", got)
+		}
+		if err := al.Relabel(ctx, "org", 999, "x", "y"); err != nil {
+			t.Errorf("relabelling an account with no entry: %v", err)
+		}
+		if other, _ := al.GetAccount(ctx, "other", 42); other.GithubLogin != "bob" {
+			t.Errorf("a relabel reached another org: %+v", other)
+		}
+		// Both kinds at once, or neither, is refused.
+		for _, bad := range []store.AllowlistEntry{
+			{OrgID: "org", Email: "x@example.com", GithubID: 3},
+			{OrgID: "org"},
+		} {
+			if err := al.Put(ctx, bad); !errors.Is(err, store.ErrMixedEntry) {
+				t.Errorf("put %+v = %v, want ErrMixedEntry", bad, err)
+			}
+		}
+		if err := al.DeleteAccount(ctx, "org", 42); err != nil {
+			t.Fatal(err)
+		}
+		if err := al.DeleteAccount(ctx, "org", 42); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("deleting twice: %v", err)
+		}
+		if _, err := al.GetAccount(ctx, "other", 42); err != nil {
+			t.Errorf("the delete reached another org: %v", err)
+		}
+		if n, err := al.CountAdmins(ctx, "org"); err != nil || n != 1 {
+			t.Errorf("admins = %d, %v, want the account entry counted", n, err)
 		}
 	},
 

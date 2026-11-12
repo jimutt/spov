@@ -93,7 +93,79 @@ func (p pgUsers) Create(ctx context.Context, u store.User) error {
 		LastLoginAt:               tsPtr(u.LastLoginAt),
 		CreatedAt:                 ts(u.CreatedAt),
 		UpdatedAt:                 ts(u.UpdatedAt),
+		// @decision(DL-128)
+		GithubID: githubIDArg(u.GithubID),
 	}))
+}
+
+// githubIDArg is a user's account for the nullable column: zero is a
+// row not bound yet.
+//
+// @decision(DL-128)
+func githubIDArg(id int64) *int64 {
+	if id == 0 {
+		return nil
+	}
+	return &id
+}
+
+// @decision(DL-128)
+func (p pgUsers) ByGithubID(ctx context.Context, orgID string, githubID int64) (store.User, error) {
+	if githubID == 0 {
+		return store.User{}, store.ErrNotFound
+	}
+	row, err := p.s.q.GetUserByGithubID(ctx, sqlcgen.GetUserByGithubIDParams{OrgID: orgID, GithubID: &githubID})
+	if err != nil {
+		return store.User{}, mapErr("get user by github id", err)
+	}
+	return userFromRow(row), nil
+}
+
+// @decision(DL-128)
+func (p pgUsers) ByGithubLogin(ctx context.Context, orgID, login string) ([]store.User, error) {
+	if login == "" {
+		return nil, nil
+	}
+	rows, err := p.s.q.ListUsersByGithubLogin(ctx, sqlcgen.ListUsersByGithubLoginParams{OrgID: orgID, Login: login})
+	if err != nil {
+		return nil, mapErr("list users by github login", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	out := make([]store.User, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, userFromRow(r))
+	}
+	return out, nil
+}
+
+// BindGithub sets the account only on a row that has none, so a bound
+// row is never moved; the unique index refuses an account another row
+// holds.
+//
+// @decision(DL-128)
+func (p pgUsers) BindGithub(ctx context.Context, orgID, userID string, githubID int64) error {
+	if githubID == 0 {
+		return store.ErrConflict
+	}
+	n, err := p.s.q.BindUserGithub(ctx, sqlcgen.BindUserGithubParams{
+		ID: userID, OrgID: orgID, GithubID: &githubID, UpdatedAt: ts(p.s.now()),
+	})
+	if err != nil {
+		return mapErr("bind user to github account", err)
+	}
+	if n == 1 {
+		return nil
+	}
+	cur, err := p.Get(ctx, orgID, userID)
+	if err != nil {
+		return err
+	}
+	if cur.GithubID == githubID {
+		return nil
+	}
+	return store.ErrConflict
 }
 
 func (p pgUsers) Get(ctx context.Context, orgID, id string) (store.User, error) {

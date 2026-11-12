@@ -11,7 +11,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The addresses that may log in */
+        /** The addresses and GitHub accounts that may log in */
         get: operations["list-allowlist"];
         put?: never;
         post?: never;
@@ -21,7 +21,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/allowlist/{email}": {
+    "/api/v1/allowlist/{entry}": {
         parameters: {
             query?: never;
             header?: never;
@@ -29,12 +29,15 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Allow an address to log in, or change its admin rights */
+        /**
+         * Allow an address or a GitHub account to log in, or change its admin rights
+         * @description The entry is an address, a GitHub account written @login, or an existing account entry written id:<github_id>. A new account entry is always resolved with GitHub and stored by its numeric ID; an existing one is matched by its stored login, or by its ID, without asking GitHub.
+         */
         put: operations["put-allowlist-entry"];
         post?: never;
         /**
-         * Stop an address logging in, and end what it has running and stored
-         * @description Removes the entry, ends the person's browser sessions, cancels their unfinished jobs, stops their live sessions (a held sync job's included), revokes their CLI tokens and deletes their stored credentials, then writes an audit row. Their history is kept. Deleting an address that is no longer on the allowlist, but has signed in, runs those steps again.
+         * Stop an address or a GitHub account logging in, and end what it has running and stored
+         * @description Removes the entry. For each user it covered whom no other entry still covers, it ends their browser sessions, cancels their unfinished jobs, stops their live sessions (a held sync job's included), revokes their CLI tokens and deletes their stored credentials, then writes an audit row. Their history is kept. Deleting an address or @login that is no longer on the allowlist, but names a user who signed in and whom no entry covers, runs those steps again. An account entry may be named id:<github_id>, which a retry matches against the user's account.
          */
         delete: operations["delete-allowlist-entry"];
         options?: never;
@@ -777,12 +780,37 @@ export interface components {
              * @example https://example.com/schemas/AllowlistEntryView.json
              */
             readonly $schema?: string;
-            /** @description Whether this address administers the org */
+            /** @description Whether this entry administers the org */
             admin: boolean;
+            /** @description Other entries (an address or @login) that cover a user this entry covers; removing this one leaves that user their access */
+            also_covered_by?: string[] | null;
             /** Format: date-time */
             created_at: string;
-            /** @description The address, lower-cased */
+            /** @description The address, lower-cased; empty on an account entry */
             email: string;
+            /**
+             * Format: int64
+             * @description The account's numeric GitHub ID, which the entry admits
+             */
+            github_id?: number;
+            /** @description The account's login as GitHub spells it */
+            github_login?: string;
+            /**
+             * @description An address entry, or a GitHub account entry
+             * @enum {string}
+             */
+            kind: "email" | "github";
+            /**
+             * Format: date-time
+             * @description The newest sign-in of a user this entry covers
+             */
+            last_login_at?: string;
+            /** @description The account's display name, or the name of the user an address entry covers */
+            name?: string;
+            /** @description An address entry covering a user who has not signed in since accounts were recorded; removing it ends everything of theirs even if their account has an entry */
+            unbound?: boolean;
+            /** @description Whether this entry covers the caller */
+            you: boolean;
         };
         AllowlistOutputBody: {
             /**
@@ -1510,7 +1538,7 @@ export interface components {
              * @example https://example.com/schemas/PutAllowlistInputBody.json
              */
             readonly $schema?: string;
-            /** @description Whether this address administers the org */
+            /** @description Whether this entry administers the org */
             admin: boolean;
         };
         PutCredentialInputBody: {
@@ -2158,8 +2186,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The address to allow */
-                email: string;
+                /** @description An address, a GitHub account written @login, or an existing account entry written id:<github_id> */
+                entry: string;
             };
             cookie?: never;
         };
@@ -2196,6 +2224,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ErrorModel"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
             /** @description Unprocessable Entity */
             422: {
                 headers: {
@@ -2214,6 +2251,24 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ErrorModel"];
                 };
             };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
         };
     };
     "delete-allowlist-entry": {
@@ -2221,8 +2276,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The address to remove */
-                email: string;
+                /** @description The address, the GitHub account written @login, or the account entry written id:<github_id>, to remove */
+                entry: string;
             };
             cookie?: never;
         };
@@ -2255,6 +2310,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

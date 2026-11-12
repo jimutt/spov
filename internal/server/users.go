@@ -204,7 +204,7 @@ func (s *Server) requireAdmin(p auth.Principal) error {
 func (s *Server) userView(u store.User) UserView {
 	admin := u.Admin
 	if s.deps.Login != nil && s.deps.Login.Allowlist != nil {
-		admin, _ = s.deps.Login.Allowlist.Lookup(u.Email)
+		admin, _ = s.deps.Login.Allowlist.Lookup(u.GithubID, u.Email)
 	}
 	return UserView{
 		ID:            u.ID,

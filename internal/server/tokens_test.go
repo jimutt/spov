@@ -144,6 +144,8 @@ func TestRevokingAnotherUsersTokenIsNotFound(t *testing.T) {
 	bob := f.secondBrowser()
 	bobDevice := &deviceFixture{loginFixture: bob, device: f.device, now: f.now}
 	bob.github.emails = []map[string]any{{"email": "bob@example.com", "primary": true, "verified": true}}
+	// Another person is another GitHub account (DL-128).
+	bob.github.id, bob.github.login = 2002, "bob"
 	bobDevice.doLogin("")
 	f.now = f.now.Add(time.Minute)
 	bobToken := bobDevice.issueToken(t, "bob laptop")

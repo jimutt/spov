@@ -130,14 +130,32 @@ update mints set expires_at = $3 where id = $1 and org_id = $2;
 -- name: CreateUser :exec
 insert into users (id, org_id, email, name, github_login, admin, git_name, git_email,
                    default_model, quota, last_login_at, created_at, updated_at,
-                   default_git_access, default_job_git_access, default_job_duration_seconds)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16);
+                   default_git_access, default_job_git_access, default_job_duration_seconds,
+                   github_id)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);
 
 -- name: GetUser :one
 select * from users where id = $1 and org_id = $2;
 
 -- name: GetUserByEmail :one
 select * from users where org_id = $1 and lower(email) = lower($2);
+
+-- name: GetUserByGithubID :one
+select * from users where org_id = $1 and github_id = $2;
+
+-- name: ListUsersByGithubLogin :many
+-- Only rows bound to an account: a login is a label of one.
+-- @decision(DL-128)
+select * from users
+where org_id = $1 and github_id is not null and lower(github_login) = lower(sqlc.arg(login)::text)
+order by id;
+
+-- name: BindUserGithub :execrows
+-- Binds a row to its account once. A row already bound is never moved:
+-- the update touches only a row with no account yet.
+-- @decision(DL-128)
+update users set github_id = $3, updated_at = $4
+where id = $1 and org_id = $2 and github_id is null;
 
 -- name: ListUsers :many
 select * from users where org_id = $1 order by id;
@@ -225,21 +243,50 @@ delete from user_credentials where org_id = $1 and user_id = $2 and platform = $
 -- collate "C" so the order is the same bytewise order the memory store
 -- sorts by: under a locale collation the database ignores punctuation
 -- on the first pass, and the two stores would disagree on addresses
--- like a-b@x.com and ab@x.com.
-select * from allowlist_entries where org_id = $1 order by email collate "C";
+-- like a-b@x.com and ab@x.com. Account entries have no address and
+-- come first, by ID.
+select * from allowlist_entries where org_id = $1 order by email collate "C", github_id;
 
 -- name: GetAllowlistEntry :one
-select * from allowlist_entries where org_id = $1 and email = $2;
+select * from allowlist_entries where org_id = $1 and email = $2 and github_id is null;
+
+-- name: GetAllowlistAccount :one
+-- @decision(DL-128)
+select * from allowlist_entries where org_id = $1 and github_id = $2;
+
+-- name: ListAllowlistByLogin :many
+-- The login is a label, refreshed at sign-in; more than one row can
+-- carry a stale one.
+-- @decision(DL-128)
+select * from allowlist_entries
+where org_id = $1 and github_id is not null and lower(github_login) = lower(sqlc.arg(login)::text)
+order by github_id;
 
 -- name: PutAllowlistEntry :exec
 -- created_at is kept on conflict: re-granting admin must not restate
 -- when the address was first allowed in.
 insert into allowlist_entries (org_id, email, admin, created_at)
 values ($1, $2, $3, $4)
-on conflict (org_id, email) do update set admin = excluded.admin;
+on conflict (org_id, email) where github_id is null do update set admin = excluded.admin;
+
+-- name: PutAllowlistAccount :exec
+-- @decision(DL-128)
+insert into allowlist_entries (org_id, github_id, github_login, github_name, admin, created_at)
+values ($1, $2, $3, $4, $5, $6)
+on conflict (org_id, github_id) where github_id is not null do update
+set admin = excluded.admin, github_login = excluded.github_login, github_name = excluded.github_name;
+
+-- name: RelabelAllowlistAccount :exec
+-- @decision(DL-128)
+update allowlist_entries set github_login = $3, github_name = $4
+where org_id = $1 and github_id = $2;
 
 -- name: DeleteAllowlistEntry :execrows
-delete from allowlist_entries where org_id = $1 and email = $2;
+delete from allowlist_entries where org_id = $1 and email = $2 and github_id is null;
+
+-- name: DeleteAllowlistAccount :execrows
+-- @decision(DL-128)
+delete from allowlist_entries where org_id = $1 and github_id = $2;
 
 -- name: CountAllowlistAdmins :one
 select count(*) from allowlist_entries where org_id = $1 and admin;

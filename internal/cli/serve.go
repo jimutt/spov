@@ -1091,6 +1091,8 @@ func (e *Env) wireLogin(ctx context.Context, deps *server.Deps) (func(), error) 
 	}
 	if login != nil {
 		deps.Login = login
+		// @decision(DL-128)
+		deps.GitHubAccounts = e.accountLookup()
 		// Cookie first, then the CLI token, then the single shared
 		// bearer.
 		cookies := &auth.CookieAuthenticator{

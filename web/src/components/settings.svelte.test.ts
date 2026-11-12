@@ -177,3 +177,25 @@ describe("the Settings page's save buttons", () => {
     target.remove();
   });
 });
+
+/**
+ * A non-admin's page draws no People section and never asks for the
+ * allowlist.
+ *
+ * @decision(DL-129)
+ */
+describe("the People section on the Settings page", () => {
+  it("is absent for a non-admin, who never reads the allowlist", async () => {
+    const target = document.createElement("div");
+    document.body.append(target);
+    const app = mount(Settings, { target });
+    await settle();
+    const asked = stub.fetched.mock.calls.some(([input]) =>
+      String(input instanceof Request ? input.url : input).includes("/api/v1/allowlist"),
+    );
+    expect(asked).toBe(false);
+    expect([...target.querySelectorAll("h2")].map((h) => h.textContent)).not.toContain("People");
+    unmount(app);
+    target.remove();
+  });
+});

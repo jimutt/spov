@@ -13,24 +13,29 @@ import (
 
 // fakeSource is an allowlist a test can change under a running cache.
 type fakeSource struct {
-	mu      sync.Mutex
-	entries map[string]bool
-	err     error
-	calls   int
+	mu       sync.Mutex
+	entries  map[string]bool
+	accounts map[int64]bool
+	err      error
+	calls    int
 }
 
-func (f *fakeSource) load(context.Context) (map[string]bool, error) {
+func (f *fakeSource) load(context.Context) (AllowlistSet, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	if f.err != nil {
-		return nil, f.err
+		return AllowlistSet{}, f.err
 	}
 	out := make(map[string]bool, len(f.entries))
 	for k, v := range f.entries {
 		out[k] = v
 	}
-	return out, nil
+	accounts := make(map[int64]bool, len(f.accounts))
+	for k, v := range f.accounts {
+		accounts[k] = v
+	}
+	return AllowlistSet{Emails: out, Accounts: accounts}, nil
 }
 
 func (f *fakeSource) set(entries map[string]bool, err error) {
@@ -56,7 +61,7 @@ func TestRefreshReplacesTheList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := list.Lookup("bob@example.com"); !ok {
+	if _, ok := list.Lookup(0, "bob@example.com"); !ok {
 		t.Fatal("bob was not allowed to begin with")
 	}
 
@@ -64,14 +69,14 @@ func TestRefreshReplacesTheList(t *testing.T) {
 	if err := list.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := list.Lookup("bob@example.com"); ok {
+	if _, ok := list.Lookup(0, "bob@example.com"); ok {
 		t.Error("bob is still allowed after being removed")
 	}
-	if _, ok := list.Lookup("carol@example.com"); !ok {
+	if _, ok := list.Lookup(0, "carol@example.com"); !ok {
 		t.Error("carol was not allowed after being added")
 	}
 	// A changed privilege takes effect too.
-	if admin, _ := list.Lookup("alice@example.com"); !admin {
+	if admin, _ := list.Lookup(0, "alice@example.com"); !admin {
 		t.Error("alice did not become an admin")
 	}
 }
@@ -94,7 +99,7 @@ func TestRefreshKeepsThePreviousListWhenTheReadFails(t *testing.T) {
 		if err := list.Refresh(context.Background()); !errors.Is(err, boom) {
 			t.Fatalf("refresh %d: %v", i, err)
 		}
-		if admin, ok := list.Lookup("alice@example.com"); !ok || !admin {
+		if admin, ok := list.Lookup(0, "alice@example.com"); !ok || !admin {
 			t.Fatalf("alice was lost after failed refresh %d", i)
 		}
 	}
@@ -129,7 +134,7 @@ func TestAnEmptyReadIsApplied(t *testing.T) {
 	if err := list.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := list.Lookup("alice@example.com"); ok {
+	if _, ok := list.Lookup(0, "alice@example.com"); ok {
 		t.Error("an emptied allowlist still allows someone: the last entry cannot be removed")
 	}
 }
@@ -160,7 +165,7 @@ func TestAnEmptyStoreWarnsRatherThanRefusing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := list.Lookup("alice@example.com"); ok {
+	if _, ok := list.Lookup(0, "alice@example.com"); ok {
 		t.Error("an empty allowlist allowed someone")
 	}
 	if !hasWarning(warnings, "nobody is on the allowlist") {
@@ -186,7 +191,7 @@ func TestRunRefreshesUntilTheContextEnds(t *testing.T) {
 	src.set(map[string]bool{}, nil)
 	deadline := time.After(2 * time.Second)
 	for {
-		if _, ok := list.Lookup("alice@example.com"); !ok {
+		if _, ok := list.Lookup(0, "alice@example.com"); !ok {
 			break
 		}
 		select {
@@ -226,21 +231,21 @@ func TestLiveReadsThroughTheCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	src.set(map[string]bool{"alice@example.com": true}, nil)
-	if _, ok := list.Lookup("alice@example.com"); ok {
+	if _, ok := list.Lookup(0, "alice@example.com"); ok {
 		t.Fatal("the cache already had alice, so this proves nothing")
 	}
-	admin, ok, err := list.Live(ctx, "Alice@Example.com")
+	admin, ok, err := list.Live(ctx, 0, "Alice@Example.com")
 	if err != nil || !ok || !admin {
 		t.Fatalf("live: admin=%v ok=%v err=%v", admin, ok, err)
 	}
 	// What it read is kept, so the next request does not read again.
-	if _, ok := list.Lookup("alice@example.com"); !ok {
+	if _, ok := list.Lookup(0, "alice@example.com"); !ok {
 		t.Error("Live did not update the cache")
 	}
 
 	boom := errors.New("no database")
 	src.set(nil, boom)
-	if _, _, err := list.Live(ctx, "alice@example.com"); !errors.Is(err, boom) {
+	if _, _, err := list.Live(ctx, 0, "alice@example.com"); !errors.Is(err, boom) {
 		t.Errorf("a failed live read gave %v, want the error: a login must not silently fall back", err)
 	}
 }
@@ -250,7 +255,7 @@ func TestLiveReadsThroughTheCache(t *testing.T) {
 // @decision(DL-007)
 func TestZeroAllowlistAllowsNobody(t *testing.T) {
 	var list Allowlist
-	if _, ok := list.Lookup("alice@example.com"); ok {
+	if _, ok := list.Lookup(0, "alice@example.com"); ok {
 		t.Error("the zero allowlist allowed someone")
 	}
 }
@@ -266,6 +271,9 @@ func TestTheStoreSourceProjectsTheOrgsEntries(t *testing.T) {
 		{OrgID: "org", Email: "Alice@Example.com", Admin: true},
 		{OrgID: "org", Email: "bob@example.com"},
 		{OrgID: "other", Email: "mallory@example.com", Admin: true},
+		{OrgID: "org", GithubID: 42, GithubLogin: "carol", Admin: true},
+		{OrgID: "org", GithubID: 43, GithubLogin: "dan"},
+		{OrgID: "other", GithubID: 44, GithubLogin: "eve", Admin: true},
 	} {
 		if err := st.Allowlist().Put(ctx, e); err != nil {
 			t.Fatal(err)
@@ -275,14 +283,59 @@ func TestTheStoreSourceProjectsTheOrgsEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
+	if len(entries.Emails) != 2 || len(entries.Accounts) != 2 || entries.Len() != 4 {
 		t.Fatalf("entries = %v, want only this org's", entries)
 	}
-	if !entries["alice@example.com"] {
+	if !entries.Emails["alice@example.com"] {
 		t.Error("alice is not an admin, or was not lower-cased")
 	}
-	if entries["bob@example.com"] {
+	if entries.Emails["bob@example.com"] {
 		t.Error("bob became an admin")
+	}
+	if !entries.Accounts[42] || entries.Accounts[43] {
+		t.Errorf("accounts = %v", entries.Accounts)
+	}
+	if _, ok := entries.Accounts[44]; ok {
+		t.Error("another org's account entry was read")
+	}
+}
+
+// An account entry covers only its numeric ID, an address entry only its
+// address, and a row not yet bound (ID zero) only an address entry. Any
+// covering admin entry makes the person an admin.
+//
+// @decision(DL-128)
+func TestAnEntryCoversItsAccountOrItsAddress(t *testing.T) {
+	set := AllowlistSet{
+		Emails:   map[string]bool{"bob@example.com": false, "root@example.com": true},
+		Accounts: map[int64]bool{7: true, 8: false},
+	}
+	for _, tc := range []struct {
+		name      string
+		id        int64
+		email     string
+		admin, ok bool
+	}{
+		{"an address entry, in any case", 0, "Bob@Example.com", false, true},
+		{"an account entry, whatever the address", 8, "new@example.com", false, true},
+		{"an admin account entry", 7, "bob@example.com", true, true},
+		{"an admin address entry beside a plain account entry", 8, "root@example.com", true, true},
+		{"neither", 9, "x@example.com", false, false},
+		{"an unbound row is not account zero", 0, "x@example.com", false, false},
+		{"no address is not the empty entry", 9, "", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admin, ok := set.Covers(tc.id, tc.email)
+			if admin != tc.admin || ok != tc.ok {
+				t.Errorf("Covers(%d, %q) = %v, %v; want %v, %v", tc.id, tc.email, admin, ok, tc.admin, tc.ok)
+			}
+		})
+	}
+	// An account zero in the set (which the store never writes) still
+	// admits nobody.
+	set.Accounts[0] = true
+	if _, ok := set.Covers(0, "x@example.com"); ok {
+		t.Error("account zero admitted an unbound row")
 	}
 }
 
@@ -321,7 +374,7 @@ func testAllowlist(t *testing.T, content string) (*Allowlist, func(*testing.T, s
 		if err != nil {
 			t.Fatal(err)
 		}
-		src.set(entries, nil)
+		src.set(entries.emails, nil)
 	}
 	set(t, content)
 	list, err := NewAllowlist(context.Background(), src.load, AllowlistRefresh, nil)

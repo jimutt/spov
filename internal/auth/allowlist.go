@@ -18,11 +18,39 @@ import (
 // @decision(DL-007)
 const AllowlistRefresh = 10 * time.Second
 
-// AllowlistSource loads the current set of allowed addresses, keyed by
-// lower-cased e-mail, with the value reporting administrator rights.
+// AllowlistSet is the allowlist as the cache holds it: address entries
+// keyed by lower-cased e-mail and account entries keyed by GitHub ID,
+// each with whether it grants administrator rights.
+//
+// @decision(DL-007) @decision(DL-128)
+type AllowlistSet struct {
+	Emails   map[string]bool
+	Accounts map[int64]bool
+}
+
+// Len is how many entries the set holds.
+func (s AllowlistSet) Len() int { return len(s.Emails) + len(s.Accounts) }
+
+// Covers reports whether an entry covers the account githubID whose
+// address is email, and whether any entry that covers it is an admin
+// entry. A githubID of zero is a user row not yet bound to an account,
+// which only an address entry can cover.
+//
+// @decision(DL-128)
+func (s AllowlistSet) Covers(githubID int64, email string) (admin, ok bool) {
+	if a, found := s.Emails[normalizeEmail(email)]; found && email != "" {
+		admin, ok = a, true
+	}
+	if a, found := s.Accounts[githubID]; found && githubID != 0 {
+		admin, ok = admin || a, true
+	}
+	return admin, ok
+}
+
+// AllowlistSource loads the current allowlist.
 //
 // @decision(DL-007)
-type AllowlistSource func(ctx context.Context) (map[string]bool, error)
+type AllowlistSource func(ctx context.Context) (AllowlistSet, error)
 
 // Allowlist is who may log in: a cached copy of the store's allowlist,
 // refreshed on a timer and swapped atomically, consulted on every
@@ -34,7 +62,7 @@ type AllowlistSource func(ctx context.Context) (map[string]bool, error)
 type Allowlist struct {
 	load     AllowlistSource
 	interval time.Duration
-	entries  atomic.Pointer[map[string]bool]
+	entries  atomic.Pointer[AllowlistSet]
 	warn     func(string)
 	// failing is whether the last read failed, so a persistent outage
 	// is two log lines rather than one per tick.
@@ -62,7 +90,7 @@ func NewAllowlist(ctx context.Context, load AllowlistSource, interval time.Durat
 	if err != nil {
 		return nil, err
 	}
-	if len(entries) == 0 {
+	if entries.Len() == 0 {
 		// Not fatal, unlike DL-007's file: an empty table on a running
 		// deployment is a state an operator can fix with one API call,
 		// where an unreadable file was a mount that needed a redeploy.
@@ -76,18 +104,23 @@ func NewAllowlist(ctx context.Context, load AllowlistSource, interval time.Durat
 // StoreAllowlist reads one org's entries. It is the source hosted mode
 // runs on.
 //
-// @decision(DL-007)
+// @decision(DL-007) @decision(DL-128)
 func StoreAllowlist(al store.AllowlistStore, orgID string) AllowlistSource {
-	return func(ctx context.Context) (map[string]bool, error) {
+	return func(ctx context.Context) (AllowlistSet, error) {
 		rows, err := al.List(ctx, orgID)
 		if err != nil {
-			return nil, err
+			return AllowlistSet{}, err
 		}
-		entries := make(map[string]bool, len(rows))
+		set := AllowlistSet{Emails: map[string]bool{}, Accounts: map[int64]bool{}}
 		for _, e := range rows {
-			entries[normalizeEmail(e.Email)] = e.Admin
+			switch {
+			case e.GithubID != 0:
+				set.Accounts[e.GithubID] = e.Admin
+			case e.Email != "":
+				set.Emails[normalizeEmail(e.Email)] = e.Admin
+			}
 		}
-		return entries, nil
+		return set, nil
 	}
 }
 
@@ -134,32 +167,32 @@ func (a *Allowlist) Run(ctx context.Context) {
 	}
 }
 
-// Lookup reports whether email may use the server, and whether it is an
-// admin. It reads the cache, so it does no I/O and never blocks a
-// request. Comparison is case-insensitive.
+// Lookup reports whether the account githubID, whose address is email,
+// may use the server, and whether it is an admin. A githubID of zero is
+// a user not yet bound to an account. It reads the cache, so it does no
+// I/O and never blocks a request. Addresses compare case-insensitively.
 //
-// @decision(DL-007)
-func (a *Allowlist) Lookup(email string) (admin, ok bool) {
+// @decision(DL-007) @decision(DL-128)
+func (a *Allowlist) Lookup(githubID int64, email string) (admin, ok bool) {
 	entries := a.entries.Load()
 	if entries == nil {
 		return false, false
 	}
-	admin, ok = (*entries)[normalizeEmail(email)]
-	return admin, ok
+	return entries.Covers(githubID, email)
 }
 
-// Live looks email up in the source rather than the cache, and updates
-// the cache with what it read. Login uses it so a just-added user's
-// first login does not race the refresh interval.
+// Live looks the account up in the source rather than the cache, and
+// updates the cache with what it read. Login uses it so a just-added
+// user's first login does not race the refresh interval.
 //
-// @decision(DL-007)
-func (a *Allowlist) Live(ctx context.Context, email string) (admin, ok bool, err error) {
+// @decision(DL-007) @decision(DL-128)
+func (a *Allowlist) Live(ctx context.Context, githubID int64, email string) (admin, ok bool, err error) {
 	entries, err := a.load(ctx)
 	if err != nil {
 		return false, false, err
 	}
 	a.entries.Store(&entries)
-	admin, ok = entries[normalizeEmail(email)]
+	admin, ok = entries.Covers(githubID, email)
 	return admin, ok, nil
 }
 

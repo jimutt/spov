@@ -95,13 +95,13 @@ type Server struct {
 	//
 	// @decision(DL-133)
 	lim *limiter
-	// revokeSessions ends one address's browser sessions when its
-	// allowlist entry is deleted. A field, not a call through
-	// deps.Login, so a test can see the delete trigger it without
-	// standing up a session manager.
+	// revokeSessions ends the browser sessions of the users a deleted
+	// allowlist entry covered. A field, not a call through deps.Login,
+	// so a test can see the delete trigger it without standing up a
+	// session manager.
 	//
-	// @decision(DL-007)
-	revokeSessions func(ctx context.Context, orgID, email string) error
+	// @decision(DL-007) @decision(DL-128)
+	revokeSessions func(ctx context.Context, users []store.User) error
 }
 
 // reservedPaths are the non-API surfaces the server owns.

@@ -31,6 +31,17 @@ type Login struct {
 	Users store.UserStore
 	// Allowlist decides who may log in at all.
 	Allowlist *auth.Allowlist
+	// Store is where a row from before accounts were recorded is bound,
+	// in one transaction with the read of the address entry that allows
+	// it. Nil binds nothing.
+	//
+	// @decision(DL-128)
+	Store store.Store
+	// Entries is the allowlist's table, where a sign-in refreshes an
+	// account entry's login and name. Nil skips that.
+	//
+	// @decision(DL-128)
+	Entries store.AllowlistStore
 	// OrgID owns every user created here.
 	OrgID string
 	// Now supplies timestamps; nil means time.Now.
@@ -173,28 +184,51 @@ func (l *Login) handleCallback(w http.ResponseWriter, r *http.Request) {
 	// address should not have to tell the person to wait out a refresh
 	// interval. This is once per browser login, not per request.
 	//
-	// @decision(DL-007)
-	admin, allowed, err := l.Allowlist.Live(ctx, identity.Email)
+	// @decision(DL-007) @decision(DL-128)
+	admin, allowed, err := l.Allowlist.Live(ctx, identity.ID, identity.Email)
 	if err != nil {
 		l.warn("login: reading the allowlist: " + err.Error())
 		l.deny(w, r, http.StatusBadGateway, "The login could not be completed.", "Try again in a moment.")
 		return
 	}
+	who := "@" + identity.Login + " (" + identity.Email + ")"
 	if !allowed {
-		// The address is named back to the person who just proved they
-		// own it, so they can tell an operator which one to add.
-		l.warn("login: refused " + identity.Email + ": not on the allowlist")
+		// The account and the address are named back to the person who
+		// just proved they own them, so they can tell an operator either.
+		l.warn(fmt.Sprintf("login: refused %q: not on the allowlist", who))
 		l.deny(w, r, http.StatusForbidden,
-			"The address "+identity.Email+" is not allowed to use this server.",
-			"Ask an administrator to add it.")
+			"The GitHub account "+who+" is not allowed to use this server.",
+			"Ask an administrator to add the account or the address.")
 		return
 	}
 
 	user, err := l.upsertUser(ctx, identity, admin)
+	if errors.Is(err, errEarlierUser) {
+		l.warn(fmt.Sprintf("login: refused %q: the address is an earlier user's, and no address entry allows it", who))
+		l.deny(w, r, http.StatusForbidden,
+			"The address "+identity.Email+" is recorded for an earlier user of this server.",
+			"An administrator can connect your account to it by adding the address as an entry.")
+		return
+	}
+	if errors.Is(err, errAddressTaken) {
+		l.warn(fmt.Sprintf("login: refused %q: the address is recorded for another account", who))
+		l.deny(w, r, http.StatusForbidden,
+			"The address "+identity.Email+" belongs to another account on this server.",
+			"Sign in with that account, or ask an administrator.")
+		return
+	}
 	if err != nil {
 		l.warn("login: " + err.Error())
 		l.deny(w, r, http.StatusInternalServerError, "The login could not be recorded.", "Try again in a moment.")
 		return
+	}
+	// The labels follow the profile; the ID is what the entry admits.
+	//
+	// @decision(DL-128)
+	if l.Entries != nil {
+		if err := l.Entries.Relabel(ctx, l.OrgID, identity.ID, identity.Login, identity.Name); err != nil {
+			l.warn("login: refreshing the allowlist entry's labels: " + err.Error())
+		}
 	}
 
 	// A new session token for the authenticated session: the one that
@@ -213,36 +247,139 @@ func (l *Login) handleCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, safeNext(next), http.StatusSeeOther)
 }
 
-// upsertUser creates the user on first login and refreshes what GitHub
-// owns on every one. The git identity is initialised once and then left
-// alone: DL-044 lets the user change it, and re-copying the profile
-// would silently undo that.
+// errAddressTaken is a sign-in whose address is recorded on a row of
+// another account, or on a row the account could not be bound to. The
+// address never moves and is never shared.
 //
-// @decision(DL-007)
+// @decision(DL-128)
+var errAddressTaken = errors.New("the address is recorded for another user")
+
+// errEarlierUser is a sign-in whose address is on a row from before
+// accounts were recorded that no address entry allows: the row is not
+// bound, and no second row is made for the address.
+//
+// @decision(DL-128)
+var errEarlierUser = errors.New("the address is recorded for an earlier user")
+
+// upsertUser finds the account's row, binds a row from before accounts
+// were recorded, or creates one, and refreshes what GitHub owns. The row
+// is found by GitHub ID, and only when none has it, by address among
+// rows with no account yet. The git identity is initialised once and
+// then left alone: DL-044 lets the user change it, and re-copying the
+// profile would silently undo that.
+//
+// @decision(DL-007) @decision(DL-128)
 func (l *Login) upsertUser(ctx context.Context, identity auth.GitHubIdentity, admin bool) (store.User, error) {
-	now := l.now()
-	existing, err := l.Users.ByEmail(ctx, l.OrgID, identity.Email)
+	existing, err := l.Users.ByGithubID(ctx, l.OrgID, identity.ID)
 	switch {
 	case err == nil:
-		existing.Name = identity.Name
-		existing.GithubLogin = identity.Login
-		existing.Admin = admin
-		existing.LastLoginAt = &now
-		if err := l.Users.Update(ctx, existing); err != nil {
-			return store.User{}, fmt.Errorf("updating the user: %w", err)
-		}
-		return existing, nil
-	case errors.Is(err, store.ErrNotFound):
-	default:
+		return l.refreshUser(ctx, existing, identity, admin)
+	case !errors.Is(err, store.ErrNotFound):
 		return store.User{}, fmt.Errorf("looking up the user: %w", err)
 	}
+	byEmail, err := l.Users.ByEmail(ctx, l.OrgID, identity.Email)
+	switch {
+	case err == nil:
+		return l.bindUser(ctx, byEmail, identity, admin)
+	case !errors.Is(err, store.ErrNotFound):
+		return store.User{}, fmt.Errorf("looking up the user: %w", err)
+	}
+	return l.createUser(ctx, identity, admin)
+}
 
+// refreshUser updates a row found by its account. Its address follows
+// the account's current primary one, unless another row records that
+// address.
+//
+// @decision(DL-128)
+func (l *Login) refreshUser(ctx context.Context, u store.User, identity auth.GitHubIdentity, admin bool) (store.User, error) {
+	now := l.now()
+	if !strings.EqualFold(u.Email, identity.Email) {
+		other, err := l.Users.ByEmail(ctx, l.OrgID, identity.Email)
+		switch {
+		case err == nil && other.ID != u.ID:
+			return store.User{}, errAddressTaken
+		case err != nil && !errors.Is(err, store.ErrNotFound):
+			return store.User{}, fmt.Errorf("looking up the address: %w", err)
+		}
+		u.Email = identity.Email
+	}
+	u.Name = identity.Name
+	u.GithubLogin = identity.Login
+	u.Admin = admin
+	u.LastLoginAt = &now
+	if err := l.Users.Update(ctx, u); err != nil {
+		// The unique address index is the backstop for a race with
+		// another row taking the address.
+		if errors.Is(err, store.ErrConflict) {
+			return store.User{}, errAddressTaken
+		}
+		return store.User{}, fmt.Errorf("updating the user: %w", err)
+	}
+	return u, nil
+}
+
+// bindUser binds a row found by address to the account that proved it,
+// once. A row already bound to another account is never taken over.
+//
+// @decision(DL-128)
+func (l *Login) bindUser(ctx context.Context, u store.User, identity auth.GitHubIdentity, admin bool) (store.User, error) {
+	if u.GithubID != 0 && u.GithubID != identity.ID {
+		return store.User{}, errAddressTaken
+	}
+	if l.Store == nil {
+		return store.User{}, errEarlierUser
+	}
+	// Only an address entry admits the row's address, so only one
+	// lets an account become the earlier user: an account entry alone
+	// would hand that user's credentials and tokens to whoever holds the
+	// address now. Read under the allowlist's lock, so a removal of the
+	// address entry is either before the bind or after it.
+	//
+	// @decision(DL-128)
+	err := l.Store.Tx(ctx, func(tx store.Store) error {
+		al := tx.Allowlist()
+		if _, err := al.CountAdmins(ctx, l.OrgID); err != nil {
+			return err
+		}
+		if _, err := al.Get(ctx, l.OrgID, identity.Email); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return errEarlierUser
+			}
+			return err
+		}
+		return tx.Users().BindGithub(ctx, l.OrgID, u.ID, identity.ID)
+	})
+	if err != nil {
+		if errors.Is(err, errEarlierUser) {
+			return store.User{}, errEarlierUser
+		}
+		if errors.Is(err, store.ErrConflict) {
+			// Another sign-in bound it first: to this account is fine,
+			// to any other is the refusal.
+			if again, getErr := l.Users.ByGithubID(ctx, l.OrgID, identity.ID); getErr == nil && again.ID == u.ID {
+				return l.refreshUser(ctx, again, identity, admin)
+			}
+			return store.User{}, errAddressTaken
+		}
+		return store.User{}, fmt.Errorf("binding the user to their GitHub account: %w", err)
+	}
+	u.GithubID = identity.ID
+	return l.refreshUser(ctx, u, identity, admin)
+}
+
+// createUser makes the row on a first login.
+//
+// @decision(DL-007) @decision(DL-128)
+func (l *Login) createUser(ctx context.Context, identity auth.GitHubIdentity, admin bool) (store.User, error) {
+	now := l.now()
 	user := store.User{
 		ID:          store.NewID(now),
 		OrgID:       l.OrgID,
 		Email:       identity.Email,
 		Name:        identity.Name,
 		GithubLogin: identity.Login,
+		GithubID:    identity.ID,
 		Admin:       admin,
 		GitName:     identity.Name,
 		GitEmail:    identity.Email,
@@ -253,15 +390,15 @@ func (l *Login) upsertUser(ctx context.Context, identity auth.GitHubIdentity, ad
 		user.GitName = identity.Login
 	}
 	if err := l.Users.Create(ctx, user); err != nil {
-		// Two first logins for the same address can both reach here;
-		// the unique index on (org_id, lower(email)) lets exactly one
-		// through. The loser reads the winner's row rather than
-		// answering 500 to a login that is perfectly valid.
+		// Two first logins for the same account can both reach here;
+		// the unique indexes let exactly one through. The loser reads
+		// the winner's row rather than answering 500 to a login that is
+		// perfectly valid, and a row of another account is the refusal.
 		if errors.Is(err, store.ErrConflict) {
-			existing, getErr := l.Users.ByEmail(ctx, l.OrgID, identity.Email)
-			if getErr == nil {
+			if existing, getErr := l.Users.ByGithubID(ctx, l.OrgID, identity.ID); getErr == nil {
 				return existing, nil
 			}
+			return store.User{}, errAddressTaken
 		}
 		return store.User{}, fmt.Errorf("creating the user: %w", err)
 	}
@@ -333,32 +470,30 @@ func isLoginPath(p string) bool {
 	return false
 }
 
-// RevokeSessions deletes one address's browser sessions, so a re-added
-// address does not resume an old session. It runs when an allowlist
-// entry is deleted.
+// RevokeSessions deletes the given users' browser sessions, so a person
+// put back on the allowlist does not resume an old session. It runs when
+// an allowlist entry is deleted, for each user the entry covered whom no
+// other entry still covers.
 //
-// @decision(DL-007)
-func (l *Login) RevokeSessions(ctx context.Context, orgID, email string) error {
-	if l.Users == nil || l.Sessions == nil {
+// @decision(DL-007) @decision(DL-128)
+func (l *Login) RevokeSessions(ctx context.Context, users []store.User) error {
+	if l.Sessions == nil || len(users) == 0 {
 		return nil
 	}
-	user, err := l.Users.ByEmail(ctx, orgID, email)
-	if errors.Is(err, store.ErrNotFound) {
-		// An address may be allowed before anyone logs in under it.
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("looking up %s: %w", email, err)
+	ids := make(map[string]bool, len(users))
+	for _, u := range users {
+		ids[u.ID] = true
 	}
 	// One pass over the sessions: Iterate reads every session row each
 	// time it is called, and scs has no query by user.
 	if err := l.Sessions.Iterate(ctx, func(ctx context.Context) error {
-		if l.Sessions.GetString(ctx, auth.SessionKeyUserID) != user.ID {
+		id := l.Sessions.GetString(ctx, auth.SessionKeyUserID)
+		if !ids[id] {
 			return nil
 		}
 		if err := l.destroyIterated(ctx); err != nil {
 			// One undeletable row must not strand the rest.
-			l.warn("allowlist: revoking a session for " + email + ": " + err.Error())
+			l.warn("allowlist: revoking a session of user " + id + ": " + err.Error())
 		}
 		return nil
 	}); err != nil {
