@@ -51,6 +51,7 @@ back: what the agent does stays in the sandbox unless it pushes.
 | `--git-access repos\|all` | Whether the sandbox's git credentials reach only this session's repositories (the default) or every repository they can |
 | `--env KEY=VALUE` | An environment variable in the sandbox, over `sandbox.env`; repeatable. Not for secrets (see [The sandbox](sandbox.md#environment-variables)) |
 | `--credentials a,b`, `--no-credentials` | Which [routed credentials](credentials.md#private-registries-and-other-services) the session gets |
+| `--template name`, `--no-template` | Launch from a [sandbox template](sandbox.md#sandbox-templates), or without the one `sandbox.template` names |
 | `--sync`, `--no-sync` | Whether to seed the sandbox from your current branch and sync its changes back (below) |
 | `--allow-version-mismatch` | Attach even if the local and sandbox OpenCode versions differ |
 

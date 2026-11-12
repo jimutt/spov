@@ -452,6 +452,7 @@ func NewRoot(env Env) *cobra.Command {
 	//
 	// @decision(DL-045) @decision(DL-023)
 	root.AddCommand(newJobsCmd(e))
+	root.AddCommand(newTemplatesCmd(e))
 	root.AddCommand(newStopCmd(e))
 	root.AddCommand(newServeCmd(e))
 	return root

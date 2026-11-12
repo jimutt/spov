@@ -2,11 +2,11 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-122 | The CLI names a template with --template or the user file, never a project file, and lists and removes them | proposed | cli | sandbox-templates, cli, config |
-| DL-121 | Settings has a Sandbox templates section, and both launch forms pick a template, None by default | proposed | web | sandbox-templates, web, settings |
-| DL-120 | A launch that names a template takes its settings under the launch's own, and the session records what was resolved | proposed | server | sandbox-templates, sessions, jobs, credentials |
-| DL-119 | A sandbox template is a personal, named set of sandbox settings kept by the server | proposed | server | sandbox-templates, config, api |
-| DL-118 | Routed credentials are added and replaced from the Settings page, an admin's for the organisation too | proposed | web | sandbox-templates, routed-credentials, credentials, web |
+| DL-122 | The CLI names a template with --template or the user file, never a project file, and lists and removes them | accepted | cli | sandbox-templates, cli, config |
+| DL-121 | Settings has a Sandbox templates section, and both launch forms pick a template, None by default | accepted | web | sandbox-templates, web, settings |
+| DL-120 | A launch that names a template takes its settings under the launch's own, and the session records what was resolved | accepted | server | sandbox-templates, sessions, jobs, credentials |
+| DL-119 | A sandbox template is a personal, named set of sandbox settings kept by the server | accepted | server | sandbox-templates, config, api |
+| DL-118 | Routed credentials are added and replaced from the Settings page, an admin's for the organisation too | accepted | web | sandbox-templates, routed-credentials, credentials, web |
 | DL-117 | On a phone the composer is one container: the text over a toolbar holding the model chip and a small Send, folded to one row while idle | accepted | web | web, phone, composer |
 | DL-116 | The interface calls the figure sandbox cost, shows it only beside the sandbox, and keeps model token cost visibly untracked | accepted | web | web, cost, usage, sessions |
 | DL-115 | A session's last-message preview comes from its root conversations, never from a subagent | accepted | server | subagents |

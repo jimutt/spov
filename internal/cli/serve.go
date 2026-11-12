@@ -725,6 +725,8 @@ func (e *Env) serverDeps(ctx context.Context, cfg config.Config, provider sandbo
 		// @decision(DL-033) @decision(DL-016)
 		Images:   images,
 		Resolver: e.addonResolver(stateFile, warn),
+		// @decision(DL-119)
+		Templates: e.templateStore(st),
 		// @decision(DL-013)
 		Models:         e.modelSource(stateFile, warn),
 		Builder:        builder,

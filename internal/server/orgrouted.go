@@ -182,10 +182,16 @@ func (s *Server) registerOrgRoutedCredentials() {
 		if r.Name != in.Name {
 			return nil, huma.Error422UnprocessableEntity("the route names " + r.Name + ", not " + in.Name)
 		}
+		// @decision(DL-118)
+		var err error
+		r, err = r.Expanded()
+		if err != nil {
+			return nil, huma.Error422UnprocessableEntity(err.Error())
+		}
 		r = r.Normal()
 		secret := strings.TrimSpace(in.Body.Secret)
 		now := s.deps.Now()
-		err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
+		err = s.deps.Store.Tx(ctx, func(tx store.Store) error {
 			if err := liveAdminIn(ctx, tx, p); err != nil {
 				return err
 			}

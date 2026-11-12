@@ -195,6 +195,9 @@ spov credentials add acme-files --host files.acme.com --path /team/ --basic depl
 spov credentials add acme-search --host search.acme.com --header X-Api-Key
 ```
 
+You can also add or replace one in the web app, under Settings, Routed
+credentials; an admin can store one there for the whole organisation.
+
 The secret is prompted for without echo (or read with `--secret-file`) and
 stored unchecked. `--host` repeats, and the hosts must be exact names; a route
 can never cover a forge's or a model provider's host.

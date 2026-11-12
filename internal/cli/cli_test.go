@@ -235,6 +235,8 @@ func TestRootHasNoUnexpectedCommands(t *testing.T) {
 		"credentials": true,
 		// @decision(DL-045) @decision(DL-023)
 		"jobs": true,
+		// @decision(DL-122)
+		"templates": true,
 	}
 	for _, c := range root.Commands() {
 		if !want[c.Name()] {
