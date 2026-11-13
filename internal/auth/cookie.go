@@ -59,6 +59,13 @@ func (a *CookieAuthenticator) Authenticate(r *http.Request) (Principal, error) {
 		}
 		return Principal{}, fmt.Errorf("auth: loading the session's user: %w", err)
 	}
+	// Only a person has a browser session; a service account never
+	// signs in.
+	//
+	// @decision(DL-140)
+	if !personRow(user) {
+		return Principal{}, fmt.Errorf("%w: %w", ErrBadCredential, errNotAPerson)
+	}
 	// @decision(DL-128)
 	admin, ok := a.Allowlist.Lookup(user.GithubID, user.Email)
 	if !ok {

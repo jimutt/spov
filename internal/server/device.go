@@ -293,6 +293,15 @@ func (d *Device) handleToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token, err := d.issue(ctx, dc, now)
+	// @decision(DL-141)
+	if errors.Is(err, errNotAPerson) {
+		d.warn("device: refused a token for a user who is not a person")
+		if err := d.Store.DeviceCodes().Delete(ctx, dc.ID); err != nil {
+			d.warn("device: deleting a refused code: " + err.Error())
+		}
+		oauthError(w, http.StatusBadRequest, "access_denied", "")
+		return
+	}
 	if err != nil {
 		d.warn("device: issuing a token: " + err.Error())
 		oauthError(w, http.StatusInternalServerError, "server_error", "")
@@ -326,8 +335,19 @@ func (d *Device) issue(ctx context.Context, dc store.DeviceCode, now time.Time) 
 		CreatedAt: now,
 	}
 	// The token row and the code's removal go together: a token that
-	// exists with a code that also does could be issued twice.
+	// exists with a code that also does could be issued twice. Only a
+	// person's row gets one; a code approved for any other is refused
+	// and then deleted.
+	//
+	// @decision(DL-141)
 	err = d.Store.Tx(ctx, func(s store.Store) error {
+		u, err := s.Users().Get(ctx, dc.OrgID, dc.UserID)
+		if err != nil {
+			return err
+		}
+		if !u.Person() {
+			return errNotAPerson
+		}
 		if err := s.Tokens().Create(ctx, rec); err != nil {
 			return err
 		}
@@ -338,6 +358,10 @@ func (d *Device) issue(ctx context.Context, dc store.DeviceCode, now time.Time) 
 	}
 	return token, nil
 }
+
+// errNotAPerson is a device code approved for a row that is not a
+// person's.
+var errNotAPerson = errors.New("the device code's user is not a person")
 
 // oauthError writes an RFC 6749 §5.2 error body. x/oauth2 parses these,
 // and the device-flow client branches on the code.

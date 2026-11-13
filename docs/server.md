@@ -82,10 +82,11 @@ allowlist.
 
 ## Who may sign in
 
-A hosted server admits only the people on its allowlist. An administrator
-manages it on the Settings page, under **People**: add a person by their GitHub
-username, or by an address, and tick "administrator" for someone who should
-manage the list too.
+A hosted server admits only the people on its allowlist, and the
+[service accounts](#service-accounts) its administrators create. An
+administrator manages the allowlist on the Settings page, under **People**: add
+a person by their GitHub username, or by an address, and tick "administrator"
+for someone who should manage the list too.
 
 - **Use the GitHub username.** The server looks it up on GitHub when you add it
   and shows the name GitHub has for that account, so you can see at once whether
@@ -117,6 +118,36 @@ covers both.
 
 The browser never talks to a sandbox directly. The page shows what the server
 has recorded, and an open tab does not keep a sandbox alive.
+
+## Service accounts
+
+A pipeline that starts jobs should not hold a person's token: the jobs would be
+that person's, count against their quota, and stop when they leave. A hosted
+server has **service accounts** for this: users an administrator creates, which
+never sign in and are never on the allowlist.
+
+- An administrator creates one by name and issues it tokens through
+  `/api/v1/service-accounts`; there is no page or command for it yet.
+  [`deploy/README.md`](../deploy/README.md#service-accounts) has the calls.
+- A token lasts a year unless the administrator chooses a lifetime, up to three
+  years, or none. An account holds at most ten usable tokens at once, enough to
+  issue a new one, switch the pipeline's secret and revoke the old one.
+- The pipeline uses the token as `SPOV_SERVER_TOKEN`. The account then does what
+  any user who is not an administrator may: start and read its own sessions and
+  jobs, store its own credentials, list and revoke its own tokens. It cannot
+  issue itself a token or change its commit author, and is never an
+  administrator.
+- Removing an administrator does not revoke the service tokens they issued, so
+  the pipelines keep running; the token listing shows who issued each, and they
+  should be rotated.
+- It stores its own forge token with `spov credentials add` under its own spov
+  token. spov does not renew a stored token, so the pipeline's owner rotates it.
+- Its quotas and request limits are a user's, with the same defaults, and an
+  administrator changes its quota as they do anyone's. Administrators see and
+  control its sessions and jobs as they do anyone's.
+- Deleting it refuses its tokens at once and then ends what it has running and
+  stored, as removing a person does. Its name stays taken and its history is
+  kept.
 
 ## Limits
 

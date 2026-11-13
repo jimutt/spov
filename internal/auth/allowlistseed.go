@@ -257,6 +257,10 @@ func parseAllowlist(r io.Reader) (seedFile, error) {
 			continue
 		}
 		email := normalizeEmail(fields[0])
+		// @decision(DL-140)
+		if err := CheckAllowlistAddress(email); err != nil {
+			return seedFile{}, fmt.Errorf("auth: allowlist line %d: %w", line, err)
+		}
 		// The point of parsing at all is to catch an operator's typo
 		// before it becomes "why can't I log in", so this is a real
 		// parse rather than a check for "@". The parsed address must be

@@ -62,9 +62,10 @@ branches on the forge. See [the sandbox](sandbox.md#credentials-stay-outside-the
 
 ## Who can sign in
 
-Only people on the allowlist can use a hosted server. Browser sign-in is GitHub
-OAuth, and the identity is the GitHub account's **numeric ID**: one account is one
-user, whatever address it signs in with. `spov login` is the same identity
+Only people on the allowlist, and the service accounts an admin creates, can use
+a hosted server. Browser sign-in is GitHub OAuth, and the identity is the GitHub
+account's **numeric ID**: one account is one user, whatever address it signs in
+with. `spov login` is the same identity
 through spov's own device flow. An empty allowlist admits nobody.
 
 - **An entry names a GitHub account or an address.** An account entry (`@bob`) is
@@ -91,6 +92,24 @@ through spov's own device flow. An empty allowlist admits nobody.
 - **What GitHub says about an account is shown as text.** A login and display
   name come from GitHub and can be chosen by anyone; the server checks a login's
   shape before using it, and the dashboard never renders either as markup.
+- **A service account authenticates only with a token an admin issued.** It is a
+  user an admin creates for a pipeline (DL-140, DL-141). It has no GitHub account,
+  no browser session and no device-flow token, and it is never an admin: the
+  server sets that aside even if an allowlist entry named its address, and no
+  entry under `service.invalid`, its address's domain, can be stored. Its token is
+  refused once the account is deleted, revoked or expired. A token lasts a year
+  unless the admin chose otherwise, and the audit trail records every token
+  issued and revoked, by id and label, never the token. A leaked one can do what
+  the account can, including replacing its stored forge token, but cannot read a
+  credential back, reach anyone else's work or administer anything. That last
+  part holds with the credential proxy: on a server run with
+  `SPOV_TOKENS_IN_SANDBOX=1` the forge token is inside the account's sandboxes,
+  and anyone who can attach to one of its sessions can read it.
+- **Removing an admin does not revoke the service tokens they issued.** Revoking
+  them would stop every pipeline that admin set up. The off-boarding counts the
+  ones still usable in its audit row and names their accounts in the server's
+  log, and the token listing shows who issued each. Rotate them when an admin
+  leaves: someone who kept a copy can use it until it is revoked or expires.
 - **`SPOV_SERVER_TOKEN` is not an admin of the allowlist's organisation.** It is a
   standing credential for a separate user and organisation, `local`. Its holder can
   launch sessions and jobs there, on the deployment's own credentials and keys. The

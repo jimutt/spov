@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/redact"
@@ -17,6 +19,24 @@ import (
 //
 // @decision(DL-132)
 const AdminMemberOffboarded = "allowlist.offboarded"
+
+// offboarding is why a user's things are being ended: the audit action
+// it writes and how its answer says the user was removed.
+//
+// @decision(DL-132) @decision(DL-140)
+type offboarding struct {
+	action  string
+	removed string
+}
+
+var (
+	// offboardMember is a person removed from the allowlist.
+	offboardMember = offboarding{action: AdminMemberOffboarded, removed: "is removed from the allowlist"}
+	// offboardService is a service account deleted by an admin.
+	//
+	// @decision(DL-140)
+	offboardService = offboarding{action: AdminServiceAccountOffboarded, removed: "is deleted"}
+)
 
 // offboardResult counts what an off-boarding ended, and names each step
 // that did not finish.
@@ -45,6 +65,35 @@ func plural(n int, noun, verb string) string {
 	return fmt.Sprintf("%d %s %s", n, noun, verb)
 }
 
+// issuedServiceTokens counts the usable tokens of service accounts
+// still enabled that user issued, and names those accounts. A failed
+// read is a warning, not a failed off-boarding: nothing is ended here.
+//
+// @decision(DL-141)
+func (s *Service) issuedServiceTokens(ctx context.Context, user store.User, now time.Time) (int, []string) {
+	tokens, err := s.deps.Store.Tokens().ListIssuedBy(ctx, user.OrgID, user.ID)
+	if err != nil {
+		s.deps.Warn("off-boarding: counting the service tokens " + user.ID + " issued: " + redact.Error(err))
+		return 0, nil
+	}
+	n := 0
+	var accounts []string
+	for _, t := range tokens {
+		if !t.Usable(now) || t.UserID == user.ID {
+			continue
+		}
+		acct, err := s.deps.Store.Users().Get(ctx, t.OrgID, t.UserID)
+		if err != nil || acct.Kind != store.UserService || acct.DisabledAt != nil {
+			continue
+		}
+		n++
+		if !slices.Contains(accounts, acct.Name) {
+			accounts = append(accounts, acct.Name)
+		}
+	}
+	return n, accounts
+}
+
 // Offboard ends what a person removed from the allowlist still has: it
 // cancels their unfinished jobs, stops their live sessions (a held sync
 // job's included), revokes their CLI tokens and deletes their stored
@@ -54,11 +103,11 @@ func plural(n int, noun, verb string) string {
 // user row, past sessions, transcripts, reports) is kept.
 //
 // @decision(DL-132)
-func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, user store.User) (offboardResult, error) {
+func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, user store.User, how offboarding) (offboardResult, error) {
 	var r offboardResult
 	left := func(what string, err error) {
 		r.Left = append(r.Left, what)
-		s.deps.Warn("allowlist: off-boarding " + who + ": " + what + ": " + redact.Error(err))
+		s.deps.Warn("off-boarding " + who + ": " + what + ": " + redact.Error(err))
 	}
 
 	// Jobs first: a cancel stops the job's session by the path its
@@ -189,16 +238,30 @@ func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, us
 	if len(r.Left) > 0 {
 		detail += "; left: " + strings.Join(r.Left, ", ")
 	}
+	// The service tokens they issued as an admin stay: revoking them
+	// would stop the pipelines that hold them. They are counted, and
+	// the accounts named, so someone rotates them.
+	//
+	// @decision(DL-141)
+	if n, accounts := s.issuedServiceTokens(ctx, user, now); n > 0 {
+		line := plural(n, "service account token", "they issued is still usable")
+		if n != 1 {
+			line = fmt.Sprintf("%d service account tokens they issued are still usable", n)
+		}
+		line += " (" + strings.Join(accounts, ", ") + "); rotate them"
+		detail += "; " + line
+		s.deps.Warn("off-boarding " + who + ": " + line)
+	}
 	if err := s.deps.Store.AdminEvents().Append(ctx, store.AdminEvent{
-		ID: store.NewID(now), OrgID: p.OrgID, Actor: actorOf(p), Action: AdminMemberOffboarded, At: now,
+		ID: store.NewID(now), OrgID: p.OrgID, Actor: actorOf(p), Action: how.action, At: now,
 		Detail: detail,
 	}); err != nil {
 		left("the audit row was not written", err)
 	}
 	if len(r.Left) > 0 {
-		return r, fmt.Errorf("%s is removed from the allowlist, but not everything of theirs was ended: %s"+
+		return r, fmt.Errorf("%s %s, but not everything of theirs was ended: %s"+
 			" (done: %s); send the same delete again to retry",
-			who, strings.Join(r.Left, ", "), r.summary())
+			who, how.removed, strings.Join(r.Left, ", "), r.summary())
 	}
 	return r, nil
 }

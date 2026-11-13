@@ -210,6 +210,9 @@ func userFromRow(r sqlcgen.User) store.User {
 	if r.GithubID != nil {
 		u.GithubID = *r.GithubID
 	}
+	// @decision(DL-140)
+	u.Kind = store.UserKind(r.Kind)
+	u.DisabledAt = goTimePtr(r.DisabledAt)
 	return u
 }
 
@@ -229,7 +232,13 @@ func quotaJSON(q store.Quota) ([]byte, error) {
 }
 
 func tokenFromRow(r sqlcgen.ApiToken) store.APIToken {
+	issuer := ""
+	// @decision(DL-141)
+	if r.IssuedBy != nil {
+		issuer = *r.IssuedBy
+	}
 	return store.APIToken{
+		IssuedBy:   issuer,
 		ID:         r.ID,
 		OrgID:      r.OrgID,
 		UserID:     r.UserID,

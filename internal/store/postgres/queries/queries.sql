@@ -131,8 +131,8 @@ update mints set expires_at = $3 where id = $1 and org_id = $2;
 insert into users (id, org_id, email, name, github_login, admin, git_name, git_email,
                    default_model, quota, last_login_at, created_at, updated_at,
                    default_git_access, default_job_git_access, default_job_duration_seconds,
-                   github_id)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);
+                   github_id, kind)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18);
 
 -- name: GetUser :one
 select * from users where id = $1 and org_id = $2;
@@ -154,8 +154,9 @@ order by id;
 -- Binds a row to its account once. A row already bound is never moved:
 -- the update touches only a row with no account yet.
 -- @decision(DL-128)
+-- A service account is never bound (DL-140).
 update users set github_id = $3, updated_at = $4
-where id = $1 and org_id = $2 and github_id is null;
+where id = $1 and org_id = $2 and github_id is null and kind = 'person';
 
 -- name: ListUsers :many
 select * from users where org_id = $1 order by id;
@@ -168,13 +169,20 @@ set email = $3, name = $4, github_login = $5, admin = $6, git_name = $7,
     default_job_duration_seconds = $15
 where id = $1 and org_id = $2;
 
+-- name: DisableUser :execrows
+-- Sets a service account's disabled_at once; a person's row is never
+-- matched.
+-- @decision(DL-140)
+update users set disabled_at = coalesce(disabled_at, $3), updated_at = $4
+where id = $1 and org_id = $2 and kind = 'service';
+
 -- name: DeleteUser :execrows
 delete from users where id = $1 and org_id = $2;
 
 -- name: CreateAPIToken :exec
 insert into api_tokens (id, org_id, user_id, token_hash, name, last_used_at,
-                        expires_at, revoked_at, created_at, updated_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+                        expires_at, revoked_at, created_at, updated_at, issued_by)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
 
 -- name: GetAPITokenByHash :one
 select * from api_tokens where token_hash = $1;
@@ -184,6 +192,10 @@ select * from api_tokens where id = $1 and org_id = $2;
 
 -- name: ListAPITokensByUser :many
 select * from api_tokens where org_id = $1 and user_id = $2 order by id;
+
+-- name: ListAPITokensIssuedBy :many
+-- The tokens an admin issued for service accounts (DL-141).
+select * from api_tokens where org_id = $1 and issued_by = $2 order by id;
 
 -- name: TouchAPIToken :execrows
 update api_tokens set last_used_at = $3 where id = $1 and org_id = $2;

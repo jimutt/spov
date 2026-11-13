@@ -337,6 +337,110 @@ unauthenticated by construction: a CLI polling for a token has no
 credential yet. The approval page at `/device` needs a login, and five
 wrong codes lock that user out for fifteen minutes.
 
+## Service accounts
+
+Recorded in [DL-140](../decisions/records/server/DL-140.md) and
+[DL-141](../decisions/records/server/DL-141.md). A service account is a
+user an administrator creates for a pipeline, so that its jobs are not a
+person's: they run under the account's own quotas and limits, and they do
+not stop when someone leaves. It never signs in. It has no browser
+session, the device flow cannot issue it a token, and it is never on the
+allowlist; it authenticates only with a token an administrator issues for
+it, and it is never an administrator, whatever the allowlist says. Its
+address is `<name>@service.invalid`, and no allowlist entry under
+`service.invalid` can be stored.
+
+There is no page and no command for them yet. Every call below needs an
+administrator's credential of the org the allowlist governs, as for the
+allowlist, and a local server answers 501.
+
+```sh
+# Create one. The name is 3 to 32 lower-case letters, digits and hyphens.
+# Its commits are authored as the name and its address unless you say
+# otherwise.
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"release-bot","git_name":"Release Bot","git_email":"release-bot@example.com"}' \
+  https://spov.example.com/api/v1/service-accounts
+
+# List them: id, name, author, token count and last use.
+curl -H "Authorization: Bearer $TOKEN" https://spov.example.com/api/v1/service-accounts
+
+# Change the commit author.
+curl -X PATCH -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"git_name":"Releases"}' https://spov.example.com/api/v1/service-accounts/release-bot
+
+# Issue a token. The answer carries it once; keep it in the CI secret
+# store. It lasts 365 days unless you give expires_in_days (1 to 1095) or
+# "no_expiry": true.
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"release workflow","expires_in_days":180}' \
+  https://spov.example.com/api/v1/service-accounts/release-bot/tokens
+
+# List its tokens (never the tokens themselves), each with who issued
+# it, and revoke one.
+curl -H "Authorization: Bearer $TOKEN" \
+  https://spov.example.com/api/v1/service-accounts/release-bot/tokens
+curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+  https://spov.example.com/api/v1/service-accounts/release-bot/tokens/$TOKEN_ID
+
+# Delete it, and end everything it has running and stored.
+curl -X DELETE -H "Authorization: Bearer $TOKEN" \
+  https://spov.example.com/api/v1/service-accounts/release-bot
+```
+
+An organisation holds at most 100 service accounts that are not deleted,
+and an account at most 10 usable tokens: two at once is what a rotation
+needs (issue a new one, switch the secret, revoke the old one). Nothing
+warns before a token expires; the listing shows the date. Every create,
+change, token issue, token revoke and deletion writes an audit row with
+the account's name and the token's id and label, never the token. The
+account can revoke its own token with `DELETE /api/v1/me/tokens/current`,
+which is audited too, but cannot issue one or change its commit author. Its
+commits always carry the author set here: the author a job or session
+request names, which the CLI takes from the runner's git config, is
+ignored.
+
+**Removing an admin does not revoke the service tokens they issued**,
+because that would stop every pipeline they set up. The off-boarding
+counts the ones still usable in its audit row and names their accounts
+in the server's log, and the token listing shows who issued each token.
+Rotate those tokens: issue a new one, switch the pipeline's secret,
+revoke the old one.
+
+The account stores its own forge token, with its own spov token, through
+the routes a person uses, so no route writes a credential on another
+account's behalf:
+
+```sh
+SPOV_SERVER=https://spov.example.com SPOV_SERVER_TOKEN=$SERVICE_TOKEN \
+  spov credentials add github
+```
+
+spov never renews a stored token, so whoever runs the pipeline rotates it.
+A launch may still prefer the organisation's GitHub App (`prefer` in the
+CLI config). The account's quota is set like a person's, with
+`PATCH /api/v1/users/{id}` and the `id` from the listing.
+
+Deleting an account disables it first, in one transaction with its audit
+row, so its tokens answer 401 on their next request. Then, as removing a
+person does, the server cancels its unfinished jobs, stops its live
+sessions, revokes its tokens and deletes its stored credentials, and
+writes an audit row with what was ended. Its name stays taken and its
+history is kept. If a step fails, the call answers 500 saying what is
+left, and the same `DELETE` retries it. A session or job the account
+asks for while the delete runs is either ended by it or refused with
+401. A credential the account stores at that moment can outlive the
+delete; nothing can use it, and sending the `DELETE` again removes it.
+
+An administrator reads, steers, interrupts and cancels a service
+account's sessions and jobs as they do anyone's. A leaked service token
+can do what the account can, including replacing its stored credential;
+it cannot read one back, reach another user's work or administer
+anything. That holds with the credential proxy: on a server run with
+`SPOV_TOKENS_IN_SANDBOX=1` the forge token is inside the account's
+sandboxes, where anyone who can attach to one of its sessions can read
+it. Revoke a leaked token, or delete the account.
+
 ## Credentials
 
 Recorded in [DL-042](../decisions/records/git/DL-042.md). Every

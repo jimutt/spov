@@ -145,6 +145,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	if tmpl != nil {
 		req = applyTemplate(req, *tmpl)
 	}
+	req = withAccountAuthor(p, req)
 	req = s.withDefaults(req)
 	if err := s.validateRequest(req); err != nil {
 		return store.Session{}, inTemplate(tmpl, err)
@@ -206,7 +207,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 		State:   store.StateStarting,
 		Request: req,
 	}
-	if err := s.createWithinQuota(ctx, sess, quota.MaxConcurrentSessions); err != nil {
+	if err := s.createWithinQuota(ctx, sess, quota.MaxConcurrentSessions, p.Service); err != nil {
 		return store.Session{}, err
 	}
 	var seedBundle []byte
@@ -266,11 +267,17 @@ func attributionUser(ownerID string) string {
 // createWithinQuota counts the owner's live sessions and inserts the new
 // one in a single transaction, so the count a create decides on is the
 // count it commits against. A quota of zero or less is no limit;
-// nothing configures one, but a stored override could.
+// nothing configures one, but a stored override could. A service
+// account's create checks first that the account is not deleted.
 //
-// @decision(DL-009)
-func (s *Service) createWithinQuota(ctx context.Context, sess store.Session, max int) error {
+// @decision(DL-009) @decision(DL-140)
+func (s *Service) createWithinQuota(ctx context.Context, sess store.Session, max int, service bool) error {
 	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
+		if service {
+			if err := liveServiceOwner(ctx, tx, sess.OrgID, sess.OwnerID); err != nil {
+				return err
+			}
+		}
 		if max > 0 {
 			n, err := tx.Sessions().CountLive(ctx, sess.OrgID, sess.OwnerID)
 			if err != nil {
@@ -334,6 +341,17 @@ func forgeHosts(selections []git.Selection) []string {
 		}
 	}
 	return out
+}
+
+// withAccountAuthor drops the author a service account's request names,
+// so its stored one applies.
+//
+// @decision(DL-140)
+func withAccountAuthor(p auth.Principal, req store.SessionRequest) store.SessionRequest {
+	if p.Service {
+		req.GitName, req.GitEmail = "", ""
+	}
+	return req
 }
 
 func (s *Service) withDefaults(req store.SessionRequest) store.SessionRequest {

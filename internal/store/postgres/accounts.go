@@ -64,6 +64,16 @@ func (p pgMints) SetExpiry(ctx context.Context, orgID, mintID string, expires ti
 type pgUsers struct{ s *Store }
 
 func (p pgUsers) Create(ctx context.Context, u store.User) error {
+	// @decision(DL-140)
+	if u.Kind == "" {
+		u.Kind = store.UserPerson
+	}
+	if !u.Kind.Valid() {
+		return store.ErrUnknownUserKind
+	}
+	if u.Kind == store.UserService && u.GithubID != 0 {
+		return store.ErrConflict
+	}
 	now := p.s.now()
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = now
@@ -95,6 +105,8 @@ func (p pgUsers) Create(ctx context.Context, u store.User) error {
 		UpdatedAt:                 ts(u.UpdatedAt),
 		// @decision(DL-128)
 		GithubID: githubIDArg(u.GithubID),
+		// @decision(DL-140)
+		Kind: string(u.Kind),
 	}))
 }
 
@@ -236,6 +248,25 @@ func (p pgUsers) Update(ctx context.Context, u store.User) error {
 	return nil
 }
 
+// Disable matches only a service account, and keeps a first time.
+//
+// @decision(DL-140)
+func (p pgUsers) Disable(ctx context.Context, orgID, id string, at time.Time) error {
+	n, err := p.s.q.DisableUser(ctx, sqlcgen.DisableUserParams{
+		ID: id, OrgID: orgID, DisabledAt: ts(at), UpdatedAt: ts(p.s.now()),
+	})
+	if err != nil {
+		return mapErr("disable user", err)
+	}
+	if n == 1 {
+		return nil
+	}
+	if _, err := p.Get(ctx, orgID, id); err != nil {
+		return err
+	}
+	return store.ErrConflict
+}
+
 func (p pgUsers) Delete(ctx context.Context, orgID, id string) error {
 	n, err := p.s.q.DeleteUser(ctx, sqlcgen.DeleteUserParams{ID: id, OrgID: orgID})
 	if err != nil {
@@ -269,7 +300,36 @@ func (p pgTokens) Create(ctx context.Context, t store.APIToken) error {
 		RevokedAt:  tsPtr(t.RevokedAt),
 		CreatedAt:  ts(t.CreatedAt),
 		UpdatedAt:  ts(t.UpdatedAt),
+		// @decision(DL-141)
+		IssuedBy: nonEmptyText(t.IssuedBy),
 	}))
+}
+
+// nonEmptyText is s for a nullable text column, nil when it is empty.
+func nonEmptyText(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// @decision(DL-141)
+func (p pgTokens) ListIssuedBy(ctx context.Context, orgID, issuerID string) ([]store.APIToken, error) {
+	if issuerID == "" {
+		return nil, nil
+	}
+	rows, err := p.s.q.ListAPITokensIssuedBy(ctx, sqlcgen.ListAPITokensIssuedByParams{OrgID: orgID, IssuedBy: &issuerID})
+	if err != nil {
+		return nil, mapErr("list tokens issued by", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	out := make([]store.APIToken, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, tokenFromRow(r))
+	}
+	return out, nil
 }
 
 func (p pgTokens) ByHash(ctx context.Context, hash []byte) (store.APIToken, error) {

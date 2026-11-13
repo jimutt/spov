@@ -1190,6 +1190,137 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("a rolled-back bind is visible: %+v", got)
 		}
 	},
+	// A row's kind is set once, a service account is never bound to a
+	// GitHub account, and only Disable sets its DisabledAt, once.
+	//
+	// @decision(DL-140)
+	"users: a service account keeps its kind and is disabled once": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		users := s.Users()
+		person := store.User{ID: store.NewID(t0), OrgID: "org", Email: "p@example.com"}
+		svc := store.User{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", Email: "ci@service.invalid",
+			Name: "ci", Kind: store.UserService}
+		for _, u := range []store.User{person, svc} {
+			if err := users.Create(ctx, u); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got, _ := users.Get(ctx, "org", person.ID); got.Kind != store.UserPerson || got.DisabledAt != nil {
+			t.Errorf("a row created with no kind is %+v, want a person", got)
+		}
+		if got, _ := users.Get(ctx, "org", svc.ID); got.Kind != store.UserService {
+			t.Errorf("the service row is %+v", got)
+		}
+		bound := store.User{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", Email: "x@service.invalid",
+			Kind: store.UserService, GithubID: 42}
+		if err := users.Create(ctx, bound); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a service row was created with a GitHub account: %v", err)
+		}
+		// A create never carries a disabled time in.
+		at0 := t0
+		early := store.User{ID: store.NewID(t0.Add(5 * time.Second)), OrgID: "org", Email: "early@service.invalid",
+			Kind: store.UserService, DisabledAt: &at0}
+		if err := users.Create(ctx, early); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := users.Get(ctx, "org", early.ID); got.DisabledAt != nil {
+			t.Errorf("a create stored a disabled time: %+v", got)
+		}
+		odd := store.User{ID: store.NewID(t0.Add(3 * time.Second)), OrgID: "org", Email: "o@example.com", Kind: "robot"}
+		if err := users.Create(ctx, odd); err == nil {
+			t.Error("a row of an unknown kind was created")
+		}
+		if err := users.BindGithub(ctx, "org", svc.ID, 77); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a service row was bound to a GitHub account: %v", err)
+		}
+		// Update writes neither the kind nor the time.
+		got, _ := users.Get(ctx, "org", person.ID)
+		got.Kind = store.UserService
+		at := t0.Add(time.Hour)
+		got.DisabledAt = &at
+		if err := users.Update(ctx, got); err != nil {
+			t.Fatal(err)
+		}
+		if again, _ := users.Get(ctx, "org", person.ID); again.Kind != store.UserPerson || again.DisabledAt != nil {
+			t.Errorf("an update changed the kind or the time: %+v", again)
+		}
+		if err := users.Disable(ctx, "org", person.ID, at); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a person's row was disabled: %v", err)
+		}
+		if err := users.Disable(ctx, "other", svc.ID, at); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("another org disabled the account: %v", err)
+		}
+		if err := users.Disable(ctx, "org", svc.ID, at); err != nil {
+			t.Fatal(err)
+		}
+		if err := users.Disable(ctx, "org", svc.ID, at.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		disabled, _ := users.Get(ctx, "org", svc.ID)
+		if disabled.DisabledAt == nil || !disabled.DisabledAt.Equal(at) {
+			t.Errorf("disabled at %v, want the first time %v", disabled.DisabledAt, at)
+		}
+		// An update after the disable, from a row read before it, does
+		// not enable the account again.
+		svc.Name = "renamed"
+		if err := users.Update(ctx, svc); err != nil {
+			t.Fatal(err)
+		}
+		if again, _ := users.Get(ctx, "org", svc.ID); again.DisabledAt == nil || again.Kind != store.UserService {
+			t.Errorf("a stale update enabled the account again: %+v", again)
+		}
+		*disabled.DisabledAt = t0
+		if again, _ := users.Get(ctx, "org", svc.ID); !again.DisabledAt.Equal(at) {
+			t.Error("a caller's mutation reached the stored time")
+		}
+		// A disable rolls back with its transaction.
+		other := store.User{ID: store.NewID(t0.Add(4 * time.Second)), OrgID: "org", Email: "cd@service.invalid",
+			Kind: store.UserService}
+		if err := users.Create(ctx, other); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Users().Disable(ctx, "org", other.ID, at); err != nil {
+				return err
+			}
+			return errors.New("roll back")
+		}); err == nil {
+			t.Fatal("the transaction did not fail")
+		}
+		if again, _ := users.Get(ctx, "org", other.ID); again.DisabledAt != nil {
+			t.Errorf("a rolled-back disable is visible: %+v", again)
+		}
+	},
+	// A service account's token records who issued it, and is listed by
+	// its issuer within the org.
+	//
+	// @decision(DL-141)
+	"tokens: the issuer is kept and listed": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		for i, tok := range []store.APIToken{
+			{ID: store.NewID(t0), OrgID: "org", UserID: "svc", Hash: []byte("i-a"), Name: "a", IssuedBy: "admin"},
+			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", UserID: "svc", Hash: []byte("i-b"), Name: "b", IssuedBy: "admin"},
+			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", UserID: "admin", Hash: []byte("i-c"), Name: "c"},
+			{ID: store.NewID(t0.Add(3 * time.Second)), OrgID: "other", UserID: "svc", Hash: []byte("i-d"), Name: "d", IssuedBy: "admin"},
+		} {
+			if err := s.Tokens().Create(ctx, tok); err != nil {
+				t.Fatalf("token %d: %v", i, err)
+			}
+		}
+		got, err := s.Tokens().ListIssuedBy(ctx, "org", "admin")
+		if err != nil || len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" || got[0].IssuedBy != "admin" {
+			t.Errorf("issued by admin = %+v, %v", got, err)
+		}
+		if got, err := s.Tokens().ListIssuedBy(ctx, "org", ""); err != nil || len(got) != 0 {
+			t.Errorf("issued by nobody = %+v, %v", got, err)
+		}
+		if own, _ := s.Tokens().ListByUser(ctx, "org", "admin"); len(own) != 1 || own[0].IssuedBy != "" {
+			t.Errorf("a device-flow token's issuer = %+v", own)
+		}
+		if byHash, _ := s.Tokens().ByHash(ctx, []byte("i-a")); byHash.IssuedBy != "admin" {
+			t.Errorf("by hash = %+v", byHash)
+		}
+	},
 	"tokens are found by hash across orgs, touched and revoked": func(t *testing.T, s store.Store) {
 		ctx := context.Background()
 		exp := t0.Add(90 * 24 * time.Hour)

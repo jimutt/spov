@@ -39,7 +39,7 @@ func (q *Queries) AppendAdminEvent(ctx context.Context, arg AppendAdminEventPara
 
 const bindUserGithub = `-- name: BindUserGithub :execrows
 update users set github_id = $3, updated_at = $4
-where id = $1 and org_id = $2 and github_id is null
+where id = $1 and org_id = $2 and github_id is null and kind = 'person'
 `
 
 type BindUserGithubParams struct {
@@ -52,6 +52,7 @@ type BindUserGithubParams struct {
 // Binds a row to its account once. A row already bound is never moved:
 // the update touches only a row with no account yet.
 // @decision(DL-128)
+// A service account is never bound (DL-140).
 func (q *Queries) BindUserGithub(ctx context.Context, arg BindUserGithubParams) (int64, error) {
 	result, err := q.db.Exec(ctx, bindUserGithub,
 		arg.ID,
@@ -224,8 +225,8 @@ func (q *Queries) CountMintsSince(ctx context.Context, arg CountMintsSinceParams
 
 const createAPIToken = `-- name: CreateAPIToken :exec
 insert into api_tokens (id, org_id, user_id, token_hash, name, last_used_at,
-                        expires_at, revoked_at, created_at, updated_at)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        expires_at, revoked_at, created_at, updated_at, issued_by)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 `
 
 type CreateAPITokenParams struct {
@@ -239,6 +240,7 @@ type CreateAPITokenParams struct {
 	RevokedAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	IssuedBy   *string
 }
 
 func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) error {
@@ -253,6 +255,7 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 		arg.RevokedAt,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.IssuedBy,
 	)
 	return err
 }
@@ -452,8 +455,8 @@ const createUser = `-- name: CreateUser :exec
 insert into users (id, org_id, email, name, github_login, admin, git_name, git_email,
                    default_model, quota, last_login_at, created_at, updated_at,
                    default_git_access, default_job_git_access, default_job_duration_seconds,
-                   github_id)
-values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                   github_id, kind)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 `
 
 type CreateUserParams struct {
@@ -474,6 +477,7 @@ type CreateUserParams struct {
 	DefaultJobGitAccess       string
 	DefaultJobDurationSeconds int64
 	GithubID                  *int64
+	Kind                      string
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
@@ -495,6 +499,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 		arg.DefaultJobGitAccess,
 		arg.DefaultJobDurationSeconds,
 		arg.GithubID,
+		arg.Kind,
 	)
 	return err
 }
@@ -748,6 +753,34 @@ func (q *Queries) DeliverablesForJobs(ctx context.Context, arg DeliverablesForJo
 	return items, nil
 }
 
+const disableUser = `-- name: DisableUser :execrows
+update users set disabled_at = coalesce(disabled_at, $3), updated_at = $4
+where id = $1 and org_id = $2 and kind = 'service'
+`
+
+type DisableUserParams struct {
+	ID         string
+	OrgID      string
+	DisabledAt pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+// Sets a service account's disabled_at once; a person's row is never
+// matched.
+// @decision(DL-140)
+func (q *Queries) DisableUser(ctx context.Context, arg DisableUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, disableUser,
+		arg.ID,
+		arg.OrgID,
+		arg.DisabledAt,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const endCurrentRun = `-- name: EndCurrentRun :exec
 update session_runs u set ended_at = $3
 where u.session_id = $1 and u.org_id = $2 and u.ended_at is null
@@ -806,7 +839,7 @@ func (q *Queries) FindEvent(ctx context.Context, arg FindEventParams) (Event, er
 }
 
 const getAPIToken = `-- name: GetAPIToken :one
-select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at from api_tokens where id = $1 and org_id = $2
+select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at, issued_by from api_tokens where id = $1 and org_id = $2
 `
 
 type GetAPITokenParams struct {
@@ -828,12 +861,13 @@ func (q *Queries) GetAPIToken(ctx context.Context, arg GetAPITokenParams) (ApiTo
 		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IssuedBy,
 	)
 	return i, err
 }
 
 const getAPITokenByHash = `-- name: GetAPITokenByHash :one
-select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at from api_tokens where token_hash = $1
+select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at, issued_by from api_tokens where token_hash = $1
 `
 
 func (q *Queries) GetAPITokenByHash(ctx context.Context, tokenHash []byte) (ApiToken, error) {
@@ -850,6 +884,7 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, tokenHash []byte) (ApiT
 		&i.RevokedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.IssuedBy,
 	)
 	return i, err
 }
@@ -1341,7 +1376,7 @@ func (q *Queries) GetSessionProxyCA(ctx context.Context, arg GetSessionProxyCAPa
 }
 
 const getUser = `-- name: GetUser :one
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where id = $1 and org_id = $2
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users where id = $1 and org_id = $2
 `
 
 type GetUserParams struct {
@@ -1370,12 +1405,14 @@ func (q *Queries) GetUser(ctx context.Context, arg GetUserParams) (User, error) 
 		&i.DefaultJobGitAccess,
 		&i.DefaultJobDurationSeconds,
 		&i.GithubID,
+		&i.Kind,
+		&i.DisabledAt,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where org_id = $1 and lower(email) = lower($2)
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users where org_id = $1 and lower(email) = lower($2)
 `
 
 type GetUserByEmailParams struct {
@@ -1404,12 +1441,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, arg GetUserByEmailParams) 
 		&i.DefaultJobGitAccess,
 		&i.DefaultJobDurationSeconds,
 		&i.GithubID,
+		&i.Kind,
+		&i.DisabledAt,
 	)
 	return i, err
 }
 
 const getUserByGithubID = `-- name: GetUserByGithubID :one
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where org_id = $1 and github_id = $2
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users where org_id = $1 and github_id = $2
 `
 
 type GetUserByGithubIDParams struct {
@@ -1438,6 +1477,8 @@ func (q *Queries) GetUserByGithubID(ctx context.Context, arg GetUserByGithubIDPa
 		&i.DefaultJobGitAccess,
 		&i.DefaultJobDurationSeconds,
 		&i.GithubID,
+		&i.Kind,
+		&i.DisabledAt,
 	)
 	return i, err
 }
@@ -1819,7 +1860,7 @@ func (q *Queries) LastSeqs(ctx context.Context, arg LastSeqsParams) ([]LastSeqsR
 }
 
 const listAPITokensByUser = `-- name: ListAPITokensByUser :many
-select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at from api_tokens where org_id = $1 and user_id = $2 order by id
+select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at, issued_by from api_tokens where org_id = $1 and user_id = $2 order by id
 `
 
 type ListAPITokensByUserParams struct {
@@ -1847,6 +1888,49 @@ func (q *Queries) ListAPITokensByUser(ctx context.Context, arg ListAPITokensByUs
 			&i.RevokedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.IssuedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAPITokensIssuedBy = `-- name: ListAPITokensIssuedBy :many
+select id, org_id, user_id, token_hash, name, last_used_at, expires_at, revoked_at, created_at, updated_at, issued_by from api_tokens where org_id = $1 and issued_by = $2 order by id
+`
+
+type ListAPITokensIssuedByParams struct {
+	OrgID    string
+	IssuedBy *string
+}
+
+// The tokens an admin issued for service accounts (DL-141).
+func (q *Queries) ListAPITokensIssuedBy(ctx context.Context, arg ListAPITokensIssuedByParams) ([]ApiToken, error) {
+	rows, err := q.db.Query(ctx, listAPITokensIssuedBy, arg.OrgID, arg.IssuedBy)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ApiToken
+	for rows.Next() {
+		var i ApiToken
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.UserID,
+			&i.TokenHash,
+			&i.Name,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.IssuedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -2582,7 +2666,7 @@ func (q *Queries) ListUserCredentials(ctx context.Context, arg ListUserCredentia
 }
 
 const listUsers = `-- name: ListUsers :many
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users where org_id = $1 order by id
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users where org_id = $1 order by id
 `
 
 func (q *Queries) ListUsers(ctx context.Context, orgID string) ([]User, error) {
@@ -2612,6 +2696,8 @@ func (q *Queries) ListUsers(ctx context.Context, orgID string) ([]User, error) {
 			&i.DefaultJobGitAccess,
 			&i.DefaultJobDurationSeconds,
 			&i.GithubID,
+			&i.Kind,
+			&i.DisabledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2624,7 +2710,7 @@ func (q *Queries) ListUsers(ctx context.Context, orgID string) ([]User, error) {
 }
 
 const listUsersByGithubLogin = `-- name: ListUsersByGithubLogin :many
-select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id from users
+select id, org_id, email, name, github_login, admin, git_name, git_email, last_login_at, created_at, updated_at, quota, default_model, default_git_access, default_job_git_access, default_job_duration_seconds, github_id, kind, disabled_at from users
 where org_id = $1 and github_id is not null and lower(github_login) = lower($2::text)
 order by id
 `
@@ -2663,6 +2749,8 @@ func (q *Queries) ListUsersByGithubLogin(ctx context.Context, arg ListUsersByGit
 			&i.DefaultJobGitAccess,
 			&i.DefaultJobDurationSeconds,
 			&i.GithubID,
+			&i.Kind,
+			&i.DisabledAt,
 		); err != nil {
 			return nil, err
 		}

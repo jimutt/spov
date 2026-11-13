@@ -38,6 +38,7 @@ type ApiToken struct {
 	RevokedAt  pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+	IssuedBy   *string
 }
 
 type Conversation struct {
@@ -291,6 +292,8 @@ type User struct {
 	DefaultJobGitAccess       string
 	DefaultJobDurationSeconds int64
 	GithubID                  *int64
+	Kind                      string
+	DisabledAt                pgtype.Timestamptz
 }
 
 type UserCredential struct {

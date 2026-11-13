@@ -2,8 +2,8 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-141 | A service account's tokens are issued and revoked by an admin | proposed | server | pipeline-jobs, service-accounts, auth, tokens, admin |
-| DL-140 | Service accounts: an admin-created account with no sign-in | proposed | server | pipeline-jobs, service-accounts, auth, admin, access |
+| DL-141 | A service account's tokens are issued and revoked by an admin | accepted | server | pipeline-jobs, service-accounts, auth, tokens, admin |
+| DL-140 | Service accounts: an admin-created account with no sign-in | accepted | server | pipeline-jobs, service-accounts, auth, admin, access |
 | DL-139 | The proxy refuses the REST merge of a pull request for a GitHub App token too | accepted | sandbox | pipeline-jobs, proxy, github, credentials |
 | DL-138 | A job can skip the prep pass | accepted | jobs | pipeline-jobs, jobs, prep |
 | DL-137 | A pr job can leave the branch and the pull request to its goal | accepted | jobs | pipeline-jobs, jobs, pull-request, plugin |

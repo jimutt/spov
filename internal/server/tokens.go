@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -102,6 +104,13 @@ func (s *Server) registerTokens() {
 		if rec.UserID != p.UserID {
 			return nil, huma.Error404NotFound("no such token")
 		}
+		// A service account's own revoke is audited as an admin's is,
+		// with the account as actor.
+		//
+		// @decision(DL-141)
+		if p.Service {
+			return nil, s.revokeOwnServiceToken(ctx, p, rec)
+		}
 		if err := s.deps.Store.Tokens().Revoke(ctx, p.OrgID, id, s.deps.Now()); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return nil, huma.Error404NotFound("no such token")
@@ -110,4 +119,33 @@ func (s *Server) registerTokens() {
 		}
 		return nil, nil
 	})
+}
+
+// revokeOwnServiceToken revokes a service account's own token and
+// writes its audit row in one transaction. A token already revoked is
+// revoked again with no second row.
+//
+// @decision(DL-141)
+func (s *Server) revokeOwnServiceToken(ctx context.Context, p auth.Principal, rec store.APIToken) error {
+	now := s.deps.Now()
+	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
+		if err := tx.Tokens().Revoke(ctx, p.OrgID, rec.ID, now); err != nil {
+			return err
+		}
+		if rec.RevokedAt != nil {
+			return nil
+		}
+		name := strings.TrimSuffix(p.Email, "@"+auth.ServiceAccountDomain)
+		if u, err := tx.Users().Get(ctx, p.OrgID, p.UserID); err == nil && u.Name != "" {
+			name = u.Name
+		}
+		return tx.AdminEvents().Append(ctx, store.AdminEvent{
+			ID: store.NewID(now), OrgID: p.OrgID, Actor: actorOf(p), Action: AdminServiceTokenRevoked, At: now,
+			Detail: "token " + rec.ID + " (" + rec.Name + ") of service account " + name + ", by the account itself",
+		})
+	})
+	if errors.Is(err, store.ErrNotFound) {
+		return huma.Error404NotFound("no such token")
+	}
+	return toHumaError(err)
 }

@@ -192,6 +192,13 @@ func (s *Server) putAllowlistEntry(ctx context.Context, in *putAllowlistInput) (
 	if err != nil {
 		return nil, err
 	}
+	// A service account's address is never an entry. A delete of one
+	// stored before this refusal is still allowed.
+	//
+	// @decision(DL-140)
+	if err := auth.CheckAllowlistAddress(ref.email); err != nil {
+		return nil, huma.Error422UnprocessableEntity(err.Error())
+	}
 	var account store.AllowlistEntry
 	switch {
 	case ref.login != "":
@@ -418,7 +425,7 @@ func (s *Server) deleteAllowlistEntry(ctx context.Context, in *deleteAllowlistIn
 	// @decision(DL-132)
 	var failed []string
 	for _, u := range leaving {
-		if _, err := s.svc.Offboard(ctx, p, describeUser(u), u); err != nil {
+		if _, err := s.svc.Offboard(ctx, p, describeUser(u), u, offboardMember); err != nil {
 			failed = append(failed, err.Error())
 		}
 	}
@@ -461,7 +468,7 @@ func retryOffboarding(ctx context.Context, tx store.Store, orgID string, ref ent
 		}
 		candidates = rows
 	}
-	leaving, err := uncovered(ctx, tx.Allowlist(), candidates)
+	leaving, err := uncovered(ctx, tx.Allowlist(), people(candidates))
 	if err != nil {
 		return nil, err
 	}
@@ -544,7 +551,22 @@ func coveredUsers(ctx context.Context, users store.UserStore, e store.AllowlistE
 	case err != nil:
 		return nil, err
 	}
-	return []store.User{u}, nil
+	return people([]store.User{u}), nil
+}
+
+// people keeps the rows that are people's. No entry covers a service
+// account, so no allowlist route ends or off-boards one; that is its
+// own delete's to do.
+//
+// @decision(DL-140)
+func people(users []store.User) []store.User {
+	var out []store.User
+	for _, u := range users {
+		if u.Person() {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // uncovered keeps the users no entry covers.
@@ -756,6 +778,10 @@ func (s *Server) allowlistViews(ctx context.Context, p auth.Principal) ([]Allowl
 //
 // @decision(DL-128)
 func entryCovers(e store.AllowlistEntry, u store.User) bool {
+	// @decision(DL-140)
+	if !u.Person() {
+		return false
+	}
 	if e.GithubID != 0 {
 		return u.GithubID == e.GithubID
 	}

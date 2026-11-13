@@ -203,6 +203,14 @@ func (l *Login) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := l.upsertUser(ctx, identity, admin)
+	// @decision(DL-140)
+	if errors.Is(err, errServiceAccount) {
+		l.warn(fmt.Sprintf("login: refused %q: the address is a service account's", who))
+		l.deny(w, r, http.StatusForbidden,
+			"The address "+identity.Email+" belongs to a service account of this server, which never signs in.",
+			"Sign in with your own account.")
+		return
+	}
 	if errors.Is(err, errEarlierUser) {
 		l.warn(fmt.Sprintf("login: refused %q: the address is an earlier user's, and no address entry allows it", who))
 		l.deny(w, r, http.StatusForbidden,
@@ -261,6 +269,13 @@ var errAddressTaken = errors.New("the address is recorded for another user")
 // @decision(DL-128)
 var errEarlierUser = errors.New("the address is recorded for an earlier user")
 
+// errServiceAccount is a sign-in that would resolve to, bind or take
+// the address of a service account's row. A service account never
+// signs in.
+//
+// @decision(DL-140)
+var errServiceAccount = errors.New("the address is a service account's")
+
 // upsertUser finds the account's row, binds a row from before accounts
 // were recorded, or creates one, and refreshes what GitHub owns. The row
 // is found by GitHub ID, and only when none has it, by address among
@@ -270,8 +285,14 @@ var errEarlierUser = errors.New("the address is recorded for an earlier user")
 //
 // @decision(DL-007) @decision(DL-128)
 func (l *Login) upsertUser(ctx context.Context, identity auth.GitHubIdentity, admin bool) (store.User, error) {
+	// @decision(DL-140)
+	if auth.IsServiceAddress(identity.Email) {
+		return store.User{}, errServiceAccount
+	}
 	existing, err := l.Users.ByGithubID(ctx, l.OrgID, identity.ID)
 	switch {
+	case err == nil && !existing.Person():
+		return store.User{}, errServiceAccount
 	case err == nil:
 		return l.refreshUser(ctx, existing, identity, admin)
 	case !errors.Is(err, store.ErrNotFound):
@@ -279,6 +300,8 @@ func (l *Login) upsertUser(ctx context.Context, identity auth.GitHubIdentity, ad
 	}
 	byEmail, err := l.Users.ByEmail(ctx, l.OrgID, identity.Email)
 	switch {
+	case err == nil && !byEmail.Person():
+		return store.User{}, errServiceAccount
 	case err == nil:
 		return l.bindUser(ctx, byEmail, identity, admin)
 	case !errors.Is(err, store.ErrNotFound):
