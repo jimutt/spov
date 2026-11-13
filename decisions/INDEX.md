@@ -2,6 +2,11 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-141 | A service account's tokens are issued and revoked by an admin | proposed | server | pipeline-jobs, service-accounts, auth, tokens, admin |
+| DL-140 | Service accounts: an admin-created account with no sign-in | proposed | server | pipeline-jobs, service-accounts, auth, admin, access |
+| DL-139 | The proxy refuses the REST merge of a pull request for a GitHub App token too | proposed | sandbox | pipeline-jobs, proxy, github, credentials |
+| DL-138 | A job can skip the prep pass | proposed | jobs | pipeline-jobs, jobs, prep |
+| DL-137 | A pr job can leave the branch and the pull request to its goal | proposed | jobs | pipeline-jobs, jobs, pull-request, plugin |
 | DL-136 | The CLI runs git without the checkout hooks, lists what a sync-back changed, prints agent text safely, and the installer validates versions | accepted | cli | cli, sync, security, installer |
 | DL-135 | A group of small hardening fixes in the server and the credential proxy | accepted | server | security, server, proxy, auth |
 | DL-134 | Image builds are limited per user, and the repository listing is cached for a minute | accepted | server | images, quota, security, repos |
