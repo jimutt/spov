@@ -60,6 +60,9 @@ func (p pgJobs) Create(ctx context.Context, j store.Job) error {
 		ClockUsedSeconds: int64(j.ClockUsed / time.Second),
 		// @decision(DL-102)
 		SyncAppliedAt: tsPtr(j.SyncAppliedAt),
+		// @decision(DL-137) @decision(DL-138)
+		PrPolicy: string(j.PRPolicy),
+		SkipPrep: j.SkipPrep,
 	}))
 }
 

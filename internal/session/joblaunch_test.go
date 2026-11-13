@@ -53,3 +53,14 @@ func TestTheGoalReachesThePlugin(t *testing.T) {
 		t.Errorf("Goal = %q, want g", p.Goal)
 	}
 }
+
+// The job's pull request policy survives the launch into the plugin,
+// which is what the entrypoint writes the goal and the guide from.
+//
+// @decision(DL-137)
+func TestThePullRequestPolicyReachesThePlugin(t *testing.T) {
+	p := jobPlugin(&JobOptions{ID: "j", Kind: "pr", Goal: "g", PRPolicy: opencode.PRPolicyGoal}, nil, opencode.WorkspaceRoot)
+	if p.PRPolicy != opencode.PRPolicyGoal {
+		t.Errorf("PRPolicy = %q, want goal", p.PRPolicy)
+	}
+}

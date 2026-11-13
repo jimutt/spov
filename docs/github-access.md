@@ -65,6 +65,19 @@ credential, `all` also needs the deployment's consent (`git.allow_all` /
 refused, and one that got `all` from a saved default or your CLI config runs
 on `repos` and says so (DL-043). Your own token needs no such consent.
 
+A sandbox does not merge a pull request over GitHub's REST endpoint
+(`PUT /repos/<owner>/<name>/pulls/<n>/merge`, or its alias
+`/repositories/<id>/pulls/<n>/merge`, on `api.github.com`, `uploads.github.com`
+or a GitHub Enterprise host's `/api/v3` and `/api/uploads`): the credential
+proxy forwards that request with no credential, for the organisation's App
+token as for a personal access token, and the agent sees
+`401 Requires authentication` (DL-139). A request line the proxy cannot read
+as a path gets no credential either. This is a guardrail and not a boundary. `POST /graphql` is allowed
+for both kinds of token and its body is not read, so the `mergePullRequest`
+mutation still merges, and either token can push to a branch that is not
+protected. A project that must hold a merge sets branch protection or a ruleset
+on GitHub.
+
 ## Whose credential a launch uses
 
 Someone who stores their own GitHub token (`spov credentials add github`) has

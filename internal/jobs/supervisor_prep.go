@@ -17,7 +17,11 @@ import (
 //
 // @decision(DL-047)
 func (s *Supervisor) prepare(ctx context.Context, job store.Job) store.Job {
-	if s.Prepare == nil {
+	// A job that asked to skip the pass is returned before any call, on
+	// every attempt.
+	//
+	// @decision(DL-138)
+	if s.Prepare == nil || job.SkipPrep {
 		return job
 	}
 	// A redelivered attempt must not pay for a second call. Both fields

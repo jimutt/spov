@@ -1365,6 +1365,25 @@ const (
 	JobKindSync JobKind = "sync"
 )
 
+// PRPolicy says whose instructions tell a pr job how its branch is made
+// and its pull request opened: spov's (the default, stored empty) or
+// the goal's. spov enforces neither.
+//
+// @decision(DL-137)
+type PRPolicy string
+
+const (
+	// PRPolicySpov is spov's own branch and pull request instructions.
+	PRPolicySpov PRPolicy = "spov"
+	// PRPolicyGoal leaves the branch and the pull request to the goal.
+	PRPolicyGoal PRPolicy = "goal"
+)
+
+// Goal reports whether the policy leaves the flow to the goal.
+//
+// @decision(DL-137)
+func (p PRPolicy) Goal() bool { return p == PRPolicyGoal }
+
 // Job is one piece of supervised work: a goal, the session running it,
 // and where it has got to.
 //
@@ -1432,6 +1451,16 @@ type Job struct {
 	//
 	// @decision(DL-047)
 	Assessment string
+	// PRPolicy is a pr job's branch and pull request policy, empty
+	// meaning spov's. Fixed at create; UpdateJob does not write it.
+	//
+	// @decision(DL-137)
+	PRPolicy PRPolicy
+	// SkipPrep says the preparation pass is not run for this job. Fixed
+	// at create; UpdateJob does not write it.
+	//
+	// @decision(DL-138)
+	SkipPrep bool
 	// Error is the terminal failure, redacted of anything secret. It is
 	// set on failure and also on a park, where it says what is being
 	// waited on.
@@ -1532,6 +1561,16 @@ func (j Job) Validate() error {
 	}
 	if j.MaxDuration < 0 {
 		return fmt.Errorf("%w: max duration %s is negative", ErrInvalidJob, j.MaxDuration)
+	}
+	// @decision(DL-137)
+	switch j.PRPolicy {
+	case "", PRPolicySpov:
+	case PRPolicyGoal:
+		if j.Kind != JobKindPR {
+			return fmt.Errorf("%w: only a pr job takes a pull request policy", ErrInvalidJob)
+		}
+	default:
+		return fmt.Errorf("%w: unknown pull request policy %q", ErrInvalidJob, j.PRPolicy)
 	}
 	return nil
 }

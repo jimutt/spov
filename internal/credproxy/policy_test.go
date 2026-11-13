@@ -3,6 +3,7 @@ package credproxy
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -253,6 +254,91 @@ func TestAGitHubAppTokenIsAddedOnAnyPath(t *testing.T) {
 		{http.MethodPost, "https://api.github.com/graphql", true},
 		{http.MethodGet, "https://github.com/anyone/anything.git/info/refs", true},
 	})
+}
+
+// A GitHub App token gets no credential on the REST merge of a pull
+// request, however the path is spelled, on github.com's API host and
+// under a GitHub Enterprise host's api/v3. Reading the merge status, the
+// pull request's other paths and GraphQL keep the token.
+//
+// @decision(DL-139)
+func TestAGitHubAppTokenIsNotUsedToMerge(t *testing.T) {
+	const api = "https://api.github.com/repos/acme/app/pulls/3"
+	checkPolicy(t, github, []policyCase{
+		{http.MethodPut, api + "/merge", false},
+		{http.MethodPost, api + "/merge", false},
+		{http.MethodPatch, api + "/Merge", false},
+		{http.MethodPut, api + "/MERGE;x=1", false},
+		{http.MethodPut, api + "/merge/", false},
+		{http.MethodPut, api + "/%6Derge", false},
+		{http.MethodPut, "https://api.github.com/repos/acme/app//pulls/3/merge", false},
+		{http.MethodPut, "https://api.github.com/repos/acme/app/x/../pulls/3/merge", false},
+		{http.MethodPut, "https://api.github.com/Repos/anyone/anything/Pulls/9/merge", false},
+		{http.MethodGet, api + "/merge", true},
+		{http.MethodHead, api + "/merge", true},
+		{http.MethodPost, "https://api.github.com/repos/acme/app/pulls", true},
+		{http.MethodPatch, api, true},
+		{http.MethodPost, api + "/reviews", true},
+		{http.MethodPost, "https://api.github.com/repos/acme/app/merges", true},
+		{http.MethodPost, "https://api.github.com/graphql", true},
+		{http.MethodPost, "https://github.com/acme/app.git/git-receive-pack", true},
+		// GitHub's alias by repository ID, and the uploads host, which
+		// serves the same API.
+		{http.MethodPut, "https://api.github.com/repositories/42/pulls/3/merge", false},
+		{http.MethodPut, "https://api.github.com/Repositories/42/Pulls/3/Merge;x", false},
+		{http.MethodGet, "https://api.github.com/repositories/42/pulls/3/merge", true},
+		{http.MethodPatch, "https://api.github.com/repositories/42/pulls/3", true},
+		{http.MethodPut, "https://uploads.github.com/repos/acme/app/pulls/3/merge", false},
+		{http.MethodPut, "https://uploads.github.com/repositories/42/pulls/3/merge", false},
+		{http.MethodPost, "https://uploads.github.com/repos/acme/app/releases/1/assets", true},
+	})
+	checkPolicy(t, ghe, []policyCase{
+		{http.MethodPut, "https://git.example.com/api/v3/repos/o/r/pulls/1/merge", false},
+		{http.MethodPut, "https://git.example.com/api/v3/repositories/42/pulls/1/merge", false},
+		{http.MethodPut, "https://git.example.com/api/uploads/repos/o/r/pulls/1/merge", false},
+		{http.MethodPut, "https://git.example.com/API/V3/repos/o/r/pulls/1/merge", false},
+		{http.MethodGet, "https://git.example.com/api/v3/repos/o/r/pulls/1/merge", true},
+		{http.MethodPost, "https://git.example.com/api/v3/repos/o/r/pulls", true},
+		{http.MethodPost, "https://git.example.com/api/graphql", true},
+	})
+	// A stored token already gets none on either alias.
+	pat := Platform{Name: "gh", Kind: KindGitHub, Host: "github.com", User: "u", Token: "github_pat_x",
+		Repos: []string{"acme/app"}}
+	checkPolicy(t, pat, []policyCase{
+		{http.MethodPut, "https://api.github.com/repos/acme/app/pulls/3/merge", false},
+		{http.MethodPut, "https://api.github.com/repositories/42/pulls/3/merge", false},
+		{http.MethodPut, "https://uploads.github.com/repos/acme/app/pulls/3/merge", false},
+	})
+}
+
+// A request whose line is not in origin form, opaque or absolute, gets no
+// credential for an App token either, so a path the merge rule cannot
+// read is never forwarded with one.
+//
+// @decision(DL-139)
+func TestAGitHubAppTokenIsNotAddedToARequestLineItCannotRead(t *testing.T) {
+	s, _ := newStore(t, github)
+	opaque := httptest.NewRequest(http.MethodPut, "https://api.github.com/x", nil)
+	opaque.URL = &url.URL{Scheme: "https", Opaque: "repos/acme/app/pulls/3/merge", Host: "api.github.com"}
+	opaque.RequestURI = "https:repos/acme/app/pulls/3/merge"
+	if s.Rewrite(opaque) {
+		t.Error("an opaque-form merge got the App token")
+	}
+	noLine := httptest.NewRequest(http.MethodPut, "https://api.github.com/x", nil)
+	noLine.URL = &url.URL{Scheme: "https", Opaque: "repos/acme/app/pulls/3/merge", Host: "api.github.com"}
+	noLine.RequestURI = ""
+	if s.Rewrite(noLine) {
+		t.Error("an opaque URL with no request line got the App token")
+	}
+	absolute := httptest.NewRequest(http.MethodPost, "https://api.github.com/repos/acme/app/pulls", nil)
+	absolute.RequestURI = "https://api.github.com/repos/acme/app/pulls"
+	if s.Rewrite(absolute) {
+		t.Error("an absolute-form request got the App token")
+	}
+	origin := originForm(httptest.NewRequest(http.MethodPost, "https://api.github.com/repos/acme/app/pulls", nil))
+	if !s.Rewrite(origin) {
+		t.Error("an origin-form request lost the App token")
+	}
 }
 
 // A request line in absolute form never gets a credential, even inside a

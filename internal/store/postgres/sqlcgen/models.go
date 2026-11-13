@@ -125,6 +125,8 @@ type Job struct {
 	ClockUsedSeconds   int64
 	Unfinished         string
 	SyncAppliedAt      pgtype.Timestamptz
+	PrPolicy           string
+	SkipPrep           bool
 }
 
 type JobDeliverable struct {

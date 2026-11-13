@@ -37,6 +37,30 @@ spov jobs apply <id>
 | `--goal-file <file>` | Read the goal from a file |
 | `--wait`, `--timeout <d>` | Wait for the job after creating it, as `spov jobs wait` does |
 | `--hold <d>` | A sync job's hold: how long its sandbox is kept after it finishes, for `spov jobs apply`. When unset: `sandbox.job_sync_hold`, then 30 m. |
+| `--pr-policy spov\|goal` | A pr job's pull request policy ([Whose pull request flow](#whose-pull-request-flow)). `spov`, the default, tells the agent to make a new branch and open a pull request with the forge's CLI; `goal` leaves both to your goal. |
+| `--no-prep` | Skip the preparation pass: no model reads the goal before the job starts, the session opens on your goal alone, and no check is proposed. |
+
+Over the API (`POST /api/v1/jobs`) the last two are `pr_policy` (`spov` or
+`goal`; refused on any kind but `pr`) and `skip_prep` (any kind). A job's view
+shows each only when it is not the default. The dashboard's form offers
+neither.
+
+### Whose pull request flow
+
+A pr job is told by default to work on a new branch, open a pull request with
+the forge's CLI and record it. A goal written by a pipeline often chooses the
+branch itself, or asks a second job to add to the branch of a pull request
+that is already open. With `--pr-policy goal` the agent is told to follow the
+goal for the branch and the pull request, and to add to the branch when the
+goal names one that exists. It is still told never to commit or push to the
+default branch, to change only the repositories you selected, and to record
+each pull request it opens or updates. The workspace guide then names the
+forge CLIs without a create command. spov enforces none of this: protect the
+default branch on the forge.
+
+Gate 2 finds a pull request by its branch, so a job that names the branch of
+an open pull request passes it whether or not it pushed anything. To know a
+round added commits, compare the pull request's head yourself.
 
 ## Following and steering it
 
@@ -96,7 +120,8 @@ line: the created job, then the final one.
 It moves through `queued`, `provisioning`, `running` and `delivering` to
 `succeeded` or `failed` (or `cancelled`). Before provisioning, the server can
 run one short model call that assesses the goal and may propose a check; a
-check you gave always wins. Two states wait on a person:
+check you gave always wins, and `--no-prep` skips the call. Two states wait on
+a person:
 
 - `blocked`: the agent is waiting on a permission question it cannot answer
   itself.

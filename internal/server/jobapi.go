@@ -120,6 +120,15 @@ type JobRequest struct {
 	// @decision(DL-101)
 	Hold          string `json:"hold,omitempty" doc:"For kind sync: how long the sandbox is held after the job finishes, as a duration such as 30m; 30m when empty"`
 	HoldPreferred bool   `json:"hold_preferred,omitempty" doc:"hold is the client's configured default: cut to fit rather than refused"`
+	// PRPolicy says whose instructions tell a pr job how its branch is
+	// made and its pull request opened. Refused on any other kind.
+	//
+	// @decision(DL-137)
+	PRPolicy store.PRPolicy `json:"pr_policy,omitempty" enum:"spov,goal" doc:"For kind pr: whose instructions say how the branch is made and the pull request opened, spov's or the goal's; empty is spov's"`
+	// SkipPrep skips the preparation pass.
+	//
+	// @decision(DL-138)
+	SkipPrep bool `json:"skip_prep,omitempty" doc:"Skip the preparation pass: no model reads the goal before the job starts, and no check is proposed"`
 }
 
 // JobView is a job as the API shows it.
@@ -141,6 +150,12 @@ type JobView struct {
 	//
 	// @decision(DL-014)
 	Model string `json:"model,omitempty" doc:"Model the job runs on, as provider/model; empty is OpenCode's default"`
+	// PRPolicy and SkipPrep are the job's options, absent at their
+	// defaults.
+	//
+	// @decision(DL-137) @decision(DL-138)
+	PRPolicy store.PRPolicy `json:"pr_policy,omitempty" enum:"spov,goal" doc:"A pr job's pull request policy; absent is spov's"`
+	SkipPrep bool           `json:"skip_prep,omitempty" doc:"The job skipped the preparation pass"`
 	// Deliverables is the job's inventory, filled in by delivery. It
 	// never carries a report's body, which comes from the file endpoint.
 	//
@@ -283,6 +298,12 @@ func jobViewOf(j store.Job, members []store.Deliverable) JobView {
 		Attempt:      j.Attempt, CreatedAt: j.CreatedAt, UpdatedAt: j.UpdatedAt,
 		StartedAt: j.StartedAt, StoppedAt: j.StoppedAt,
 		ClockStartedAt: j.ClockStartedAt,
+		// @decision(DL-138)
+		SkipPrep: j.SkipPrep,
+	}
+	// @decision(DL-137)
+	if j.PRPolicy.Goal() {
+		v.PRPolicy = j.PRPolicy
 	}
 	if j.MaxDuration > 0 {
 		v.MaxDuration = j.MaxDuration.String()

@@ -50,6 +50,14 @@ type WorkspaceRepo struct {
 //
 // @decision(DL-037)
 func AgentsMarkdown(repos []WorkspaceRepo, jobKind string) string {
+	return agentsMarkdown(repos, jobKind, "")
+}
+
+// agentsMarkdown is AgentsMarkdown with a pr job's pull request policy,
+// which is what the entrypoint renders for a job.
+//
+// @decision(DL-037) @decision(DL-137)
+func agentsMarkdown(repos []WorkspaceRepo, jobKind, prPolicy string) string {
 	var b strings.Builder
 	b.WriteString("# Workspace\n\n")
 	b.WriteString("This sandbox was prepared by spov. The repositories below are already\n")
@@ -86,6 +94,14 @@ func AgentsMarkdown(repos []WorkspaceRepo, jobKind string) string {
 		return b.String()
 	}
 
+	// @decision(DL-137)
+	if jobKind == "pr" && prPolicy == PRPolicyGoal {
+		writeGoalFlowSection(&b, repos)
+		writeRefusalSection(&b)
+		writeScratchSection(&b, jobKind)
+		return b.String()
+	}
+
 	b.WriteString("\n## Opening pull requests\n\n")
 	b.WriteString("Use the CLI named for the repository you are working in; they are not\n")
 	b.WriteString("interchangeable, and are already authenticated:\n\n")
@@ -113,6 +129,33 @@ func AgentsMarkdown(repos []WorkspaceRepo, jobKind string) string {
 	writeRefusalSection(&b)
 	writeScratchSection(&b, jobKind)
 	return b.String()
+}
+
+// writeGoalFlowSection replaces the pull request section for a pr job
+// whose goal says how its pull request is opened. It names the forge
+// CLIs present and gives no create command.
+//
+// @decision(DL-137)
+func writeGoalFlowSection(b *strings.Builder, repos []WorkspaceRepo) {
+	b.WriteString("\n## This job's pull request\n\n")
+	b.WriteString("This job's goal says which branch to work on and how its pull request is\n")
+	b.WriteString("opened or updated. Follow the goal for both. The forge CLIs here are already\n")
+	b.WriteString("authenticated:\n\n")
+	if usesCLI(repos, CLITea) {
+		b.WriteString("- **`tea`** for Forgejo and Gitea hosts. Run it from inside the repository directory.\n")
+	}
+	if usesCLI(repos, CLIGh) {
+		b.WriteString("- **`gh`** for GitHub.\n")
+	}
+	if usesCLI(repos, CLIGlab) {
+		b.WriteString("- **`glab`** for GitLab, where a pull request is a merge request. Run it from\n")
+		b.WriteString("  inside the repository directory.\n")
+	}
+	if usesCLI(repos, CLINone) {
+		b.WriteString("- Some repositories have no CLI configured.\n")
+	}
+	b.WriteString("\nThe token each CLI holds may be scoped to a subset of repositories, so a\n")
+	b.WriteString("command can fail on permissions even though the clone worked.\n")
 }
 
 // writeSyncSection replaces the pull request section for a sync job,

@@ -2,6 +2,7 @@ package credproxy
 
 import (
 	"net/http"
+	"path"
 	"slices"
 	"strings"
 )
@@ -56,8 +57,12 @@ var gitServices = [][]string{
 //
 // @decision(DL-034)
 func (p Platform) allows(host string, r *http.Request) bool {
+	// An App token is added on every path of an origin-form request but
+	// the REST merge of a pull request.
+	//
+	// @decision(DL-139)
 	if p.Scoped {
-		return true
+		return inOriginForm(r) && !restMerge(host, r)
 	}
 	read := r.Method == http.MethodGet || r.Method == http.MethodHead
 	// A Forgejo or Gitea request that names a user or a token in its
@@ -218,6 +223,56 @@ func (p Platform) allowsAPI(segs []string, read bool) bool {
 func isMergeSegment(seg string) bool {
 	name, _, _ := strings.Cut(seg, ";")
 	return strings.EqualFold(name, "merge")
+}
+
+// inOriginForm reports a request line in origin form, the only form whose
+// path the policy reads: not opaque, and not absolute.
+//
+// @decision(DL-139) @decision(DL-034)
+func inOriginForm(r *http.Request) bool {
+	return r.URL.Opaque == "" && (r.RequestURI == "" || strings.HasPrefix(r.RequestURI, "/"))
+}
+
+// restMerge reports a request that is not a read to a GitHub API path
+// repos/<owner>/<name>/pulls/<n>/<merge> or its alias
+// repositories/<id>/pulls/<n>/<merge>, on api.github.com or
+// uploads.github.com, or under a GitHub Enterprise host's api/v3 or
+// api/uploads. The path is read decoded, with empty and dot segments
+// resolved, so an escape or a doubled slash cannot hide the merge.
+//
+// @decision(DL-139) @decision(DL-135)
+func restMerge(host string, r *http.Request) bool {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return false
+	}
+	var segs []string
+	for _, s := range strings.Split(path.Clean("/"+r.URL.Path), "/") {
+		if s != "" {
+			segs = append(segs, s)
+		}
+	}
+	if !strings.EqualFold(host, "api.github.com") && !strings.EqualFold(host, "uploads.github.com") {
+		if len(segs) < 2 || !segmentIs(segs[0], "api") || (!segmentIs(segs[1], "v3") && !segmentIs(segs[1], "uploads")) {
+			return false
+		}
+		segs = segs[2:]
+	}
+	switch {
+	case len(segs) > 5 && segmentIs(segs[0], "repos"):
+		return segmentIs(segs[3], "pulls") && isMergeSegment(segs[5])
+	case len(segs) > 4 && segmentIs(segs[0], "repositories"):
+		return segmentIs(segs[2], "pulls") && isMergeSegment(segs[4])
+	}
+	return false
+}
+
+// segmentIs reports a path segment that is word in any case, with a
+// servlet-style parameter dropped, as isMergeSegment reads "merge".
+//
+// @decision(DL-139)
+func segmentIs(seg, word string) bool {
+	name, _, _ := strings.Cut(seg, ";")
+	return strings.EqualFold(name, word)
 }
 
 // allowsGit checks a git smart HTTP path: <owner>/<repo>[.git]/<service>.

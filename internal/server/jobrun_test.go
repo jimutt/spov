@@ -23,6 +23,13 @@ import (
 // seedJobSession puts a job and its session in a service's store.
 func seedJobSession(t *testing.T, s *Service, sessState store.SessionState, sandboxID string) store.Job {
 	t.Helper()
+	return seedJobSessionWith(t, s, sessState, sandboxID, nil)
+}
+
+// seedJobSessionWith is seedJobSession with a chance to set the job's
+// create-time fields before it is stored.
+func seedJobSessionWith(t *testing.T, s *Service, sessState store.SessionState, sandboxID string, set func(*store.Job)) store.Job {
+	t.Helper()
 	ctx := context.Background()
 	now := time.Now()
 	sess := store.Session{
@@ -40,6 +47,9 @@ func seedJobSession(t *testing.T, s *Service, sessState store.SessionState, sand
 		ID: store.NewID(now), OrgID: sess.OrgID, OwnerID: sess.OwnerID,
 		SessionID: sess.ID, Kind: store.JobKindReport,
 		State: store.JobQueued, Goal: "write the report",
+	}
+	if set != nil {
+		set(&job)
 	}
 	if err := s.deps.Store.Jobs().Create(ctx, job); err != nil {
 		t.Fatal(err)
