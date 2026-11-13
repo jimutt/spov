@@ -72,6 +72,7 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	if err != nil {
 		return store.Job{}, inTemplate(tmpl, err)
 	}
+	sreq = withAccountAuthor(p, sreq)
 	// One read of the profile answers both of the next two questions.
 	//
 	// @decision(DL-014)

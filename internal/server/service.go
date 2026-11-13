@@ -145,6 +145,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	if tmpl != nil {
 		req = applyTemplate(req, *tmpl)
 	}
+	req = withAccountAuthor(p, req)
 	req = s.withDefaults(req)
 	if err := s.validateRequest(req); err != nil {
 		return store.Session{}, inTemplate(tmpl, err)
@@ -340,6 +341,17 @@ func forgeHosts(selections []git.Selection) []string {
 		}
 	}
 	return out
+}
+
+// withAccountAuthor drops the author a service account's request names,
+// so its stored one applies.
+//
+// @decision(DL-140)
+func withAccountAuthor(p auth.Principal, req store.SessionRequest) store.SessionRequest {
+	if p.Service {
+		req.GitName, req.GitEmail = "", ""
+	}
+	return req
 }
 
 func (s *Service) withDefaults(req store.SessionRequest) store.SessionRequest {

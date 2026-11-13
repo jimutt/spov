@@ -395,7 +395,10 @@ warns before a token expires; the listing shows the date. Every create,
 change, token issue, token revoke and deletion writes an audit row with
 the account's name and the token's id and label, never the token. The
 account can revoke its own token with `DELETE /api/v1/me/tokens/current`,
-which is audited too, but cannot issue one or change its commit author.
+which is audited too, but cannot issue one or change its commit author. Its
+commits always carry the author set here: the author a job or session
+request names, which the CLI takes from the runner's git config, is
+ignored.
 
 **Removing an admin does not revoke the service tokens they issued**,
 because that would stop every pipeline they set up. The off-boarding

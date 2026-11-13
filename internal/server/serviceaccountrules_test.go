@@ -147,3 +147,38 @@ func TestAServiceAccountRevokingItsOwnTokenIsAudited(t *testing.T) {
 		t.Errorf("the revoked token = %d", resp.StatusCode)
 	}
 }
+
+// A session or job a service account creates is authored as the admin
+// set it, whatever author the request names: the CLI sends the git
+// identity of the machine it runs on.
+//
+// @decision(DL-140)
+func TestAServiceAccountsCreateIgnoresTheRequestsAuthor(t *testing.T) {
+	q := &recordingQueue{}
+	f := newServiceFixture(t, nil, func(d *Deps) {
+		d.Jobs = &jobs.Supervisor{Store: d.Store, Provider: d.Provider, Queue: q.insert, Warn: d.Warn}
+	})
+	ctx := context.Background()
+	acct := f.createAccount(t, "ci-runner")
+	f.actAs(auth.Principal{UserID: acct.ID, OrgID: auth.LocalID, Email: auth.ServiceAccountAddress("ci-runner"), Service: true})
+	theirs := GitIdentityView{Name: "Someone Else", Email: "ceo@example.com"}
+	sreq := repoReq("svc-authored")
+	sreq.Git = theirs
+	jreq := jobRequest()
+	jreq.Git = theirs
+	if resp, out := f.do(http.MethodPost, "/api/v1/sessions", sreq); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("the session create = %d: %s", resp.StatusCode, out)
+	}
+	if resp, out := f.do(http.MethodPost, "/api/v1/jobs", jreq); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("the job create = %d: %s", resp.StatusCode, out)
+	}
+	sessions, _ := f.store.Sessions().List(ctx, auth.LocalID, store.SessionFilter{OwnerID: acct.ID, Limit: 50})
+	if len(sessions) != 2 {
+		t.Fatalf("the account owns %d sessions, want the session and the job's", len(sessions))
+	}
+	for _, s := range sessions {
+		if s.Request.GitName != "" || s.Request.GitEmail != "" {
+			t.Errorf("session %s keeps the request's author %q <%s>", s.Name, s.Request.GitName, s.Request.GitEmail)
+		}
+	}
+}
