@@ -4,11 +4,13 @@ package sandbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -265,8 +267,16 @@ func TestIntegrationSSR1SnapshotResume(t *testing.T) {
 		}
 		id := createSession(ctx, t, client, creds.URL, creds.Token, password)
 		prompt(ctx, t, client, creds.URL, creds.Token, password, id, "A message written before the exit snapshot.")
-		time.Sleep(10 * time.Second)
+		// The turn may still be writing; read once two reads 3 s apart agree.
 		before := get(creds.URL, creds.Token, password, "/api/session/"+id+"/message")
+		for settle := time.Now().Add(2 * time.Minute); time.Now().Before(settle); {
+			time.Sleep(3 * time.Second)
+			again := get(creds.URL, creds.Token, password, "/api/session/"+id+"/message")
+			if again == before {
+				break
+			}
+			before = again
+		}
 		t.Logf("messages before: %d bytes, %d messages: %s", len(before), strings.Count(before, `"id":"msg_`), truncate(before, 400))
 		t.Logf("what OpenCode keeps on disk:\n%s", run(t, ctx, sb, "du -sh /root/.local/share/opencode /root/.local/state/opencode /root/.cache/opencode 2>/dev/null; ls -la /root/.local/share/opencode 2>&1 | head -20"))
 		t.Logf("what the sandbox wrote over the image (sizes):\n%s", run(t, ctx, sb, "du -xsh /root /tmp /workspace 2>/dev/null"))
@@ -284,8 +294,12 @@ func TestIntegrationSSR1SnapshotResume(t *testing.T) {
 		listing := get(rcreds.URL, rcreds.Token, rpassword, "/api/session")
 		after := get(rcreds.URL, rcreds.Token, rpassword, "/api/session/"+id+"/message")
 		t.Logf("after restore: the listing has the conversation: %v; messages: %d bytes, %d messages", strings.Contains(listing, id), len(after), strings.Count(after, `"id":"msg_`))
-		if !strings.Contains(listing, id) || after != before {
-			t.Errorf("the restored OpenCode does not have the conversation as it was:\nlisting %s\nmessages %s", truncate(listing, 600), truncate(after, 600))
+		closed, err := sameConversation(before, after)
+		if !strings.Contains(listing, id) || err != nil {
+			t.Errorf("the restored OpenCode does not have the conversation as it was: %v\nlisting %s\nmessages %s", err, truncate(listing, 600), truncate(after, 600))
+		}
+		if len(closed) > 0 {
+			t.Logf("a message in flight at the end was closed as aborted: %v", closed)
 		}
 		_ = restored
 	})
@@ -377,4 +391,69 @@ func TestIntegrationSSR1SnapshotResume(t *testing.T) {
 			t.Errorf("the chain lost work: %s", out)
 		}
 	})
+}
+
+// sameConversation compares a conversation's messages read before an
+// exit snapshot with those read from a sandbox booted from it. A message
+// complete before must be unchanged; one still in flight may instead
+// have been closed as aborted when the sandbox shut down, and is
+// returned.
+func sameConversation(before, after string) ([]string, error) {
+	parse := func(read string) (map[string]json.RawMessage, []string, error) {
+		_, body, _ := strings.Cut(read, " OK ")
+		var page struct {
+			Data []json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(body), &page); err != nil {
+			return nil, nil, fmt.Errorf("not a message page: %w", err)
+		}
+		byID := map[string]json.RawMessage{}
+		var ids []string
+		for _, raw := range page.Data {
+			var m struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal(raw, &m)
+			byID[m.ID] = raw
+			ids = append(ids, m.ID)
+		}
+		return byID, ids, nil
+	}
+	was, ids, err := parse(before)
+	if err != nil {
+		return nil, err
+	}
+	is, afterIDs, err := parse(after)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Equal(ids, afterIDs) {
+		return nil, fmt.Errorf("messages %v became %v", ids, afterIDs)
+	}
+	var closed []string
+	for _, id := range ids {
+		if string(was[id]) == string(is[id]) {
+			continue
+		}
+		var m struct {
+			Time struct {
+				Completed *int64 `json:"completed"`
+			} `json:"time"`
+			Error struct {
+				Type string `json:"type"`
+			} `json:"error"`
+		}
+		var old struct {
+			Time struct {
+				Completed *int64 `json:"completed"`
+			} `json:"time"`
+		}
+		_ = json.Unmarshal(was[id], &old)
+		_ = json.Unmarshal(is[id], &m)
+		if old.Time.Completed != nil || m.Error.Type != "aborted" {
+			return nil, fmt.Errorf("message %s changed: %s became %s", id, truncate(string(was[id]), 300), truncate(string(is[id]), 300))
+		}
+		closed = append(closed, id)
+	}
+	return closed, nil
 }

@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,10 +23,17 @@ import (
 )
 
 // Spike S-SA1: how the pinned OpenCode shows a subagent, which is what
-// DL-110 to DL-115 rely on. A fake model makes a root conversation call
-// the `subagent` tool, in the foreground and in the background, and each
+// DL-110 to DL-115 rely on. A fake model makes two root conversations
+// call the `subagent` tool, the second with `background: true`, and each
 // child run one glob. The spike records every frame, then reads the
 // session listing and each session's info and messages. No Modal, no key.
+//
+// The pinned build runs every subagent in the background: each call
+// succeeds at once with `metadata.status` "running", the parent's turn
+// ends, and the child's report reaches the parent later as a synthetic
+// inbox item that starts a new turn. The tool takes no `background`, so
+// the two calls are measured alike. The spike fails on a call that waits
+// for its child, and logs the parameters the tool is offered with.
 //
 //	SPOV_PROBE=1 go test -tags integration ./internal/server/ -run SSA1 -v
 //
@@ -78,14 +87,25 @@ func TestIntegrationSSA1Subagents(t *testing.T) {
 	fg := open()
 	fg.prompt("PARENT-FG start a child", "steer", true)
 	if !probeWait(ctx, func() bool { return model.saw("PARENT-FG", "final") }) {
-		t.Fatal("the foreground parent never finished")
+		t.Fatal("the parent calling without background never ended its turn")
 	}
 	bg := open()
 	bg.prompt("PARENT-BG start a child", "steer", true)
 	if !probeWait(ctx, func() bool { return model.saw("CHILD-BG", "final") }) {
-		t.Fatal("the background child never finished")
+		t.Fatal("the child called with background never finished")
 	}
-	time.Sleep(5 * time.Second)
+	if !probeWait(ctx, func() bool { return frames.count(bg.id, "session.execution.succeeded") >= 2 }) {
+		t.Fatal("the background parent never ran a turn on its child's report")
+	}
+	time.Sleep(time.Second)
+	for _, root := range []*spikeRun{fg, bg} {
+		for _, st := range frames.subagentStatuses(root.id) {
+			if st != "running" {
+				t.Errorf("a subagent call of %s returned with status %q, want running: the call waited for its child", root.id, st)
+			}
+		}
+	}
+	t.Logf("the subagent tool's parameters: %v", model.subagentParams())
 
 	out := map[string]json.RawMessage{
 		"list_default": get("/api/session"),
@@ -126,8 +146,17 @@ func TestIntegrationSSA1Subagents(t *testing.T) {
 // in its first user message.
 type subagentModel struct {
 	*httptest.Server
-	mu   sync.Mutex
-	reqs []string
+	mu     sync.Mutex
+	reqs   []string
+	params []string
+}
+
+// subagentParams are the parameter names the `subagent` tool was offered
+// with, from the first request that offered it.
+func (m *subagentModel) subagentParams() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.params
 }
 
 func (m *subagentModel) saw(tag, answer string) bool {
@@ -165,6 +194,23 @@ func newSubagentModel(t *testing.T) *subagentModel {
 			Tools []json.RawMessage `json:"tools"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		for _, raw := range req.Tools {
+			var def struct {
+				Function struct {
+					Name       string `json:"name"`
+					Parameters struct {
+						Properties map[string]json.RawMessage `json:"properties"`
+					} `json:"parameters"`
+				} `json:"function"`
+			}
+			if json.Unmarshal(raw, &def) == nil && def.Function.Name == "subagent" {
+				m.mu.Lock()
+				if m.params == nil {
+					m.params = slices.Sorted(maps.Keys(def.Function.Parameters.Properties))
+				}
+				m.mu.Unlock()
+			}
+		}
 		first, users, tools := "", 0, 0
 		for _, msg := range req.Messages {
 			switch msg.Role {
@@ -290,6 +336,44 @@ func (c *capturedFrames) sessions() []string {
 	return out
 }
 
+// count is how many frames of this name the session has had.
+func (c *capturedFrames) count(session, name string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, f := range c.all {
+		if f.Session == session && f.Name == name {
+			n++
+		}
+	}
+	return n
+}
+
+// subagentStatuses are the `metadata.status` of each `subagent` call's
+// success in the session.
+func (c *capturedFrames) subagentStatuses(session string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, f := range c.all {
+		if f.Session != session || f.Name != "session.tool.success" {
+			continue
+		}
+		var frame struct {
+			Data struct {
+				Metadata struct {
+					SessionID string `json:"sessionID"`
+					Status    string `json:"status"`
+				} `json:"metadata"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(f.Raw, &frame) == nil && frame.Data.Metadata.SessionID != "" {
+			out = append(out, frame.Data.Metadata.Status)
+		}
+	}
+	return out
+}
+
 func (c *capturedFrames) summary() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -318,10 +402,11 @@ func (c *capturedFrames) jsonl() string {
 }
 
 // Spike S-SA2: does a transcript import keep a child's link to its
-// parent? A foreground subagent runs on one local server; its parent and
-// child are imported into a second, fresh one, parent first as the
-// stored order puts them, then the child alone into a third, whose
-// parent is missing. No Modal, no key.
+// parent? A subagent runs on one local server; once the child's turn and
+// the parent's turn on its report have ended, the parent and child are
+// imported into a second, fresh one, parent first as the stored order
+// puts them, then the child alone into a third, whose parent is missing.
+// No Modal, no key.
 //
 //	SPOV_PROBE=1 go test -tags integration ./internal/server/ -run SSA2 -v
 //
@@ -363,6 +448,7 @@ func TestIntegrationSSA2ImportKeepsTheParent(t *testing.T) {
 	}
 
 	a, work := start()
+	frames := captureFrames(ctx, t, a)
 	parent, err := createConversation(ctx, a, work)
 	if err != nil {
 		t.Fatal(err)
@@ -385,6 +471,13 @@ func TestIntegrationSSA2ImportKeepsTheParent(t *testing.T) {
 		t.Fatalf("the child: %v %s", err, clip(string(body), 300))
 	}
 	child := listed.Data[0].ID
+	// The child runs on after the parent's turn ends, and its report
+	// starts a second turn of the parent's; read both once they end.
+	if !probeWait(ctx, func() bool {
+		return frames.count(child, "session.execution.succeeded") >= 1 && frames.count(parent, "session.execution.succeeded") >= 2
+	}) {
+		t.Fatalf("the child's turn and the parent's turn on its report never ended:\n%s", frames.summary())
+	}
 
 	imp := func(conn Connection, id string, raws []json.RawMessage, inf map[string]any) error {
 		b, _ := json.Marshal(map[string]any{"info": inf, "messages": raws})
