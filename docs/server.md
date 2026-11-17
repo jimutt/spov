@@ -126,8 +126,9 @@ that person's, count against their quota, and stop when they leave. A hosted
 server has **service accounts** for this: users an administrator creates, which
 never sign in and are never on the allowlist.
 
-- An administrator creates one by name and issues it tokens through
-  `/api/v1/service-accounts`; there is no page or command for it yet.
+- An administrator creates one by name and issues it tokens on the Settings
+  page, under **Service accounts**, or through `/api/v1/service-accounts`;
+  there is no command for it.
   [`deploy/README.md`](../deploy/README.md#service-accounts) has the calls.
 - A token lasts a year unless the administrator chooses a lifetime, up to three
   years, or none. An account holds at most ten usable tokens at once, enough to

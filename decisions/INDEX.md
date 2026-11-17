@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-142 | Administrators manage service accounts on the Settings page | accepted | web | service-accounts, settings, admin, tokens |
 | DL-141 | A service account's tokens are issued and revoked by an admin | accepted | server | pipeline-jobs, service-accounts, auth, tokens, admin |
 | DL-140 | Service accounts: an admin-created account with no sign-in | accepted | server | pipeline-jobs, service-accounts, auth, admin, access |
 | DL-139 | The proxy refuses the REST merge of a pull request for a GitHub App token too | accepted | sandbox | pipeline-jobs, proxy, github, credentials |
