@@ -170,9 +170,10 @@ func TestDialingGivesUpOnASandboxThatNeverAnswers(t *testing.T) {
 // @decision(DL-018) @decision(DL-017)
 func TestTheFrameReaderParsesARealisticStream(t *testing.T) {
 	stream := ":keepalive\n\n" +
-		"event: message\ndata: {\"event\":\"session.text.ended\",\n" +
-		"data: \"durability\":\"durable\",\"sessionID\":\"ses_1\",\"text\":\"multi\"}\n\n" +
-		frame(`{"event":"session.status","durability":"ephemeral","sessionID":"ses_1"}`) +
+		"event: message\ndata: {\"id\":\"evt_m\",\"created\":1788265407950,\"type\":\"session.text.ended\",\n" +
+		"data: \"data\":{\"sessionID\":\"ses_1\",\"assistantMessageID\":\"msg_1\",\"ordinal\":0,\"text\":\"multi\"}," +
+		"\"durable\":{\"aggregateID\":\"ses_1\",\"seq\":1,\"version\":1}}\n\n" +
+		frame(`{"id":"evt_s","created":1788265407955,"type":"session.status","data":{"sessionID":"ses_1","status":{"type":"busy"}}}`) +
 		frame(durableFrame)
 
 	var texts []string

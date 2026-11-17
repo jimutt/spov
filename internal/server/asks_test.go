@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jimutt/spov/internal/jobs"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -22,14 +23,15 @@ func askOn(t *testing.T, svc *Service, sess store.Session, name, id string, sour
 	if err != nil || len(convs) == 0 {
 		t.Fatalf("no conversation: %v", err)
 	}
-	raw := `{"type":"permission.asked","data":{"id":"` + id + `","sessionID":"ses_1","action":"glob","resources":["*.txt"]}}`
+	data := `{"id":"` + id + `","sessionID":"ses_1","action":"glob","resources":["*.txt"]}`
 	if name == eventFormCreated {
-		raw = `{"type":"form.created","data":{"form":{"id":"` + id + `","sessionID":"ses_1","title":"Questions",` +
-			`"fields":[{"key":"q0","type":"string","options":[{"value":"Blue","label":"Blue"}]}]}}}`
+		data = `{"form":{"id":"` + id + `","sessionID":"ses_1","title":"Questions",` +
+			`"fields":[{"key":"q0","type":"string","options":[{"value":"Blue","label":"Blue"}]}]}}`
 	}
+	raw := contract.Event(t, name, 0, data)
 	ev := store.Event{
 		ID: store.NewID(svc.deps.Now()), OrgID: sess.OrgID, SessionID: sess.ID, ConversationID: convs[0].ID,
-		Source: source, Name: name, At: svc.deps.Now(), Raw: []byte(raw),
+		Source: source, Name: name, At: svc.deps.Now(), Raw: raw,
 	}
 	if source == store.SourceOpenCode {
 		ev.Seq = 99
@@ -231,40 +233,42 @@ func TestTheAnswerRoutesCarryTheirStatus(t *testing.T) {
 //
 // @decision(DL-020)
 func TestTheLogCarriesTheAsks(t *testing.T) {
-	ephemeral := func(name, raw string) store.Event {
-		return store.Event{Source: store.SourceEphemeral, Name: name, Raw: []byte(raw)}
+	ephemeral := func(name, data string) store.Event {
+		return store.Event{Source: store.SourceEphemeral, Name: name, Raw: contract.Event(t, name, 0, data)}
 	}
-	asked := storedAsk(ephemeral(eventPermissionAsked, `{"type":"permission.asked","data":{"id":"per_1","sessionID":"ses",`+
-		`"action":"glob","resources":["*.txt"],"save":["*"],"metadata":{"root":"."},"source":{"type":"tool","messageID":"msg_1","id":"call_1"}}}`))
+	asked := storedAsk(ephemeral(eventPermissionAsked, `{"id":"per_1","sessionID":"ses",`+
+		`"action":"glob","resources":["*.txt"],"save":["*"],"metadata":{"root":"."},"source":{"type":"tool","messageID":"msg_1","id":"call_1"}}`))
 	if asked == nil || asked.ID != "per_1" || asked.Kind != "permission" || asked.Action != "glob" ||
 		len(asked.Resources) != 1 || asked.Call != "call_1" {
 		t.Errorf("permission.asked = %+v", asked)
 	}
-	replied := storedAsk(ephemeral("permission.replied", `{"data":{"sessionID":"ses","requestID":"per_1","reply":"reject"}}`))
+	replied := storedAsk(ephemeral("permission.replied", `{"sessionID":"ses","requestID":"per_1","reply":"reject"}`))
 	if replied == nil || replied.ID != "per_1" || replied.Reply != "reject" {
 		t.Errorf("permission.replied = %+v", replied)
 	}
-	created := storedAsk(ephemeral(eventFormCreated, `{"data":{"form":{"id":"frm_1","sessionID":"ses","title":"Questions",`+
+	created := storedAsk(ephemeral(eventFormCreated, `{"form":{"id":"frm_1","sessionID":"ses","title":"Questions",`+
 		`"metadata":{"kind":"question","tool":{"messageID":"msg_1","id":"call_2"}},"fields":[{"key":"q0","title":"Colour",`+
 		`"description":"Which colour?","type":"string","options":[{"value":"Red","label":"Red","description":"warm"}],"custom":true},`+
-		`{"key":"q1","type":"multiselect","options":[{"value":"No","label":"No"}]}]}}}`))
+		`{"key":"q1","type":"multiselect","options":[{"value":"No","label":"No"}]}]}}`))
 	if created == nil || created.ID != "frm_1" || created.Kind != "form" || created.Call != "call_2" || len(created.Fields) != 2 ||
 		!created.Fields[0].Custom || created.Fields[0].Options[0].Description != "warm" || created.Fields[1].Type != "multiselect" {
 		t.Errorf("form.created = %+v", created)
 	}
-	answered := storedAsk(ephemeral(eventFormReplied, `{"data":{"id":"frm_1","sessionID":"ses","answer":{"q0":"Blue","q1":["No"]}}}`))
+	answered := storedAsk(ephemeral(eventFormReplied, `{"id":"frm_1","sessionID":"ses","answer":{"q0":"Blue","q1":["No"]}}`))
 	if answered == nil || answered.ID != "frm_1" || answered.Answer["q0"] != "Blue" {
 		t.Errorf("form.replied = %+v", answered)
 	}
-	if got := storedAsk(ephemeral(eventFormCancelled, `{"data":{"id":"frm_1","sessionID":"ses"}}`)); got == nil || got.ID != "frm_1" {
+	if got := storedAsk(ephemeral(eventFormCancelled, `{"id":"frm_1","sessionID":"ses"}`)); got == nil || got.ID != "frm_1" {
 		t.Errorf("form.cancelled = %+v", got)
 	}
 	// A durable frame of the same name is the sandbox's word on
 	// something else, and an unrelated ephemeral row carries no ask.
-	durable := ephemeral(eventPermissionAsked, `{"data":{"id":"per_1"}}`)
+	durable := ephemeral(eventPermissionAsked, `{"id":"per_1","sessionID":"ses","action":"glob","resources":[]}`)
 	durable.Source = store.SourceOpenCode
-	for _, ev := range []store.Event{durable, ephemeral("session.status", `{"data":{"id":"x"}}`),
-		ephemeral(eventPermissionAsked, `{"data":{}}`)} {
+	status := ephemeral("session.status", `{"sessionID":"ses","status":{"type":"idle"}}`)
+	empty := store.Event{Source: store.SourceEphemeral, Name: eventPermissionAsked,
+		Raw: contract.Unchecked(`{"data":{}}`, "a permission.asked with none of its required data")}
+	for _, ev := range []store.Event{durable, status, empty} {
 		if got := storedAsk(ev); got != nil {
 			t.Errorf("%s from %s carried %+v", ev.Name, ev.Source, got)
 		}
@@ -296,8 +300,8 @@ func TestAFormLinkIsOnlyAWebAddress(t *testing.T) {
 		"javascript:alert(1)": false, "data:text/html,x": false, "/relative": false, "": false,
 		"JavaScript:alert(1)": false,
 	} {
-		ev := store.Event{Source: store.SourceEphemeral, Name: eventFormCreated, Raw: []byte(
-			`{"data":{"form":{"id":"frm_1","fields":[{"key":"k","type":"external","url":` + strconvQuote(raw) + `}]}}}`)}
+		ev := store.Event{Source: store.SourceEphemeral, Name: eventFormCreated, Raw: contract.Event(t, eventFormCreated, 0,
+			`{"form":{"id":"frm_1","sessionID":"ses","title":"Links","fields":[{"key":"k","type":"external","url":`+strconvQuote(raw)+`}]}}`)}
 		got := storedAsk(ev)
 		if got == nil || len(got.Fields) != 1 {
 			t.Fatalf("%q: %+v", raw, got)

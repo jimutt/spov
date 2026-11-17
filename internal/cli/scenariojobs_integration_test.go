@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -330,27 +331,47 @@ func (s *scenarioServer) conversationOf(j store.Job) store.Conversation {
 }
 
 // frame stores one of the sandbox's frames in the job's conversation, as
-// the recorder would, from source opencode or ephemeral.
-func (s *scenarioServer) frame(j store.Job, source store.EventSource, raw string) {
+// the recorder would, from source opencode or ephemeral: an event of
+// type typ around data, given the conversation's sessionID when data has
+// none, in the shape the pinned build's document gives that type.
+//
+// @decision(DL-145)
+func (s *scenarioServer) frame(j store.Job, source store.EventSource, typ, data string) {
 	s.t.Helper()
 	conv := s.conversationOf(j)
 	now := s.clock.Now()
-	var head struct {
-		Type string `json:"type"`
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(data), &fields); err != nil {
+		s.t.Fatalf("a frame's data is not an object: %v", err)
 	}
-	_ = json.Unmarshal([]byte(raw), &head)
+	if _, ok := fields["sessionID"]; !ok {
+		fields["sessionID"] = conv.OpenCodeID
+	}
+	full, err := json.Marshal(fields)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	seq := frameSeq.Add(1)
 	ev := store.Event{
 		ID: store.NewID(now), OrgID: j.OrgID, SessionID: j.SessionID, ConversationID: conv.ID,
-		Source: source, Name: head.Type, At: now, Raw: []byte(raw),
+		Source: source, Name: typ, At: now, Raw: contract.Event(s.t, typ, seq, string(full)),
 	}
 	// Only the sandbox's durable frames carry a sequence.
 	if source == store.SourceOpenCode {
-		ev.Seq = time.Now().UnixNano()
+		ev.Seq = seq
 	}
 	if _, err := s.store.Conversations().PutEvents(context.Background(), []store.Event{ev}); err != nil {
 		s.t.Fatal(err)
 	}
 }
+
+// frameSeq numbers the frames a scenario stores, across a restart's two
+// servers, from a start no earlier run's rows reach.
+var frameSeq = func() *atomic.Int64 {
+	var n atomic.Int64
+	n.Store(time.Now().UnixMicro())
+	return &n
+}()
 
 // worked stores an assistant message whose tool call ran, which is what
 // gate 3 needs to see before it lets anything succeed.
@@ -371,8 +392,8 @@ func (s *scenarioServer) worked(j store.Job) {
 // stopped stores the plugin's stop marker, which ends the run.
 func (s *scenarioServer) stopped(j store.Job) {
 	s.t.Helper()
-	s.frame(j, store.SourceOpenCode, `{"type":"session.inbox.enqueued","data":{"item":{"type":"synthetic",`+
-		`"payload":{"text":"SPOV_LOOP_STOPPED {\"reason\":\"declared\"}"},"delivery":"steer"}}}`)
+	s.frame(j, store.SourceOpenCode, jobs.EventInboxEnqueued, `{"inboxID":"msg_stop","item":{"type":"synthetic",`+
+		`"payload":{"text":"SPOV_LOOP_STOPPED {\"reason\":\"declared\"}"},"delivery":"steer"}}`)
 }
 
 // job is the API's view of a job, as member.

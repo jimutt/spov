@@ -11,6 +11,7 @@ import (
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/jobs/jobstest"
 	"github.com/jimutt/spov/internal/opencode"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -388,7 +389,7 @@ func TestAWithdrawalNeedsAPersonsMessageAfterTheRecord(t *testing.T) {
 	}
 	person := func(at time.Time) store.Event {
 		return store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued, At: at,
-			Raw: []byte(`{"type":"session.inbox.enqueued","data":{"item":{"type":"user","payload":{"text":"drop it"}}}}`)}
+			Raw: contract.Event(t, EventInboxEnqueued, 2, `{"sessionID":"ses_1","inboxID":"msg_d","item":{"type":"user","payload":{"text":"drop it"},"delivery":"steer"}}`)}
 	}
 	status := func(events []store.Event) map[string]store.DeliverableStatus {
 		out := map[string]store.DeliverableStatus{}
@@ -453,7 +454,7 @@ func TestAWithdrawalPastTheEvidenceCutCounts(t *testing.T) {
 		{Source: store.SourceSpov, Name: MarkerOutcome, Text: rec + "\n" + drop},
 		{Source: store.SourceSpov, Name: MarkerEvidence, Text: rec},
 		{Source: store.SourceOpenCode, Name: EventInboxEnqueued, At: t0.Add(time.Minute),
-			Raw: []byte(`{"type":"session.inbox.enqueued","data":{"item":{"type":"user","payload":{"text":"drop b"}}}}`)},
+			Raw: contract.Event(t, EventInboxEnqueued, 2, `{"sessionID":"ses_1","inboxID":"msg_d","item":{"type":"user","payload":{"text":"drop b"},"delivery":"steer"}}`)},
 	}
 	got := recordedPullRequests(events, selected, nil)
 	if len(got) != 1 || got[0].Status != store.DeliverableWithdrawn {

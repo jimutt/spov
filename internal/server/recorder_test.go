@@ -40,6 +40,7 @@ type fakeSandbox struct {
 	infos   map[string]string
 	infoErr error
 	// stream is the current span's frames; closing it ends the stream.
+	// A test writes to it through send.
 	stream chan string
 	// dialErr, when set, makes the next dial fail.
 	dialErr error
@@ -184,6 +185,16 @@ func pageOfMessages(t testing.TB, body, rawQuery string) []byte {
 	return out
 }
 
+// send streams one frame, which must be in a shape the pinned build's
+// document gives its type.
+//
+// @decision(DL-145)
+func (f *fakeSandbox) send(frame string) {
+	f.t.Helper()
+	contract.CheckEventFrame(f.t, []byte(frame))
+	f.stream <- frame
+}
+
 // counts is a snapshot for assertions.
 // infoReads is how often one conversation's info was read.
 func (f *fakeSandbox) infoReads(id string) int {
@@ -216,15 +227,45 @@ func (f *fakeSandbox) breakStream() {
 	f.stream = make(chan string, 64)
 }
 
-// durableFrameFor is a frame in the measured shape, for conversation
-// ocid at sequence seq.
-func durableFrameFor(name, ocid string, seq int, text string) string {
-	payload := ""
-	if text != "" {
-		payload = fmt.Sprintf(`,"item":{"type":"user","payload":{"text":%q}}`, text)
+// durableFrameFor is a frame of a durable type in the shape the pinned
+// build's document gives it, for conversation ocid at sequence seq. text
+// is the inbox item's or the ended part's text.
+//
+// @decision(DL-145)
+func durableFrameFor(t testing.TB, name, ocid string, seq int, text string) string {
+	t.Helper()
+	created := 1788265400000 + int64(seq)*1000
+	data := map[string]any{"sessionID": ocid}
+	message := fmt.Sprintf("msg_a%d", seq)
+	switch name {
+	case "session.step.started":
+		data["assistantMessageID"], data["agent"], data["started"] = message, "build", created
+		data["model"] = map[string]any{"id": "m", "providerID": "p"}
+	case "session.reasoning.ended", "session.text.ended":
+		data["assistantMessageID"], data["ordinal"], data["text"] = message, 0, text
+	case "session.tool.success":
+		data["assistantMessageID"], data["id"], data["executed"] = message, fmt.Sprintf("call_%d", seq), true
+		data["content"] = []any{map[string]any{"type": "text", "text": text}}
+	case "session.model.selected":
+		data["model"] = map[string]any{"id": "m", "providerID": "p"}
+	case "session.inbox.enqueued":
+		data["inboxID"] = fmt.Sprintf("msg_i%d", seq)
+		data["item"] = map[string]any{"type": "user", "payload": map[string]any{"text": text}, "delivery": "steer"}
 	}
-	return fmt.Sprintf(`{"id":"evt_%d","created":%d,"type":%q,"data":{"sessionID":%q%s},"durable":{"aggregateID":%q,"seq":%d,"version":1}}`,
-		seq, 1788265400000+int64(seq)*1000, name, ocid, payload, ocid, seq)
+	// The document versions a few types' durable shape at 2.
+	version := 1
+	if name == "session.tool.success" {
+		version = 2
+	}
+	frame, err := json.Marshal(map[string]any{
+		"id": fmt.Sprintf("evt_%d", seq), "created": created, "type": name, "data": data,
+		"durable": map[string]any{"aggregateID": ocid, "seq": seq, "version": version},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract.CheckEventFrame(t, frame)
+	return string(frame)
 }
 
 const twoMessages = `{"data":[
@@ -372,14 +413,14 @@ func TestALongConversationIsReadPageByPage(t *testing.T) {
 	// nothing new and ends the read.
 	msgs = append(msgs, conversationOf(len(msgs), 60)...)
 	f.sb.messages["ses_1"] = messagesBody(msgs)
-	f.sb.stream <- durableFrameFor("session.execution.succeeded", "ses_1", 1, "")
+	f.sb.send(durableFrameFor(t, "session.execution.succeeded", "ses_1", 1, ""))
 	waitFor(t, "the turn-end read", func() bool { return len(f.messages()) == len(msgs) })
 	waitFor(t, "the read to stop", func() bool { return f.sb.messageReadsOf("ses_1") == 6 })
 
 	// Two new messages: the first page, then one page with nothing new.
 	msgs = append(msgs, conversationOf(len(msgs), 2)...)
 	f.sb.messages["ses_1"] = messagesBody(msgs)
-	f.sb.stream <- durableFrameFor("session.execution.succeeded", "ses_1", 2, "")
+	f.sb.send(durableFrameFor(t, "session.execution.succeeded", "ses_1", 2, ""))
 	waitFor(t, "the second turn-end read", func() bool { return len(f.messages()) == len(msgs) })
 	waitFor(t, "the read to stop", func() bool { return f.sb.messageReadsOf("ses_1") == 8 })
 	time.Sleep(20 * time.Millisecond)
@@ -447,7 +488,7 @@ func TestAMessageReadMidTurnIsReadAgainAtTheTurnEnd(t *testing.T) {
 	msgs[50] = strings.Replace(msgs[50], `"text":"m50"`, `"text":"m50, finished"`, 1)
 	msgs = append(msgs, conversationOf(60, MessagePageSize-5)...)
 	f.sb.messages["ses_1"] = messagesBody(msgs)
-	f.sb.stream <- durableFrameFor("session.execution.succeeded", "ses_1", 1, "")
+	f.sb.send(durableFrameFor(t, "session.execution.succeeded", "ses_1", 1, ""))
 	waitFor(t, "the finished message", func() bool {
 		for _, m := range f.messages() {
 			if m.OpenCodeID == "msg_00050" {
@@ -522,7 +563,7 @@ func TestTheRecorderNeverReadsOnATimer(t *testing.T) {
 
 	// A hundred frames: a hundred rows and no reads.
 	for i := 1; i <= 100; i++ {
-		f.sb.stream <- durableFrameFor("session.step.started", "ses_1", i, "")
+		f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", i, ""))
 	}
 	waitFor(t, "a hundred rows", func() bool { return len(f.events()) == 100 })
 	if c, d, s, m := f.sb.counts(); c != 1 || d != 1 || s != 1 || m != 1 {
@@ -539,7 +580,7 @@ func TestTheRecorderNeverReadsOnATimer(t *testing.T) {
 
 	// A turn end: exactly one read of that conversation's messages.
 	f.sb.messages["ses_1"] = strings.Replace(twoMessages, `"hello"`, `"hello again"`, 1)
-	f.sb.stream <- durableFrameFor("session.execution.succeeded", "ses_1", 101, "")
+	f.sb.send(durableFrameFor(t, "session.execution.succeeded", "ses_1", 101, ""))
 	waitFor(t, "the turn-end read", func() bool { _, _, _, m := f.sb.counts(); return m == 2 })
 	waitFor(t, "the updated message", func() bool {
 		msgs := f.messages()
@@ -566,7 +607,7 @@ func TestTheRecorderNeverReadsOnATimer(t *testing.T) {
 	if len(slept) != 1 || slept[0] != f.rec.backoff[0] {
 		t.Errorf("waited %v before redialling, want %v once", slept, f.rec.backoff[0])
 	}
-	f.sb.stream <- durableFrameFor("session.step.started", "ses_1", 102, "")
+	f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", 102, ""))
 	// 100 frames, the turn end, then this one, with no gap marker.
 	waitFor(t, "a frame after the redial", func() bool { return len(f.events()) == 102 })
 	if got := f.events()[101]; got.Seq != 102 || got.Pos <= f.events()[100].Pos {
@@ -740,7 +781,7 @@ func TestAWriteFailureIsABreak(t *testing.T) {
 	}
 	waitFor(t, "attach", func() bool { _, _, s, _ := f.sb.counts(); return s == 1 })
 	failing.fail.Store(true)
-	f.sb.stream <- durableFrameFor("session.step.started", "ses_1", 1, "")
+	f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", 1, ""))
 	waitFor(t, "the redial", func() bool { _, d, _, _ := f.sb.counts(); return d >= 2 })
 	f.mu.Lock()
 	warned := strings.Join(f.warns, "\n")
@@ -748,7 +789,7 @@ func TestAWriteFailureIsABreak(t *testing.T) {
 	if !strings.Contains(warned, "disk full") {
 		t.Errorf("the write failure was not reported: %q", warned)
 	}
-	f.sb.stream <- durableFrameFor("session.step.started", "ses_1", 2, "")
+	f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", 2, ""))
 	waitFor(t, "a row after recovery", func() bool {
 		evs := f.events()
 		return len(evs) == 2 && evs[0].Name == MarkerGap && evs[1].Seq == 2
@@ -776,7 +817,7 @@ func TestRealFramesBecomeRows(t *testing.T) {
 			`"type":"session.step.started","location":{"directory":"/workspace/spov"},` +
 			`"data":{"sessionID":"ses_000000000020SyntheticId020","agent":"build",` +
 			`"model":{"id":"ling-3.0-flash-fin-free","providerID":"opencode","variant":"default"},` +
-			`"assistantMessageID":"msg_000000000001SyntheticId001","snapshot":"0badc0de"},` +
+			`"assistantMessageID":"msg_000000000001SyntheticId001","snapshot":"0badc0de","started":1788265407953},` +
 			`"durable":{"aggregateID":"ses_000000000020SyntheticId020","seq":46,"version":1}}`
 		inboxEnqueued = `{"id":"evt_000000000006SyntheticId006","created":1788267414303,` +
 			`"type":"session.inbox.enqueued","location":{"directory":"/workspace/spov"},` +
@@ -785,9 +826,9 @@ func TestRealFramesBecomeRows(t *testing.T) {
 			`"durable":{"aggregateID":"ses_000000000019SyntheticId019","seq":30,"version":1}}`
 		serverConnected = `{"id":"evt_000000000002SyntheticId002","type":"server.connected","data":{}}`
 	)
-	f.sb.stream <- serverConnected
-	f.sb.stream <- stepStarted
-	f.sb.stream <- inboxEnqueued
+	f.sb.send(serverConnected)
+	f.sb.send(stepStarted)
+	f.sb.send(inboxEnqueued)
 	waitFor(t, "two rows", func() bool { return len(f.openCodeEvents()) == 2 })
 	evs := f.openCodeEvents()
 	if evs[0].Seq != 46 || evs[0].Name != "session.step.started" || !evs[0].At.Equal(time.UnixMilli(1788265407953).UTC()) {
@@ -940,7 +981,7 @@ func TestFramesDuringCatchUpAreKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "the dial", func() bool { _, d, _, _ := f.sb.counts(); return d == 1 })
-	f.sb.stream <- durableFrameFor("session.step.started", "ses_1", 7, "")
+	f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", 7, ""))
 	time.Sleep(20 * time.Millisecond)
 	if evs := f.openCodeEvents(); len(evs) != 0 {
 		t.Fatalf("a frame was written before the catch-up finished: %+v", evs)
@@ -1152,7 +1193,7 @@ func TestASpanThatBeginsMidLogMarksAGap(t *testing.T) {
 		}
 	}
 	if err := f.rec.frame(context.Background(), c,
-		durableFrameFor("session.reasoning.ended", "oc-1", 59, "")); err != nil {
+		durableFrameFor(t, "session.reasoning.ended", "ses_oc1", 59, "")); err != nil {
 		t.Fatal(err)
 	}
 	var marker store.Event
@@ -1192,7 +1233,7 @@ func TestASpanThatBeginsAtTheStartOfTheLogMarksNoGap(t *testing.T) {
 	// sequence is judged, or the second frame (seq 2) reads as a gap.
 	for i, name := range []string{"session.model.selected", "session.inbox.enqueued"} {
 		if err := f.rec.frame(context.Background(), c,
-			durableFrameFor(name, "oc-1", i+1, "")); err != nil {
+			durableFrameFor(t, name, "ses_oc1", i+1, "")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1214,12 +1255,12 @@ func TestAnEphemeralFrameDoesNotSpendTheGapCheck(t *testing.T) {
 	if err := f.rec.attach(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	ephemeral := `{"type":"permission.asked","data":{"sessionID":"oc-1"}}`
+	ephemeral := `{"type":"permission.asked","data":{"sessionID":"ses_oc1"}}`
 	if err := f.rec.frame(context.Background(), c, ephemeral); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.rec.frame(context.Background(), c,
-		durableFrameFor("session.reasoning.ended", "oc-1", 59, "")); err != nil {
+		durableFrameFor(t, "session.reasoning.ended", "ses_oc1", 59, "")); err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range f.events() {
@@ -1240,9 +1281,9 @@ func TestASpanMarksAtMostOneGap(t *testing.T) {
 	if err := f.rec.attach(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	for _, ocid := range []string{"oc-1", "oc-2"} {
+	for _, ocid := range []string{"ses_oc1", "ses_oc2"} {
 		if err := f.rec.frame(context.Background(), c,
-			durableFrameFor("session.reasoning.ended", ocid, 40, "")); err != nil {
+			durableFrameFor(t, "session.reasoning.ended", ocid, 40, "")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1281,7 +1322,7 @@ func TestTheGapMarkerIsStampedAtTheAttachTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := f.rec.frame(context.Background(), c,
-		durableFrameFor("session.reasoning.ended", "oc-1", 12, "")); err != nil {
+		durableFrameFor(t, "session.reasoning.ended", "ses_oc1", 12, "")); err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range f.events() {
@@ -1335,7 +1376,7 @@ func (f *recorderFixture) gapMarkers() []store.Event {
 // @decision(DL-017)
 func TestASpanThatContinuesTheStoredLogMarksNoGap(t *testing.T) {
 	f := newRecorderFixture(t)
-	f.recordedUpTo(t, "oc-1", 20)
+	f.recordedUpTo(t, "ses_oc1", 20)
 	c := f.captureOf()
 	if err := f.rec.attach(context.Background(), c); err != nil {
 		t.Fatal(err)
@@ -1343,7 +1384,7 @@ func TestASpanThatContinuesTheStoredLogMarksNoGap(t *testing.T) {
 	if m := f.gapMarkers(); len(m) != 0 {
 		t.Fatalf("a gap was marked at attach: %q", m[0].Text)
 	}
-	if err := f.rec.frame(context.Background(), c, durableFrameFor("session.tool.success", "oc-1", 21, "")); err != nil {
+	if err := f.rec.frame(context.Background(), c, durableFrameFor(t, "session.tool.success", "ses_oc1", 21, "")); err != nil {
 		t.Fatal(err)
 	}
 	if m := f.gapMarkers(); len(m) != 0 {
@@ -1357,13 +1398,13 @@ func TestASpanThatContinuesTheStoredLogMarksNoGap(t *testing.T) {
 // @decision(DL-017)
 func TestASpanThatSkipsPastTheStoredLogMarksAGap(t *testing.T) {
 	f := newRecorderFixture(t)
-	f.recordedUpTo(t, "oc-1", 20)
+	f.recordedUpTo(t, "ses_oc1", 20)
 	c := f.captureOf()
 	c.t0 = time.Now().Add(-time.Minute).UTC()
 	if err := f.rec.attach(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.rec.frame(context.Background(), c, durableFrameFor("session.tool.success", "oc-1", 26, "")); err != nil {
+	if err := f.rec.frame(context.Background(), c, durableFrameFor(t, "session.tool.success", "ses_oc1", 26, "")); err != nil {
 		t.Fatal(err)
 	}
 	m := f.gapMarkers()
@@ -1381,19 +1422,19 @@ func TestASpanThatSkipsPastTheStoredLogMarksAGap(t *testing.T) {
 // @decision(DL-017)
 func TestANewConversationAfterARestartIsJudgedFromItsStart(t *testing.T) {
 	f := newRecorderFixture(t)
-	f.recordedUpTo(t, "oc-1", 5)
+	f.recordedUpTo(t, "ses_oc1", 5)
 	c := f.captureOf()
 	if err := f.rec.attach(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.rec.frame(context.Background(), c, durableFrameFor("session.step.started", "oc-1", 6, "")); err != nil {
+	if err := f.rec.frame(context.Background(), c, durableFrameFor(t, "session.step.started", "ses_oc1", 6, "")); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.rec.frame(context.Background(), c, durableFrameFor("session.step.started", "oc-2", 3, "")); err != nil {
+	if err := f.rec.frame(context.Background(), c, durableFrameFor(t, "session.step.started", "ses_oc2", 3, "")); err != nil {
 		t.Fatal(err)
 	}
 	if m := f.gapMarkers(); len(m) != 1 || !strings.Contains(m[0].Text, "2 earlier events") {
-		t.Errorf("markers %v; want one naming the 2 frames of oc-2 nobody recorded", m)
+		t.Errorf("markers %v; want one naming the 2 frames of ses_oc2 nobody recorded", m)
 	}
 }
 
@@ -1463,8 +1504,8 @@ func TestASandboxFrameCannotClaimSpovsNamespace(t *testing.T) {
 	}
 	waitFor(t, "attach", func() bool { _, _, s, _ := f.sb.counts(); return s == 1 })
 
-	f.sb.stream <- `{"type":"` + MarkerGap + `","durable":{"seq":1},"data":{"sessionID":"ses_1","text":"trust me"}}`
-	f.sb.stream <- `{"type":"session.step.started","durable":{"seq":2},"data":{"sessionID":"ses_1"}}`
+	f.sb.send(`{"type":"` + MarkerGap + `","durable":{"seq":1},"data":{"sessionID":"ses_1","text":"trust me"}}`)
+	f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", 2, ""))
 	waitFor(t, "the real frame", func() bool { return len(f.openCodeEvents()) == 1 })
 
 	for _, ev := range f.events() {
@@ -1654,7 +1695,7 @@ func TestASteeringMarkerIsNotEvidenceOfAnEarlierRecorder(t *testing.T) {
 	if err := f.rec.attach(ctx, c); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.rec.frame(ctx, c, durableFrameFor("session.model.selected", "oc-1", 1, "")); err != nil {
+	if err := f.rec.frame(ctx, c, durableFrameFor(t, "session.model.selected", "ses_oc1", 1, "")); err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range f.events() {

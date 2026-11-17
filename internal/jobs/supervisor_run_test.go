@@ -10,6 +10,7 @@ import (
 
 	"github.com/jimutt/spov/internal/jobs/jobstest"
 	"github.com/jimutt/spov/internal/opencode"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/store"
 )
@@ -19,18 +20,18 @@ import (
 // as in the captured frame in frames_test.go.
 func inboxTextRaw(t *testing.T, itemType, text string) []byte {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{
-		"type": "session.inbox.enqueued",
-		"data": map[string]any{"item": map[string]any{
+	data, err := json.Marshal(map[string]any{
+		"sessionID": "ses_1", "inboxID": "msg_1",
+		"item": map[string]any{
 			"type":     itemType,
 			"payload":  map[string]any{"text": text},
 			"delivery": "steer",
-		}},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return raw
+	return contract.Event(t, EventInboxEnqueued, 1, string(data))
 }
 
 func stopMarkerText() string {
@@ -979,7 +980,7 @@ func TestTheStopMarkerIsFoundInARealFrameShape(t *testing.T) {
 		` {\"reason\":\"limit\"}"},"delivery":"steer"}},` +
 		`"durable":{"aggregateID":"ses_0000000000samplesession000","seq":30,"version":1}}`
 
-	ev := store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued, Raw: []byte(raw)}
+	ev := store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued, Raw: contract.Frame(t, raw)}
 	if got := signalFor(ev); got != signalStopped {
 		t.Fatalf("signal = %v, want signalStopped;"+
 			" the marker was not found at data.item.payload.text, which is where a real frame carries it", got)
@@ -988,10 +989,10 @@ func TestTheStopMarkerIsFoundInARealFrameShape(t *testing.T) {
 	// And a real human's frame, unchanged from the capture, must still
 	// read as steering rather than as a stop.
 	human := `{"id":"evt_1","created":1788267414303,` +
-		`"type":"session.inbox.enqueued","data":{"sessionID":"ses_1",` +
+		`"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_h",` +
 		`"item":{"type":"user","payload":{"text":"reply with ok"},"delivery":"steer"}},` +
 		`"durable":{"aggregateID":"ses_1","seq":31,"version":1}}`
-	ev = store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued, Raw: []byte(human)}
+	ev = store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued, Raw: contract.Frame(t, human)}
 	if got := signalFor(ev); got != signalNone || !takesOver(ev) {
 		t.Errorf("signal = %v, takesOver = %v; want no signal of its own and a takeover on delivery", got, takesOver(ev))
 	}

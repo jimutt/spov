@@ -74,7 +74,7 @@ func TestWriteTheSubagentFixture(t *testing.T) {
 	}
 	waitFor(t, "attach", func() bool { _, _, s, _ := rf.sb.counts(); return s == 1 })
 	for _, c := range frames {
-		rf.sb.stream <- string(c.Raw)
+		rf.sb.send(string(c.Raw))
 	}
 	stored := 0
 	waitFor(t, "the frames to settle", func() bool {

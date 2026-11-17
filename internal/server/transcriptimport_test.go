@@ -37,7 +37,7 @@ func TestAnImportSendsTheStoredConversationAndReadsItsHead(t *testing.T) {
 			if r.URL.Query().Get("follow") != "false" {
 				t.Errorf("the head read follows: %s", r.URL.RawQuery)
 			}
-			_, _ = io.WriteString(w, "data: {\"type\":\"log.synced\",\"aggregateID\":\"ses_1\",\"seq\":4}\n\n")
+			_, _ = io.WriteString(w, logItem(t, `{"type":"log.synced","aggregateID":"ses_1","seq":4}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -60,15 +60,30 @@ func TestAnImportSendsTheStoredConversationAndReadsItsHead(t *testing.T) {
 	}
 }
 
+// logItem is one server-sent item of a session's durable log, which must
+// be in a shape the pinned build's document gives a log item.
+//
+// @decision(DL-145)
+func logItem(t *testing.T, raw string) string {
+	t.Helper()
+	contract.CheckLogFrame(t, []byte(raw))
+	return "data: " + raw + "\n\n"
+}
+
 // The head is read from any of the log's shapes, and a built info
 // carries what an import requires.
 //
 // @decision(DL-089)
 func TestLogFramesAndBuiltInfo(t *testing.T) {
+	at := func(seq int64) string {
+		raw := string(contract.Event(t, "session.execution.started", seq, `{"sessionID":"ses_9"}`))
+		contract.CheckLogFrame(t, []byte(raw))
+		return raw
+	}
 	for _, body := range []string{
-		`[{"durable":{"seq":2}},{"durable":{"seq":7}}]`,
-		`{"data":[{"durable":{"seq":7}}]}`,
-		"data: {\"durable\":{\"seq\":7}}\n\n",
+		`[` + at(2) + `,` + at(7) + `]`,
+		`{"data":[` + at(7) + `]}`,
+		logItem(t, at(7)),
 	} {
 		var head int64
 		for _, f := range logFrames([]byte(body)) {
@@ -78,9 +93,9 @@ func TestLogFramesAndBuiltInfo(t *testing.T) {
 			t.Errorf("%s: head %d", body, head)
 		}
 	}
-	at := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
+	created := time.Date(2026, 11, 6, 9, 0, 0, 0, time.UTC)
 	var info map[string]any
-	if err := json.Unmarshal(builtInfo(store.Conversation{OpenCodeID: "ses_9", Title: "x", CreatedAt: at, UpdatedAt: at}, ""), &info); err != nil {
+	if err := json.Unmarshal(builtInfo(store.Conversation{OpenCodeID: "ses_9", Title: "x", CreatedAt: created, UpdatedAt: created}, ""), &info); err != nil {
 		t.Fatal(err)
 	}
 	for _, k := range []string{"id", "projectID", "cost", "tokens", "time", "location"} {
@@ -120,9 +135,9 @@ func TestTheRecorderContinuesAnImportedConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "the catch-up", func() bool { return len(f.messages()) == 2 })
-	f.sb.stream <- durableFrameFor("session.step.started", "ses_1", 4, "")
-	f.sb.stream <- durableFrameFor("session.step.started", "ses_1", 5, "")
-	f.sb.stream <- durableFrameFor("session.step.started", "ses_1", 6, "")
+	f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", 4, ""))
+	f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", 5, ""))
+	f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", 6, ""))
 	waitFor(t, "two new rows", func() bool { return len(f.events()) == 3 })
 	var seqs []int64
 	for _, ev := range f.events() {
@@ -160,7 +175,8 @@ func TestImportConversationsRecordsEachOffset(t *testing.T) {
 			imported = append(imported, body.Info.ID)
 			_, _ = io.WriteString(w, `{"data":{"id":"`+body.Info.ID+`"}}`)
 		default:
-			_, _ = io.WriteString(w, "data: {\"type\":\"log.synced\",\"seq\":3}\n\n")
+			id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/experimental/session/"), "/log")
+			_, _ = io.WriteString(w, logItem(t, `{"type":"log.synced","aggregateID":"`+id+`","seq":3}`))
 		}
 	})))
 	t.Cleanup(sb.Close)

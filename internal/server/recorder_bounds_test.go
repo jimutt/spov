@@ -71,7 +71,7 @@ func TestTheSessionCountIsTheBytesAWriteAdded(t *testing.T) {
 		bigs = append(bigs, fmt.Sprintf(`{"id":"msg_b%03d","time":{"created":%d},"type":"user","text":%q}`, i, 1788266000000+int64(i)*1000, pad))
 		f.sb.messages["ses_1"] = body()
 		f.sb.mu.Unlock()
-		f.sb.stream <- durableFrameFor("session.execution.succeeded", "ses_1", i, "")
+		f.sb.send(durableFrameFor(t, "session.execution.succeeded", "ses_1", i, ""))
 		want := 49 + i
 		waitFor(t, "the read", func() bool { return len(f.messages()) == want || len(f.markers(MarkerStopped)) > 0 })
 		if len(f.markers(MarkerStopped)) > 0 {
@@ -110,7 +110,7 @@ func replayRewrites(t *testing.T, f *recorderFixture, gens int) {
 		f.sb.mu.Lock()
 		f.sb.messages["ses_1"] = rewritePage(gen)
 		f.sb.mu.Unlock()
-		f.sb.stream <- durableFrameFor("session.execution.succeeded", "ses_1", 1, "")
+		f.sb.send(durableFrameFor(t, "session.execution.succeeded", "ses_1", 1, ""))
 		want := fmt.Sprintf("%03d", gen)
 		waitFor(t, "the rewrite", func() bool {
 			ms := f.messages()

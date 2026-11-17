@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -44,10 +45,10 @@ func TestASessionStoresOnlySoManyConversations(t *testing.T) {
 	defer cancel()
 	f.attached(ctx)
 	for i := 1; i <= 8; i++ {
-		f.sb.stream <- freshFrame(i)
+		f.sb.send(freshFrame(i))
 	}
 	// A frame of a conversation the session holds is still recorded.
-	f.sb.stream <- strings.Replace(freshFrame(1), `"seq":1`, `"seq":2`, 1)
+	f.sb.send(strings.Replace(freshFrame(1), `"seq":1`, `"seq":2`, 1))
 	waitFor(t, "the frames", func() bool { return len(f.openCodeEvents()) == 4 })
 
 	convs, err := f.st.Conversations().ListConversations(ctx, "org", f.sess.ID)
@@ -70,8 +71,8 @@ func TestASessionStoresOnlySoManyConversations(t *testing.T) {
 	f.sb.stream = make(chan string, 64)
 	f.sb.mu.Unlock()
 	waitFor(t, "the redial", func() bool { _, d, _, _ := f.sb.counts(); return d >= 2 })
-	f.sb.stream <- freshFrame(9)
-	f.sb.stream <- strings.Replace(freshFrame(2), `"seq":1`, `"seq":2`, 1)
+	f.sb.send(freshFrame(9))
+	f.sb.send(strings.Replace(freshFrame(2), `"seq":1`, `"seq":2`, 1))
 	waitFor(t, "the second span", func() bool { return len(f.openCodeEvents()) == 5 })
 	if n := len(f.markers(MarkerConversationLimit)); n != 1 {
 		t.Errorf("after a redial the log holds %d limit notes, want one", n)
@@ -92,8 +93,8 @@ func TestAnOversizedConversationInfoIsNotStored(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	f.attached(ctx)
-	f.sb.stream <- freshFrame(1)
-	f.sb.stream <- freshFrame(2)
+	f.sb.send(freshFrame(1))
+	f.sb.send(freshFrame(2))
 	waitFor(t, "the frames", func() bool { return len(f.openCodeEvents()) == 2 })
 
 	convs, _ := f.st.Conversations().ListConversations(ctx, "org", f.sess.ID)
@@ -128,9 +129,11 @@ func TestRecordingStopsAtTheSessionsStorageLimit(t *testing.T) {
 	id := fmt.Sprintf("ses_flood%018d", 1)
 	pad := strings.Repeat("x", 1<<10)
 	for seq := 1; seq <= 40; seq++ {
+		frame := fmt.Sprintf(`{"id":"evt_%d","created":1794165467570,"type":"session.execution.started","metadata":{"pad":%q},`+
+			`"data":{"sessionID":%q},"durable":{"aggregateID":%q,"seq":%d,"version":1}}`, seq, pad, id, id, seq)
+		contract.CheckEventFrame(t, []byte(frame))
 		select {
-		case f.sb.stream <- fmt.Sprintf(`{"id":"evt_%d","created":1794165467570,"type":"session.execution.started","pad":%q,`+
-			`"data":{"sessionID":%q},"durable":{"aggregateID":%q,"seq":%d,"version":1}}`, seq, pad, id, id, seq):
+		case f.sb.stream <- frame:
 		case <-ctx.Done():
 		}
 	}

@@ -92,9 +92,9 @@ func TestScenario7(t *testing.T) {
 	})
 
 	step("7.2 a steered job stays paused across a restart, and Resume on the new process continues its clock", func(t *testing.T) {
-		s.frame(j, store.SourceOpenCode, `{"type":"session.inbox.enqueued","data":{"inboxID":"inb_take","item":{"type":"user",`+
-			`"payload":{"text":"let me look","metadata":{"spov":{"after":"handover"}}},"delivery":"steer"}}}`)
-		s.frame(j, store.SourceOpenCode, `{"type":"session.inbox.delivered","data":{"inboxID":"inb_take"}}`)
+		s.frame(j, store.SourceOpenCode, "session.inbox.enqueued", `{"inboxID":"msg_take","item":{"type":"user",`+
+			`"payload":{"text":"let me look","metadata":{"spov":{"after":"handover"}}},"delivery":"steer"}}`)
+		s.frame(j, store.SourceOpenCode, "session.inbox.delivered", `{"inboxID":"msg_take"}`)
 		if got := s.pass(id); got.State != store.JobSteered {
 			t.Fatalf("state %s, want steered", got.State)
 		}
@@ -126,8 +126,8 @@ func TestScenario7(t *testing.T) {
 	})
 
 	step("7.3 a blocked job stays blocked across a restart, counting, and an answer on the new process releases it", func(t *testing.T) {
-		s.frame(j, store.SourceEphemeral, `{"type":"permission.asked","data":{"id":"per_restart","sessionID":"`+
-			conv.OpenCodeID+`","action":"read","resources":["/etc/hosts"],"save":["/etc/*"]}}`)
+		s.frame(j, store.SourceEphemeral, "permission.asked", `{"id":"per_restart","sessionID":"`+
+			conv.OpenCodeID+`","action":"read","resources":["/etc/hosts"],"save":["/etc/*"]}`)
 		if got := s.pass(id); got.State != store.JobBlocked {
 			t.Fatalf("state %s, want blocked", got.State)
 		}

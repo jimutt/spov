@@ -11,6 +11,7 @@ import (
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/jobs/jobstest"
 	"github.com/jimutt/spov/internal/opencode"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -42,9 +43,15 @@ func newFollowFixture(t *testing.T, state store.JobState) *followFixture {
 	}
 }
 
-// put appends one sandbox event.
+// put appends one sandbox event, whose frame must be in a shape the
+// pinned build's document gives its type.
+//
+// @decision(DL-145)
 func (f *followFixture) put(t *testing.T, name string, raw []byte) {
 	t.Helper()
+	if len(raw) > 0 {
+		contract.CheckEventFrame(t, raw)
+	}
 	f.pos++
 	ev := store.Event{
 		ID: store.NewID(time.Now()), OrgID: f.job.OrgID, SessionID: f.job.SessionID,
@@ -94,30 +101,23 @@ func (f *followFixture) putGap(t *testing.T) {
 // not nil, the spov metadata saying what follows it.
 func inboxItemRaw(t *testing.T, itemType, id string, after *string) []byte {
 	t.Helper()
-	item := map[string]any{"type": itemType}
+	payload := map[string]any{"text": "hi"}
 	if after != nil {
-		item["payload"] = map[string]any{"text": "hi", "metadata": map[string]any{"spov": map[string]any{"after": *after}}}
+		payload["metadata"] = map[string]any{"spov": map[string]any{"after": *after}}
 	}
-	raw, err := json.Marshal(map[string]any{
-		"type": EventInboxEnqueued,
-		"data": map[string]any{"inboxID": id, "item": item},
+	data, err := json.Marshal(map[string]any{
+		"sessionID": "ses_1", "inboxID": id,
+		"item": map[string]any{"type": itemType, "payload": payload, "delivery": "steer"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return raw
+	return contract.Event(t, EventInboxEnqueued, 1, string(data))
 }
 
 func deliveredRaw(t *testing.T, id string) []byte {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{
-		"type": EventInboxDelivered,
-		"data": map[string]any{"inboxID": id, "sessionID": "ses_1"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw
+	return contract.Event(t, EventInboxDelivered, 2, `{"inboxID":"`+id+`","sessionID":"ses_1"}`)
 }
 
 // putHuman is a person's message that takes the job over, enqueued and

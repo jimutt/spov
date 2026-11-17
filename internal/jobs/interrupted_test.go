@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -68,13 +69,14 @@ func abortedPart(completed int64, message string) string {
 // interruptEvent is session.execution.interrupted as S-LS2 and S-LS3
 // captured it: `created` at the frame's top level, `reason` inside
 // `data`.
-func interruptEvent(created int64, reason string) store.Event {
+func interruptEvent(t *testing.T, created int64, reason string) store.Event {
+	t.Helper()
 	return store.Event{
 		Source: store.SourceOpenCode,
 		Name:   "session.execution.interrupted",
-		Raw: []byte(fmt.Sprintf(
+		Raw: contract.Frame(t, fmt.Sprintf(
 			`{"id":"evt_1","created":%d,"type":"session.execution.interrupted",`+
-				`"data":{"sessionID":"ses_1","reason":%q}}`, created, reason)),
+				`"data":{"sessionID":"ses_1","reason":%q},"durable":{"aggregateID":"ses_1","seq":9,"version":1}}`, created, reason)),
 	}
 }
 
@@ -94,7 +96,7 @@ func passingGates() []store.Event {
 //
 // @decision(DL-053) @decision(DL-050)
 func TestAnInterruptedRunIsNotARefusedOne(t *testing.T) {
-	events := append(passingGates(), interruptEvent(clock, stopReasonUser))
+	events := append(passingGates(), interruptEvent(t, clock, stopReasonUser))
 	messages := []store.Message{toolMessage(abortedPart(clock+9, interruptedMessage))}
 
 	got := judge(reportJob(), events, messages, aReport())
@@ -132,7 +134,7 @@ func TestAnInterruptedRunIsNotARefusedOne(t *testing.T) {
 //
 // @decision(DL-053) @decision(DL-050)
 func TestAHumanRejectIsStillARefusal(t *testing.T) {
-	events := append(passingGates(), interruptEvent(clock, stopReasonShutdown))
+	events := append(passingGates(), interruptEvent(t, clock, stopReasonShutdown))
 	messages := []store.Message{toolMessage(abortedPart(clock-10, declinedMessage))}
 
 	got := judge(reportJob(), events, messages, aReport())
@@ -161,7 +163,13 @@ func TestTheInterruptReasonIsLoadBearing(t *testing.T) {
 		{"inactivity", false},
 		{"", false},
 	} {
-		stops := humanStops([]store.Event{interruptEvent(clock, tc.reason)})
+		ev := store.Event{Source: store.SourceOpenCode, Name: "session.execution.interrupted", Raw: contract.Unchecked(
+			fmt.Sprintf(`{"id":"evt_1","created":%d,"type":"session.execution.interrupted","data":{"sessionID":"ses_1","reason":""}}`, clock),
+			"an interrupt with no reason")}
+		if tc.reason != "" {
+			ev = interruptEvent(t, clock, tc.reason)
+		}
+		stops := humanStops([]store.Event{ev})
 		if got := stoppedByAHuman(part, stops); got != tc.want {
 			t.Errorf("reason %q: discounted = %v, want %v", tc.reason, got, tc.want)
 		}
@@ -173,7 +181,7 @@ func TestTheInterruptReasonIsLoadBearing(t *testing.T) {
 //
 // @decision(DL-053) @decision(DL-050)
 func TestNeitherSignalDiscountsOnItsOwn(t *testing.T) {
-	stops := humanStops([]store.Event{interruptEvent(clock, stopReasonUser)})
+	stops := humanStops([]store.Event{interruptEvent(t, clock, stopReasonUser)})
 	near := toolPart{ErrorType: refusalByHuman, ErrorMessage: declinedMessage, CompletedAt: clock + 9}
 	if stoppedByAHuman(near, stops) {
 		t.Error("a part carrying the reject's wording was discounted because it sat near an interrupt")
@@ -188,7 +196,7 @@ func TestNeitherSignalDiscountsOnItsOwn(t *testing.T) {
 //
 // @decision(DL-053)
 func TestThePartMustSitInsideTheWindow(t *testing.T) {
-	stops := humanStops([]store.Event{interruptEvent(clock, stopReasonUser)})
+	stops := humanStops([]store.Event{interruptEvent(t, clock, stopReasonUser)})
 	part := func(offset int64) toolPart {
 		return toolPart{ErrorType: refusalByHuman, ErrorMessage: interruptedMessage, CompletedAt: clock + offset}
 	}
@@ -219,7 +227,7 @@ func TestThePartMustSitInsideTheWindow(t *testing.T) {
 //
 // @decision(DL-053) @decision(DL-050)
 func TestAPolicyRefusalIsNeverDiscounted(t *testing.T) {
-	stops := humanStops([]store.Event{interruptEvent(clock, stopReasonUser)})
+	stops := humanStops([]store.Event{interruptEvent(t, clock, stopReasonUser)})
 	p := toolPart{ErrorType: refusalByPolicy, ErrorMessage: interruptedMessage, CompletedAt: clock + 9}
 	if stoppedByAHuman(p, stops) {
 		t.Error("a refusal the plugin's policy made was discounted as spov's own interrupt")
@@ -231,7 +239,7 @@ func TestAPolicyRefusalIsNeverDiscounted(t *testing.T) {
 //
 // @decision(DL-053) @decision(DL-050)
 func TestAnInterruptedCallCountsAsHavingRun(t *testing.T) {
-	stops := humanStops([]store.Event{interruptEvent(clock, stopReasonUser)})
+	stops := humanStops([]store.Event{interruptEvent(t, clock, stopReasonUser)})
 	messages := []store.Message{toolMessage(abortedPart(clock+9, interruptedMessage))}
 	if !anyToolRan(messages, stops) {
 		t.Error("a call spov interrupted did not count as having run")
@@ -249,26 +257,26 @@ func TestAnInterruptedCallCountsAsHavingRun(t *testing.T) {
 func TestAQuestionTheInterruptEndedDoesNotPark(t *testing.T) {
 	ask := func(id string) store.Event {
 		return store.Event{Source: store.SourceEphemeral, Name: eventPermissionAsked,
-			Raw: []byte(`{"type":"permission.asked","data":{"sessionID":"ses_1","requestID":"` + id + `"}}`)}
+			Raw: contract.Event(t, eventPermissionAsked, 0, `{"id":"`+id+`","sessionID":"ses_1","action":"read","resources":[]}`)}
 	}
-	if n := unansweredPermissions([]store.Event{ask("p1")}); n != 1 {
+	if n := unansweredPermissions([]store.Event{ask("per_1")}); n != 1 {
 		t.Fatalf("outstanding = %d, want 1; the premise of this test does not hold", n)
 	}
 	if n := unansweredPermissions([]store.Event{
-		ask("p1"), interruptEvent(clock, stopReasonUser),
+		ask("per_1"), interruptEvent(t, clock, stopReasonUser),
 	}); n != 0 {
 		t.Errorf("outstanding = %d, want 0: a question the stop ended still parked the job", n)
 	}
 	// Asked after the stop, so it belongs to a turn that came later.
 	if n := unansweredPermissions([]store.Event{
-		interruptEvent(clock, stopReasonUser), ask("p1"),
+		interruptEvent(t, clock, stopReasonUser), ask("per_1"),
 	}); n != 1 {
 		t.Errorf("outstanding = %d, want 1: an earlier stop swallowed a later turn's question", n)
 	}
 	// A human's reject raises the event with reason "shutdown" and must
 	// clear nothing: that job really is parked.
 	if n := unansweredPermissions([]store.Event{
-		ask("p1"), interruptEvent(clock, stopReasonShutdown),
+		ask("per_1"), interruptEvent(t, clock, stopReasonShutdown),
 	}); n != 1 {
 		t.Errorf("outstanding = %d, want 1: a reject's event cleared a real park", n)
 	}
@@ -280,7 +288,7 @@ func TestAQuestionTheInterruptEndedDoesNotPark(t *testing.T) {
 //
 // @decision(DL-053) @decision(DL-050)
 func TestAHumanRejectIsNotASandboxShutdown(t *testing.T) {
-	events := []store.Event{interruptEvent(clock, stopReasonShutdown)}
+	events := []store.Event{interruptEvent(t, clock, stopReasonShutdown)}
 	declined := []store.Message{toolMessage(abortedPart(clock-10, declinedMessage))}
 	if wasShutDown(events, declined) {
 		t.Error("a human's tool-call reject was recorded as a sandbox shutdown worth re-running")
@@ -311,7 +319,7 @@ func TestAHumanRejectIsNotASandboxShutdown(t *testing.T) {
 //
 // @decision(DL-053) @decision(DL-050)
 func TestACallStoppedBeforeItStartedDidNotRun(t *testing.T) {
-	stops := humanStops([]store.Event{interruptEvent(clock, stopReasonUser)})
+	stops := humanStops([]store.Event{interruptEvent(t, clock, stopReasonUser)})
 	unstarted := `{"type":"tool","name":"shell","executed":false,
 	  "state":{"status":"error","error":{"type":"aborted","message":"Tool execution interrupted"}},
 	  "time":{"created":1789000000000,"completed":` + fmt.Sprint(clock+9) + `}}`
@@ -320,13 +328,13 @@ func TestACallStoppedBeforeItStartedDidNotRun(t *testing.T) {
 		t.Error("a call the stop aborted before it began counted as having run")
 	}
 	if !anyToolRan([]store.Message{toolMessage(partStoppedByAHuman)}, humanStops(
-		[]store.Event{interruptEvent(1789000416668, stopReasonUser)})) {
+		[]store.Event{interruptEvent(t, 1789000416668, stopReasonUser)})) {
 		t.Error("a call a person cut off part-way did not count as having run")
 	}
 
 	// DL-050's founding case, with one part that did nothing added.
 	job := reportJob()
-	events := append(passingGates(), interruptEvent(clock, stopReasonUser))
+	events := append(passingGates(), interruptEvent(t, clock, stopReasonUser))
 	got := judge(job, events, []store.Message{
 		toolMessage(partRefusedByPolicy, unstarted),
 	}, nil)

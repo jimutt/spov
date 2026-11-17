@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/jobs"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -20,8 +21,8 @@ const (
 	reportMessage = `{"id":"msg_1eb8e2096001rsTFIhAbeAfYj3","metadata":{"source":"subagent","childID":"ses_e1471df72ffecZP6FsFzTsQbBa",` +
 		`"agent":"General","state":"completed"},"time":{"created":1794953325005},` +
 		`"text":"<subagent sessionID=\"ses_e1471df72ffecZP6FsFzTsQbBa\" state=\"completed\" description=\"probe child fg\">\nfinal\n</subagent>","type":"synthetic"}`
-	continuationFrame = `{"type":"session.inbox.enqueued","data":{"sessionID":"ses_p","inboxID":"msg_c",` +
-		`"item":{"type":"synthetic","payload":{"text":"Continue working"},"delivery":"queue"}}}`
+	continuation = `{"sessionID":"ses_p","inboxID":"msg_c",` +
+		`"item":{"type":"synthetic","payload":{"text":"Continue working"},"delivery":"queue"}}`
 )
 
 // The wire says which synthetic item is a subagent's report, and whose,
@@ -29,7 +30,7 @@ const (
 //
 // @decision(DL-144)
 func TestASubagentsReportIsNamedOnTheWire(t *testing.T) {
-	ev := store.Event{Source: store.SourceOpenCode, Name: jobs.EventInboxEnqueued, Raw: []byte(reportFrame)}
+	ev := store.Event{Source: store.SourceOpenCode, Name: jobs.EventInboxEnqueued, Raw: contract.Frame(t, reportFrame)}
 	got := storedReport(ev, storedRole(ev))
 	if got == nil || got.Child != "ses_e1473bc9affePssI1WmxBG7Ksh" || got.State != "completed" {
 		t.Errorf("the report frame read as %+v", got)
@@ -39,14 +40,18 @@ func TestASubagentsReportIsNamedOnTheWire(t *testing.T) {
 		t.Errorf("the report message read as %+v", m.Report)
 	}
 
-	for _, tc := range []struct{ name, raw string }{
-		{"a continuation", continuationFrame},
-		{"a person's item claiming to be a report", replaceOnce(reportFrame, `"type":"synthetic"`, `"type":"user"`)},
-		{"a report naming no child", replaceOnce(reportFrame, `"childID":"ses_e1473bc9affePssI1WmxBG7Ksh",`, ``)},
-		{"another source", replaceOnce(reportFrame, `"source":"subagent"`, `"source":"plugin"`)},
-		{"unreadable", `{"data":{"item":`},
+	for _, tc := range []struct {
+		name string
+		raw  []byte
+	}{
+		{"a continuation", contract.Event(t, jobs.EventInboxEnqueued, 24, continuation)},
+		{"a person's item claiming to be a report", contract.Frame(t, replaceOnce(replaceOnce(reportFrame,
+			`"type":"synthetic"`, `"type":"user"`), `"description":"probe child a",`, ``))},
+		{"a report naming no child", contract.Frame(t, replaceOnce(reportFrame, `"childID":"ses_e1473bc9affePssI1WmxBG7Ksh",`, ``))},
+		{"another source", contract.Frame(t, replaceOnce(reportFrame, `"source":"subagent"`, `"source":"plugin"`))},
+		{"unreadable", contract.Unchecked(`{"data":{"item":`, "cut off")},
 	} {
-		ev := store.Event{Source: store.SourceOpenCode, Name: jobs.EventInboxEnqueued, Raw: []byte(tc.raw)}
+		ev := store.Event{Source: store.SourceOpenCode, Name: jobs.EventInboxEnqueued, Raw: tc.raw}
 		if got := storedReport(ev, storedRole(ev)); got != nil {
 			t.Errorf("%s read as a report: %+v", tc.name, got)
 		}
@@ -92,7 +97,7 @@ func TestTheLogSaysWhoseChildAnEventsConversationIs(t *testing.T) {
 		seedEvent(t, f, store.Event{
 			OrgID: sess.OrgID, SessionID: sess.ID, ConversationID: conv.ID,
 			Source: store.SourceOpenCode, Seq: int64(i + 1), Name: "session.execution.started", At: recordedAt,
-			Raw: []byte(`{"type":"session.execution.started","data":{"sessionID":"` + conv.OpenCodeID + `"},"durable":{"aggregateID":"x","seq":1,"version":1}}`),
+			Raw: contract.Event(t, "session.execution.started", 1, `{"sessionID":"`+conv.OpenCodeID+`"}`),
 		})
 	}
 	got := map[string]string{}

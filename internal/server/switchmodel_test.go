@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -89,21 +90,22 @@ func TestTheLaunchsOwnUnlistedModelCanBeSwitchedBackTo(t *testing.T) {
 //
 // @decision(DL-014)
 func TestTheLogNamesTheSelectedModel(t *testing.T) {
-	frame := func(raw string) store.Event {
-		return store.Event{Source: store.SourceOpenCode, Name: eventModelSelected, Raw: []byte(raw)}
+	frame := func(model string) store.Event {
+		raw := contract.Event(t, eventModelSelected, 1, `{"sessionID":"ses","model":`+model+`}`)
+		return store.Event{Source: store.SourceOpenCode, Name: eventModelSelected, Raw: raw}
 	}
-	for raw, want := range map[string]string{
-		`{"type":"session.model.selected","data":{"sessionID":"ses","model":{"id":"deepseek-flash","providerID":"deepseek"}}}`: "deepseek/deepseek-flash",
-		`{"data":{"model":{"id":"acme/m","providerID":"openrouter","variant":"high"}}}`:                                        "openrouter/acme/m#high",
-		`{"data":{"model":{"id":"m","providerID":"openai","variant":"default"}}}`:                                              "openai/m",
-		`{"data":{"model":{"id":"","providerID":"openai"}}}`:                                                                   "",
-		`{"data":{"model":{"id":"a b","providerID":"openai"}}}`:                                                                "",
+	for model, want := range map[string]string{
+		`{"id":"deepseek-flash","providerID":"deepseek"}`:            "deepseek/deepseek-flash",
+		`{"id":"acme/m","providerID":"openrouter","variant":"high"}`: "openrouter/acme/m#high",
+		`{"id":"m","providerID":"openai","variant":"default"}`:       "openai/m",
+		`{"id":"","providerID":"openai"}`:                            "",
+		`{"id":"a b","providerID":"openai"}`:                         "",
 	} {
-		if got := storedModel(frame(raw)); got != want {
-			t.Errorf("%s: %q, want %q", raw, got, want)
+		if got := storedModel(frame(model)); got != want {
+			t.Errorf("%s: %q, want %q", model, got, want)
 		}
 	}
-	other := frame(`{"data":{"model":{"id":"m","providerID":"openai"}}}`)
+	other := frame(`{"id":"m","providerID":"openai"}`)
 	other.Name = "session.step.started"
 	if storedModel(other) != "" {
 		t.Error("another event carried a model")

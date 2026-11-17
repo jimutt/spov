@@ -38,8 +38,8 @@ func TestScenario6(t *testing.T) {
 	conv := s.conversationOf(j)
 	used := func() time.Duration { return s.jobRow(id).ClockElapsed(s.clock.Now()) }
 	ask := func(req string) {
-		s.frame(j, store.SourceEphemeral, `{"type":"permission.asked","data":{"id":"`+req+`","sessionID":"`+
-			conv.OpenCodeID+`","action":"read","resources":["/etc/os-release"],"save":["/etc/*"]}}`)
+		s.frame(j, store.SourceEphemeral, "permission.asked", `{"id":"`+req+`","sessionID":"`+
+			conv.OpenCodeID+`","action":"read","resources":["/etc/os-release"],"save":["/etc/*"]}`)
 	}
 	answer := func(req, decision string) (int, []byte) {
 		return s.call("member", http.MethodPost, "/api/v1/sessions/"+j.SessionID+"/permissions/"+req,
@@ -50,9 +50,9 @@ func TestScenario6(t *testing.T) {
 		if after != "" {
 			meta = `,"metadata":{"spov":{"after":"` + after + `"}}`
 		}
-		s.frame(j, store.SourceOpenCode, `{"type":"session.inbox.enqueued","data":{"inboxID":"`+inbox+`","item":{"type":"user",`+
-			`"payload":{"text":"a word from the reader"`+meta+`},"delivery":"steer"}}}`)
-		s.frame(j, store.SourceOpenCode, `{"type":"session.inbox.delivered","data":{"inboxID":"`+inbox+`"}}`)
+		s.frame(j, store.SourceOpenCode, "session.inbox.enqueued", `{"inboxID":"`+inbox+`","item":{"type":"user",`+
+			`"payload":{"text":"a word from the reader"`+meta+`},"delivery":"steer"}}`)
+		s.frame(j, store.SourceOpenCode, "session.inbox.delivered", `{"inboxID":"`+inbox+`"}`)
 	}
 
 	step("6.1 a job parked on a permission is blocked, and its clock keeps counting", func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestScenario6(t *testing.T) {
 	})
 
 	step("6.4 a continue message leaves the job running and counting", func(t *testing.T) {
-		item("inb_continue", "continue")
+		item("msg_continue", "continue")
 		if got := s.pass(id); got.State != store.JobRunning {
 			t.Fatalf("state %s, want running", got.State)
 		}
@@ -122,7 +122,7 @@ func TestScenario6(t *testing.T) {
 	})
 
 	step("6.5 a handover steers the job and stops its clock; Resume continues it", func(t *testing.T) {
-		item("inb_handover", "handover")
+		item("msg_handover", "handover")
 		if got := s.pass(id); got.State != store.JobSteered {
 			t.Fatalf("state %s, want steered", got.State)
 		}

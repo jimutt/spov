@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/jimutt/spov/internal/jobs"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -172,11 +173,12 @@ func enqueueOn(t *testing.T, f *steerFix, id, itemType string) {
 	if err != nil || len(convs) == 0 {
 		t.Fatalf("no conversation: %v", err)
 	}
-	raw := `{"type":"session.inbox.enqueued","data":{"inboxID":"` + id + `","item":{"type":"` + itemType + `","payload":{"text":"x"},"delivery":"queue"}}}`
+	raw := contract.Event(t, jobs.EventInboxEnqueued, int64(len(id))+int64(len(itemType)),
+		`{"sessionID":"`+convs[0].OpenCodeID+`","inboxID":"`+id+`","item":{"type":"`+itemType+`","payload":{"text":"x"},"delivery":"queue"}}`)
 	if _, err := f.svc.deps.Store.Conversations().PutEvents(ctx, []store.Event{{
 		ID: store.NewID(f.svc.deps.Now()), OrgID: f.sess.OrgID, SessionID: f.sess.ID, ConversationID: convs[0].ID,
 		Source: store.SourceOpenCode, Seq: int64(len(id)) + int64(len(itemType)), Name: jobs.EventInboxEnqueued,
-		At: f.svc.deps.Now(), Raw: []byte(raw),
+		At: f.svc.deps.Now(), Raw: raw,
 	}}); err != nil {
 		t.Fatal(err)
 	}

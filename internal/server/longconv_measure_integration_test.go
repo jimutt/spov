@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/auth"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 	"github.com/jimutt/spov/internal/store/postgres"
 )
@@ -268,8 +269,10 @@ func seedLong(ctx context.Context, t *testing.T, st store.Store, e export, copie
 func (m *measured) appendLive(ctx context.Context, t *testing.T, st store.Store) {
 	m.seq++
 	m.at = time.Now()
-	raw := fmt.Sprintf(`{"id":"evt_live%d","created":%d,"type":"session.text.ended","data":{"sessionID":%q,"text":"live line %d"},"durable":{"aggregateID":%q,"seq":%d,"version":1}}`,
+	raw := fmt.Sprintf(`{"id":"evt_live%d","created":%d,"type":"session.text.ended","data":{"sessionID":%q,"assistantMessageID":"msg_live",`+
+		`"ordinal":0,"text":"live line %d"},"durable":{"aggregateID":%q,"seq":%d,"version":1}}`,
 		m.seq, m.at.UnixMilli(), m.ocid, m.seq, m.ocid, m.seq)
+	contract.CheckEventFrame(t, []byte(raw))
 	_, err := st.Conversations().PutEvents(ctx, []store.Event{{
 		ID: store.NewID(m.at), OrgID: m.sess.OrgID, SessionID: m.sess.ID, ConversationID: m.conv,
 		Source: store.SourceOpenCode, Seq: m.seq, Name: "session.text.ended", Text: fmt.Sprintf("live line %d", m.seq), At: m.at, Raw: []byte(raw),

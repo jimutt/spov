@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/jimutt/spov/internal/opencode"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 	"github.com/jimutt/spov/internal/telemetry"
 )
@@ -17,21 +18,18 @@ func stopFrame(t *testing.T, source store.EventSource, payload map[string]any) s
 	if err != nil {
 		t.Fatal(err)
 	}
-	frame := map[string]any{
-		"type": EventInboxEnqueued,
-		"data": map[string]any{
-			"sessionID": "ses_1",
-			"item": map[string]any{
-				"type":    "synthetic",
-				"payload": map[string]any{"text": opencode.LoopStoppedMarker + " " + string(p)},
-			},
+	data, err := json.Marshal(map[string]any{
+		"sessionID": "ses_1", "inboxID": "msg_stop",
+		"item": map[string]any{
+			"type":     "synthetic",
+			"payload":  map[string]any{"text": opencode.LoopStoppedMarker + " " + string(p)},
+			"delivery": "queue",
 		},
-	}
-	raw, err := json.Marshal(frame)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return store.Event{Source: source, Name: EventInboxEnqueued, Raw: raw}
+	return store.Event{Source: source, Name: EventInboxEnqueued, Raw: contract.Event(t, EventInboxEnqueued, 1, string(data))}
 }
 
 // A run the plugin ended on a repeated denial opens its verdict with the

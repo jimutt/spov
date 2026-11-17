@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/auth"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -14,13 +15,13 @@ import (
 // data.requestID.
 func (f *followFixture) putAsk(t *testing.T, name, id string) {
 	t.Helper()
-	raw := `{"type":"` + name + `","data":{"id":"` + id + `","sessionID":"ses"}}`
+	data := `{"id":"` + id + `","sessionID":"ses","action":"shell","resources":["ls"]}`
 	if name == eventPermissionReplied {
-		raw = `{"type":"` + name + `","data":{"sessionID":"ses","requestID":"` + id + `","reply":"once"}}`
+		data = `{"sessionID":"ses","requestID":"` + id + `","reply":"once"}`
 	}
 	ev := store.Event{
 		ID: store.NewID(time.Now()), OrgID: f.job.OrgID, SessionID: f.job.SessionID,
-		ConversationID: f.conv, Source: store.SourceEphemeral, Name: name, At: time.Now(), Raw: []byte(raw),
+		ConversationID: f.conv, Source: store.SourceEphemeral, Name: name, At: time.Now(), Raw: contract.Event(t, name, 0, data),
 	}
 	if _, err := f.st.Conversations().PutEvents(context.Background(), []store.Event{ev}); err != nil {
 		t.Fatal(err)

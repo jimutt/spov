@@ -8,15 +8,16 @@ import (
 	"github.com/jimutt/spov/internal/store"
 )
 
-// Frames in the shape spike S-SA1 measured at the pin: a subagent's
-// session.created names its parent, and a root's names none.
+// Frames in the shape spike S-SA1 measured, with the data.location the
+// 2.3.0 document requires of session.created: a subagent's names its
+// parent, and a root's names none.
 const (
 	rootCreated = `{"id":"evt_1bc9866100013xf4x4q6LthqVA","created":1794165466640,"type":"session.created",` +
-		`"location":{"directory":"/workspace"},"data":{"sessionID":"ses_root0000000000000000000","slug":"crisp-forest",` +
+		`"location":{"directory":"/workspace"},"data":{"sessionID":"ses_root0000000000000000000","slug":"crisp-forest","location":{"directory":"/workspace"},` +
 		`"version":"2.2.5","projectID":"7eb7","subpath":""},` +
 		`"durable":{"aggregateID":"ses_root0000000000000000000","seq":0,"version":1}}`
 	childCreated = `{"id":"evt_1bc9869af001rQ6eLthN0avb1q","created":1794165467567,"type":"session.created",` +
-		`"location":{"directory":"/workspace"},"data":{"sessionID":"ses_child000000000000000000","slug":"lucky-orchid",` +
+		`"location":{"directory":"/workspace"},"data":{"sessionID":"ses_child000000000000000000","slug":"lucky-orchid","location":{"directory":"/workspace"},` +
 		`"version":"2.2.5","projectID":"7eb7","parentID":"ses_root0000000000000000000","subpath":"",` +
 		`"title":"probe child fg","agent":"general","model":{"id":"m","providerID":"probe","variant":"default"}},` +
 		`"durable":{"aggregateID":"ses_child000000000000000000","seq":0,"version":1}}`
@@ -60,10 +61,10 @@ func TestASubagentsCreatedFrameRecordsItsParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "attach", func() bool { _, _, s, _ := f.sb.counts(); return s == 1 })
-	f.sb.stream <- rootCreated
-	f.sb.stream <- childCreated
-	f.sb.stream <- childEnqueued
-	f.sb.stream <- childStarted
+	f.sb.send(rootCreated)
+	f.sb.send(childCreated)
+	f.sb.send(childEnqueued)
+	f.sb.send(childStarted)
 	waitFor(t, "the child's frames", func() bool { return len(f.openCodeEvents()) == 2 })
 	child, ok := f.conversationOf(t, "ses_child000000000000000000")
 	if !ok || child.ParentOpenCodeID != "ses_root0000000000000000000" {
@@ -93,8 +94,8 @@ func TestAConversationFirstSeenMidLogIsReadOnceForItsParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "attach", func() bool { _, _, s, _ := f.sb.counts(); return s == 1 })
-	f.sb.stream <- childEnqueued
-	f.sb.stream <- childStarted
+	f.sb.send(childEnqueued)
+	f.sb.send(childStarted)
 	waitFor(t, "the child's frames", func() bool { return len(f.openCodeEvents()) == 2 })
 	child, _ := f.conversationOf(t, "ses_child000000000000000000")
 	if child.ParentOpenCodeID != "ses_root0000000000000000000" || child.Title != "probe child fg" || len(child.Info) == 0 {
@@ -118,7 +119,7 @@ func TestAFailedReadLeavesARootThatTheNextCatchUpCorrects(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "attach", func() bool { _, _, s, _ := f.sb.counts(); return s == 1 })
-	f.sb.stream <- childEnqueued
+	f.sb.send(childEnqueued)
 	waitFor(t, "the child's frame", func() bool { return len(f.openCodeEvents()) == 1 })
 	if child, _ := f.conversationOf(t, "ses_child000000000000000000"); !child.IsRoot() {
 		t.Fatalf("with no read the child is %+v, want a root", child)
