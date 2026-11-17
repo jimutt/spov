@@ -132,6 +132,13 @@
   ],
   "google": [
    {
+    "id": "gemini-4-hydrogen",
+    "name": "Gemini 4 Hydrogen",
+    "released": "2026-11-12",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
     "id": "gemini-4-carbon",
     "name": "Gemini 4 Carbon",
     "released": "2026-11-10",
@@ -357,6 +364,14 @@
     "output": 262144
    },
    {
+    "id": "mistral-large-latest",
+    "name": "Mistral Large (latest)",
+    "released": "2026-10-06",
+    "beta": true,
+    "context": 1048576,
+    "output": 262144
+   },
+   {
     "id": "zai-glm-5-3-flash",
     "name": "GLM-5.3-Flash",
     "released": "2026-08-26",
@@ -410,7 +425,7 @@
     "name": "Ministral 3 3B",
     "released": "2025-12-02",
     "context": 131072,
-    "output": 262144
+    "output": 131072
    },
    {
     "id": "ministral-8b-2512",
@@ -443,13 +458,6 @@
    {
     "id": "mistral-large-2512",
     "name": "Mistral Large 3",
-    "released": "2024-11-01",
-    "context": 262144,
-    "output": 262144
-   },
-   {
-    "id": "mistral-large-latest",
-    "name": "Mistral Large (latest)",
     "released": "2024-11-01",
     "context": 262144,
     "output": 262144
@@ -725,6 +733,20 @@
   ],
   "opencode": [
    {
+    "id": "hy4-flash-free",
+    "name": "Hy4 flash Free",
+    "released": "2026-11-16",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
+    "id": "gemini-4-hydrogen",
+    "name": "Gemini 4 Hydrogen",
+    "released": "2026-11-12",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
     "id": "gemini-4-carbon",
     "name": "Gemini 4 Carbon",
     "released": "2026-11-10",
@@ -772,13 +794,6 @@
     "released": "2026-10-21",
     "context": 262144,
     "output": 65536
-   },
-   {
-    "id": "minimax-m3.1-flash-free",
-    "name": "MiniMax M3.1 Flash Free",
-    "released": "2026-10-19",
-    "context": 1000000,
-    "output": 512000
    },
    {
     "id": "deepseek-v4.1-flash",
@@ -1002,7 +1017,7 @@
     "name": "Kimi K3",
     "released": "2026-07-16",
     "context": 1048576,
-    "output": 131072
+    "output": 1048576
    },
    {
     "id": "gpt-5.6-luna",
@@ -1336,6 +1351,20 @@
   ],
   "opencode-go": [
    {
+    "id": "hy4-flash-free",
+    "name": "Hy4 flash Free",
+    "released": "2026-11-16",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
+    "id": "qwen4-max",
+    "name": "Qwen4 Max",
+    "released": "2026-11-16",
+    "context": 1000000,
+    "output": 262144
+   },
+   {
     "id": "hy4",
     "name": "Hy4",
     "released": "2026-11-04",
@@ -1361,7 +1390,7 @@
     "name": "Kimi K3.1 Pro",
     "released": "2026-10-23",
     "context": 1048576,
-    "output": 131072
+    "output": 1048576
    },
    {
     "id": "minimax-m3.1-flash",
@@ -1487,7 +1516,7 @@
     "name": "Kimi K3",
     "released": "2026-07-16",
     "context": 1048576,
-    "output": 131072
+    "output": 1048576
    },
    {
     "id": "gpt-5.6-luna",
@@ -1562,6 +1591,34 @@
   ],
   "openrouter": [
    {
+    "id": "qwen/qwen4-max",
+    "name": "Qwen4 Max",
+    "released": "2026-11-16",
+    "context": 1000000,
+    "output": 131072
+   },
+   {
+    "id": "tencent/hy4-flash",
+    "name": "Hy4 flash",
+    "released": "2026-11-16",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
+    "id": "inclusionai/ling-3.2-flash:free",
+    "name": "Ling 3.2 Flash (free)",
+    "released": "2026-11-13",
+    "context": 1048576,
+    "output": 262144
+   },
+   {
+    "id": "google/gemini-4-hydrogen",
+    "name": "Gemini 4 Hydrogen",
+    "released": "2026-11-12",
+    "context": 1048576,
+    "output": 943718
+   },
+   {
     "id": "baidu/ernie-5.5-flash-preview:free",
     "name": "ERNIE-5.5-Flash-Preview (free)",
     "released": "2026-11-10",
@@ -1618,6 +1675,20 @@
     "output": 8192
    },
    {
+    "id": "kt/midm-k-3.0-pro",
+    "name": "Mi:dm K 3.0 Pro",
+    "released": "2026-11-05",
+    "context": 261795,
+    "output": 235615
+   },
+   {
+    "id": "thinkingmachines/inkling-2-small",
+    "name": "Inkling 2 Small",
+    "released": "2026-11-05",
+    "context": 1048576,
+    "output": 943718
+   },
+   {
     "id": "thinkingmachines/inkling-2-small:free",
     "name": "Inkling 2 Small (free)",
     "released": "2026-11-05",
@@ -1639,6 +1710,13 @@
     "output": 65536
    },
    {
+    "id": "motif-technologies/motif-3",
+    "name": "Motif 3",
+    "released": "2026-11-02",
+    "context": 262144,
+    "output": 235929
+   },
+   {
     "id": "z-ai/glm-5.3-flashx-legal",
     "name": "GLM 5.3 FlashX Legal",
     "released": "2026-11-02",
@@ -1648,6 +1726,13 @@
    {
     "id": "particle-ai/particle-1",
     "name": "Particle-1",
+    "released": "2026-10-28",
+    "context": 1048576,
+    "output": 131072
+   },
+   {
+    "id": "particle-ai/particle-1:free",
+    "name": "Particle-1 (free)",
     "released": "2026-10-28",
     "context": 1048576,
     "output": 131072
@@ -1692,7 +1777,7 @@
     "name": "DeepSeek V4.1 Flash 1017",
     "released": "2026-10-17",
     "context": 1048576,
-    "output": 393216
+    "output": 943718
    },
    {
     "id": "elorian/glimpse",
@@ -1713,14 +1798,14 @@
     "name": "Muse Spark Open",
     "released": "2026-10-15",
     "context": 1048576,
-    "output": 262144
+    "output": 943718
    },
    {
     "id": "nvidia/nemotron-3.5-super-vl",
     "name": "Nemotron 3.5 Super VL",
     "released": "2026-10-15",
     "context": 1048576,
-    "output": 943718
+    "output": 235929
    },
    {
     "id": "nvidia/nemotron-3.5-super-vl:free",
@@ -2160,7 +2245,7 @@
     "id": "qwen/qwen3.8-27b",
     "name": "Qwen3.8 27B",
     "released": "2026-08-14",
-    "context": 1048575,
+    "context": 1024000,
     "output": 235929
    },
    {
@@ -2199,24 +2284,10 @@
     "output": 450000
    },
    {
-    "id": "liquid/lfm-2.5-2.6b",
-    "name": "LFM2.5-2.6B",
-    "released": "2026-08-11",
-    "context": 128000,
-    "output": 8192
-   },
-   {
-    "id": "liquid/lfm-2.5-2.6b:free",
-    "name": "LFM2.5-2.6B (free)",
-    "released": "2026-08-11",
-    "context": 65536,
-    "output": 8192
-   },
-   {
     "id": "nvidia/nemotron-3.5-lightning",
     "name": "Nemotron 3.5 Lightning 30B A3B",
     "released": "2026-08-11",
-    "context": 262144,
+    "context": 1048576,
     "output": 235929
    },
    {
@@ -2231,7 +2302,7 @@
     "name": "Muse Glimmer 30B",
     "released": "2026-08-10",
     "context": 131072,
-    "output": 16384
+    "output": 117964
    },
    {
     "id": "inclusionai/ling-3.0-tiny",
@@ -2273,7 +2344,7 @@
     "name": "DeepSeek V4 Flash 0731",
     "released": "2026-07-31",
     "context": 1048576,
-    "output": 943718
+    "output": 384000
    },
    {
     "id": "thinkingmachines/inkling-small",
@@ -2462,7 +2533,7 @@
     "name": "Nemotron 3 Ultra 550B A55B",
     "released": "2026-06-04",
     "context": 262144,
-    "output": 182520
+    "output": 16384
    },
    {
     "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
@@ -2602,7 +2673,7 @@
     "name": "Gemini Flash Latest",
     "released": "2026-04-27",
     "context": 1048576,
-    "output": 65536
+    "output": 943718
    },
    {
     "id": "~google/gemini-pro-latest",
@@ -2637,7 +2708,7 @@
     "name": "DeepSeek V4 Pro",
     "released": "2026-04-24",
     "context": 1048576,
-    "output": 384000
+    "output": 393216
    },
    {
     "id": "openai/gpt-5.5",
@@ -2721,14 +2792,14 @@
     "name": "GLM-5.1",
     "released": "2026-04-07",
     "context": 204800,
-    "output": 131072
+    "output": 182476
    },
    {
     "id": "google/gemma-4-26b-a4b-it",
     "name": "Gemma 4 26B A4B IT",
     "released": "2026-04-02",
     "context": 262144,
-    "output": 128000
+    "output": 235929
    },
    {
     "id": "google/gemma-4-26b-a4b-it:free",
@@ -2903,7 +2974,7 @@
     "name": "Qwen3.5 397B-A17B",
     "released": "2026-02-15",
     "context": 262144,
-    "output": 64000
+    "output": 81920
    },
    {
     "id": "bytedance-seed/seed-2.0-lite",
@@ -2923,8 +2994,8 @@
     "id": "minimax/minimax-m2.5",
     "name": "MiniMax-M2.5",
     "released": "2026-02-12",
-    "context": 200000,
-    "output": 128000
+    "context": 198000,
+    "output": 176947
    },
    {
     "id": "z-ai/glm-5",
@@ -2962,18 +3033,11 @@
     "output": 8000
    },
    {
-    "id": "stepfun/step-3.5-flash",
-    "name": "Step 3.5 Flash",
-    "released": "2026-01-29",
-    "context": 262144,
-    "output": 65536
-   },
-   {
     "id": "moonshotai/kimi-k2.5",
     "name": "Kimi K2.5",
     "released": "2026-01-27",
     "context": 262144,
-    "output": 65536
+    "output": 235929
    },
    {
     "id": "z-ai/glm-4.7-flash",
@@ -3092,7 +3156,7 @@
     "name": "DeepSeek Chat",
     "released": "2025-12-01",
     "context": 163840,
-    "output": 16384
+    "output": 16000
    },
    {
     "id": "deepseek/deepseek-v3.2",
@@ -3177,13 +3241,6 @@
     "released": "2025-10-06",
     "context": 128000,
     "output": 16384
-   },
-   {
-    "id": "qwen/qwen3-vl-30b-a3b-thinking",
-    "name": "Qwen3 VL 30B A3B Thinking",
-    "released": "2025-10-06",
-    "context": 262144,
-    "output": 235929
    },
    {
     "id": "qwen/qwen3-vl-30b-a3b-instruct",
@@ -3421,7 +3478,7 @@
     "name": "Qwen3 14B",
     "released": "2025-04-28",
     "context": 40960,
-    "output": 36864
+    "output": 16384
    },
    {
     "id": "qwen/qwen3-30b-a3b",
@@ -3597,6 +3654,13 @@
     "released": "2024-07-24",
     "context": 131072,
     "output": 104857
+   },
+   {
+    "id": "meta-llama/llama-3.1-70b-instruct",
+    "name": "Llama-3.1-70B-Instruct",
+    "released": "2024-07-23",
+    "context": 131072,
+    "output": 8192
    },
    {
     "id": "meta-llama/llama-3.1-8b-instruct",
@@ -3828,6 +3892,7 @@
    "minimax-m2.1-free",
    "minimax-m2.5-free",
    "minimax-m3-free",
+   "minimax-m3.1-flash-free",
    "muse-spark-1.2-contributor-free",
    "muse-spark-1.3-contributor-free",
    "nemotron-3-super-free",
@@ -3864,5 +3929,5 @@
    "z-ai/glm-4.5"
   ]
  },
- "as_of": "2026-11-12T00:00:00Z"
+ "as_of": "2026-11-17T00:00:00Z"
 }
