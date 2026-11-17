@@ -380,7 +380,7 @@
             <span class="text-sm text-rust" data-testid="service-account-deleted">{deletedText(a, now)}</span>
           {/if}
         </div>
-        <p class="m-0 mt-0.5 text-sm text-soft break-all" data-testid="service-account-author">
+        <p class="m-0 mt-0.5 text-sm text-soft [overflow-wrap:anywhere]" data-testid="service-account-author">
           {a.git_name} &lt;{a.git_email}&gt;
         </p>
         <p class="m-0 mt-0.5 text-sm text-soft" data-testid="service-account-use">
@@ -516,7 +516,7 @@
                 {#each tokens as t (t.id)}
                   <li class="border-t border-rule py-2" data-testid="service-token">
                     <span class="font-semibold text-ink break-all">{t.name}</span>
-                    <p class="m-0 mt-0.5 text-sm text-soft break-all">
+                    <p class="m-0 mt-0.5 text-sm text-soft [overflow-wrap:anywhere]">
                       Issued {dayText(t.created_at, now)} by {issuerText(t)} · {expiryText(t, now)} · {lastUsedText(
                         t.last_used_at,
                         now,
