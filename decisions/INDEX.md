@@ -2,6 +2,10 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-146 | The job plugin's tools stop when OpenCode aborts their call, and an aborted completion is withdrawn | proposed | opencode | opencode-2-3, opencode, plugin, completion |
+| DL-145 | Event frames in tests and probes are checked against the schemas the pinned OpenCode publishes | proposed | opencode | opencode-2-3, opencode, contract |
+| DL-144 | Every subagent call is a background call, and the session page says when only subagents are working | proposed | web | opencode-2-3, web, subagents |
+| DL-143 | A job ends whatever subagents still run, and its loop waits for a running subagent instead of continuing | proposed | jobs | opencode-2-3, jobs, plugin, subagents, completion |
 | DL-142 | Administrators manage service accounts on the Settings page | accepted | web | service-accounts, settings, admin, tokens |
 | DL-141 | A service account's tokens are issued and revoked by an admin | accepted | server | pipeline-jobs, service-accounts, auth, tokens, admin |
 | DL-140 | Service accounts: an admin-created account with no sign-in | accepted | server | pipeline-jobs, service-accounts, auth, admin, access |
