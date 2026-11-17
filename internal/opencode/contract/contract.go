@@ -1,8 +1,9 @@
-// Package contract checks the requests spov sends to an OpenCode server
-// against the OpenAPI document the pinned build publishes. Only tests
-// import it; scripts/opencode-contract.sh refreshes the document.
+// Package contract checks the requests spov sends to an OpenCode server,
+// and the event frames tests build, against the OpenAPI document the
+// pinned build publishes. Only tests import it;
+// scripts/opencode-contract.sh refreshes the document.
 //
-// @decision(DL-035)
+// @decision(DL-035) @decision(DL-145)
 package contract
 
 import (
@@ -74,6 +75,9 @@ type Document struct {
 	ops     []operation
 	schemas map[string]any
 	used    []Operation
+	// unions caches each event union's types, built on first use.
+	unionsMu sync.Mutex
+	unions   map[string]*eventTypes
 }
 
 type operation struct {

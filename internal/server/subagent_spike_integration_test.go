@@ -310,6 +310,7 @@ type capturedFrame struct {
 
 func captureFrames(ctx context.Context, t *testing.T, conn Connection) *capturedFrames {
 	t.Helper()
+	audit := auditEvents(t)
 	body, err := openSandboxEvents(ctx, conn)
 	if err != nil {
 		t.Fatal(err)
@@ -318,6 +319,7 @@ func captureFrames(ctx context.Context, t *testing.T, conn Connection) *captured
 	c := &capturedFrames{start: time.Now()}
 	go func() {
 		_ = readSSEFrames(ctx, body, func(raw string) bool {
+			audit.frame(raw)
 			var frame map[string]any
 			if json.Unmarshal([]byte(raw), &frame) != nil {
 				return true

@@ -67,6 +67,19 @@ func TestIntegrationSTR1TranscriptImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("the first server holds %d messages: %s", len(stored), probeRoles(stored))
+	// Every item of the first server's durable log is in the shape its
+	// document gives a log item.
+	//
+	// @decision(DL-145)
+	logged, err := sandboxGet(ctx, a.URL+"/api/experimental/session/"+url.PathEscape(id)+"/log?after=0&follow=false", a.Token, a.User, a.Password)
+	if err != nil {
+		t.Fatalf("reading the first server's log: %v", err)
+	}
+	logAudit := auditLog(t)
+	for _, frame := range logFrames(logged) {
+		raw, _ := json.Marshal(frame)
+		logAudit.frame(string(raw))
+	}
 
 	// The second server, a fresh home: the conversation is imported from
 	// the stored messages alone, as the store keeps them.
@@ -187,6 +200,7 @@ func watchSeqs(ctx context.Context, t *testing.T, conn Connection, id string) fu
 		t.Fatalf("event stream: %v", err)
 	}
 	t.Cleanup(func() { _ = body.Close() })
+	audit := auditEvents(t)
 	var mu sync.Mutex
 	var lo, hi int64
 	go func() {
@@ -194,7 +208,11 @@ func watchSeqs(ctx context.Context, t *testing.T, conn Connection, id string) fu
 		sc.Buffer(make([]byte, 1<<20), 16<<20)
 		for sc.Scan() {
 			line, ok := strings.CutPrefix(sc.Text(), "data: ")
-			if !ok || !strings.Contains(line, id) {
+			if !ok {
+				continue
+			}
+			audit.frame(line)
+			if !strings.Contains(line, id) {
 				continue
 			}
 			var frame map[string]any

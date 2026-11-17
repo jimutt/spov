@@ -508,6 +508,7 @@ var boringFrames = regexp.MustCompile(`\.(delta|streamed)$`)
 
 func followRawFrames(ctx context.Context, t *testing.T, conn Connection) *rawFrames {
 	t.Helper()
+	audit := auditEvents(t)
 	body, err := openSandboxEvents(ctx, conn)
 	if err != nil {
 		t.Fatalf("opening the event stream: %v", err)
@@ -516,6 +517,7 @@ func followRawFrames(ctx context.Context, t *testing.T, conn Connection) *rawFra
 	p := &rawFrames{}
 	go func() {
 		_ = readSSEFrames(ctx, body, func(raw string) bool {
+			audit.frame(raw)
 			var frame map[string]any
 			if json.Unmarshal([]byte(raw), &frame) != nil {
 				return true
@@ -1126,6 +1128,7 @@ func TestIntegrationSF1Asks(t *testing.T) {
 // frame, for the ask spike.
 func followRawFramesAll(ctx context.Context, t *testing.T, conn Connection) *rawFrames {
 	t.Helper()
+	audit := auditEvents(t)
 	body, err := openSandboxEvents(ctx, conn)
 	if err != nil {
 		t.Fatalf("opening the event stream: %v", err)
@@ -1134,6 +1137,7 @@ func followRawFramesAll(ctx context.Context, t *testing.T, conn Connection) *raw
 	p := &rawFrames{}
 	go func() {
 		_ = readSSEFrames(ctx, body, func(raw string) bool {
+			audit.frame(raw)
 			var frame map[string]any
 			if json.Unmarshal([]byte(raw), &frame) != nil {
 				return true
