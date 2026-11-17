@@ -61,6 +61,13 @@
      */
     inFlight: boolean;
     /**
+     * How many subagents are working, which the status line says once
+     * the agent's own turn is over.
+     *
+     * @decision(DL-144)
+     */
+    working?: number;
+    /**
      * How many turns the page has seen end (`turnsEnded`), which tells
      * the interrupt's outcome when it no longer describes the last turn.
      *
@@ -92,7 +99,7 @@
     onJobChanged?: () => void | Promise<void>;
   }
 
-  const { ref, jobKnown, jobState, jobId, inFlight, turnsEnded = 0, asking = false, model, onEcho, onJobChanged }: Props = $props();
+  const { ref, jobKnown, jobState, jobId, inFlight, working = 0, turnsEnded = 0, asking = false, model, onEcho, onJobChanged }: Props = $props();
 
   let text = $state('');
   // What follows this message on a running job. Back to continue after
@@ -161,8 +168,9 @@
   // they do behind its (i).
   //
   // @decision(DL-059)
-  const status = $derived(composerStatus(jobState, inFlight, asking));
-  const explained = $derived(controlsNote(jobState, stoppable, releasable));
+  const status = $derived(composerStatus(jobState, inFlight, asking, working));
+  // @decision(DL-144)
+  const explained = $derived(controlsNote(jobState, stoppable, releasable, inFlight ? 0 : working));
   let controlsOpen = $state(false);
   // Whether the options a phone folds away are open.
   //

@@ -51,6 +51,7 @@
     stopNote,
     timeDividers,
     trimBlankLines,
+    unlistedSessions,
   } from '../lib/timeline';
   import type { Conversation } from '../lib/timeline';
   import { Tail, atBottom } from '../lib/tail';
@@ -101,7 +102,7 @@
     watchesForAResume,
   } from '../lib/resume';
   import { currentModel } from '../lib/modelpick';
-  import { stateMark, stateWord as subagentWord } from '../lib/subagent';
+  import { stateMark, stateWord as subagentWord, subagentsWord, subagentsWorking } from '../lib/subagent';
   import {
     agentOf,
     askingSessions,
@@ -240,6 +241,18 @@
     const ctl = new AbortController();
     void loadTranscript(ctl.signal);
     return () => ctl.abort();
+  });
+
+  // A frame of a session no conversation names, once they have been
+  // read, reads them again, once per session: a subagent started after
+  // the read is then a child. `asked` is not state, so it cannot loop.
+  //
+  // @decision(DL-144) @decision(DL-111)
+  const asked = new Set<string>();
+  $effect(() => {
+    if (!readTranscript || unlistedSessions(activity, conversations, asked).length === 0) return;
+    const ctl = new AbortController();
+    untrack(() => void loadTranscript(ctl.signal));
   });
 
   // Batches a burst of replayed frames into one update on the following
@@ -388,6 +401,12 @@
   // @decision(DL-111)
   const inFlight = $derived(turnInFlight(activity, children));
   const turnsSeenEnded = $derived(turnsEnded(activity, children));
+  // Subagents still working, from the cards already drawn, said while
+  // the agent's own turn is over.
+  //
+  // @decision(DL-144)
+  const working = $derived(subagentsWorking(timelines));
+  const subagentsShown = $derived(!inFlight && working > 0 ? ` · ${subagentsWord(working)}` : '');
   const openWarnings = $derived(shownWarnings(warnings, blocks.length));
 
   // Runs the reader opened, by the run's stable key. Expanding reads
@@ -1243,6 +1262,7 @@
         <Composer
           {ref}
           {inFlight}
+          {working}
           turnsEnded={turnsSeenEnded}
           {asking}
           {model}
@@ -1420,7 +1440,10 @@
         <section>
           <h2 class="m-0 mb-2 flex flex-wrap items-baseline justify-between gap-x-2 text-base font-semibold">
             <span>{kindName(job.kind)} job</span>
-            <StateMark class="text-md font-normal" mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial, job.sync?.held)} />
+            <!-- @decision(DL-144) -->
+            <span data-testid="job-state"
+              ><StateMark class="text-md font-normal" mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial, job.sync?.held) + subagentsShown} /></span
+            >
           </h2>
           <!-- @decision(DL-049) -->
           {#if jobClock?.endsAt}

@@ -43,6 +43,26 @@ export function childIds(conversations: readonly Conversation[]): ReadonlySet<st
 }
 
 /**
+ * unlistedSessions is the sessions the log names that no conversation
+ * does and `asked` does not hold yet, which it then holds: the page reads
+ * the conversations again for each, so a subagent started after they were
+ * read becomes a child.
+ *
+ * @decision(DL-144) @decision(DL-111)
+ */
+export function unlistedSessions(activity: readonly Activity[], conversations: readonly Conversation[], asked: Set<string>): string[] {
+  const listed = new Set(conversations.map((c) => c.id));
+  const out: string[] = [];
+  for (const ev of activity) {
+    const id = ev.session ?? "";
+    if (!id || listed.has(id) || asked.has(id)) continue;
+    asked.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/**
  * One frame of the log. It is the stream's event unchanged: the store
  * numbers it, so the page no longer needs an arrival counter of its own.
  *
@@ -801,6 +821,21 @@ export function buildTimelines(
 
   const children = new Map<string, Entry[]>();
   const labels = new Map<string, string>();
+  // The frames of a child a call names that no conversation lists as one
+  // (a log from before parentage, or a subagent started after the read):
+  // its own frames still say how it is going, though it is drawn as a
+  // root's until the conversations are read again.
+  //
+  // @decision(DL-144)
+  const unlisted = new Map<string, Activity[] | undefined>();
+  const unlistedFrames = (id: string): Activity[] | undefined => {
+    if (!id || kids.has(id)) return undefined;
+    if (!unlisted.has(id)) {
+      const mine = activity.filter((e) => e.session === id);
+      unlisted.set(id, mine.length ? mine : undefined);
+    }
+    return unlisted.get(id);
+  };
 
   // place draws the subagents of one list: a card for each call to a
   // subagent tool, at that call, and one for each child no call claims,
@@ -836,7 +871,7 @@ export function buildTimelines(
         call: call?.call ?? "",
         title: label,
         agent: call?.agent ?? "",
-        state: subagentState(conv ? byChild.get(conv.id) : undefined, call, ended),
+        state: subagentState(conv ? (byChild.get(conv.id) ?? []) : unlistedFrames(call?.child ?? ""), call, ended),
         calls: plain.filter((e) => e.calls).length,
         summary: runSummary(plain),
         latest: latestAction(plain),

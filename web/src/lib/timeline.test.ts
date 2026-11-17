@@ -28,11 +28,15 @@ import {
 import {
   BackgroundChild,
   BackgroundRoot,
+  Call,
   Child,
   ChildPrompt,
+  ForegroundChild,
   Root,
   backgroundConversations,
   backgroundLog,
+  foregroundConversations,
+  foregroundLog,
   subagentConversations,
   subagentLog,
 } from './subagent.fixture';
@@ -1108,7 +1112,7 @@ describe('a subagent', () => {
     const at = main.indexOf(row);
     expect(main.slice(at + 1).some((e) => e.kind === 'message' && e.role === 'assistant')).toBe(true);
     expect(main.filter((e) => e.kind === 'event' && e.call && e.key.startsWith('e')).map((e) => e.key)).toEqual([]);
-    expect(row.kind === 'subagent' && row.call).toBe('call_1794165467525768415');
+    expect(row.kind === 'subagent' && row.call).toBe(Call);
     // And none of its work is anywhere else in the main list.
     expect(main.filter((e) => e.kind === 'event' && e.key === 'e17')).toHaveLength(0);
   });
@@ -1168,8 +1172,10 @@ describe('a subagent', () => {
     expect(wordsOf(buildTimeline(subagentConversations, [...subagentLog, ...stray]))).toContain('hello from nowhere');
     // Nor does a log with no parentage at all change: every frame is a
     // root's, and the call that started a subagent is a card with no
-    // child behind it.
-    const lone = buildTimeline(asRoots, subagentLog).filter((e) => e.kind === 'subagent');
+    // child behind it. Such a log was recorded before parentage (DL-110),
+    // so at 2.2.5.
+    const legacyRoots = foregroundConversations.map(({ parent: _parent, ...c }) => c);
+    const lone = buildTimeline(legacyRoots, foregroundLog).filter((e) => e.kind === 'subagent');
     expect(lone.map((e) => e.kind === 'subagent' && [e.id, e.state, e.title])).toEqual([['', 'done', 'Review the retry change']]);
   });
 
@@ -1224,7 +1230,7 @@ describe('a subagent card', () => {
   test('says what the child is, how it went and what it concluded', () => {
     const card = only(buildTimeline(subagentConversations, subagentLog));
     expect(card).toMatchObject({
-      key: 'sub:call_1794165467525768415',
+      key: `sub:${Call}`,
       id: Child,
       title: 'Review the retry change',
       agent: 'general',
@@ -1247,13 +1253,46 @@ describe('a subagent card', () => {
   });
 
   test('while the call runs it is paired with the child begun inside its span, and shows its latest action', () => {
-    // The result that names the child has not arrived: the child began
-    // at position 11, inside the call's span from 7.
-    const live = upTo(subagentLog, 18);
+    // Recorded at 2.2.5, whose call waited for its child: the result
+    // that names the child has not arrived, and the child began at
+    // position 11, inside the call's span from 7.
+    const live = upTo(foregroundLog, 18);
     expect(live.some((e) => e.child)).toBe(false);
-    const card = only(buildTimeline(subagentConversations, live));
-    expect(card).toMatchObject({ id: Child, state: 'running', calls: 1 });
+    const card = only(buildTimeline(foregroundConversations, live));
+    expect(card).toMatchObject({ id: ForegroundChild, state: 'running', calls: 1 });
     expect(card.latest).toBe('glob internal/client/*.go');
+  });
+
+  test('a session recorded at 2.2.5, whose call waited for its child, still draws its card', () => {
+    // @decision(DL-144)
+    const card = only(buildTimeline(foregroundConversations, foregroundLog));
+    expect(card).toMatchObject({
+      key: 'sub:call_1794165467525768415',
+      id: ForegroundChild,
+      title: 'Review the retry change',
+      state: 'done',
+      calls: 1,
+    });
+    expect(card.final).toMatch(/^The retry change is safe to merge\./);
+  });
+
+  test("at 2.3.0 the call returns at once and the card follows the child's own frames", () => {
+    // @decision(DL-144)
+    const success = subagentLog.find((e) => e.name === 'session.tool.success' && e.session === Root)!;
+    expect(success.child).toBe(Child);
+    // Before the child's first frame the card is starting; its call's
+    // success says nothing, the child's own frames do.
+    expect(only(buildTimeline(subagentConversations, upTo(subagentLog, 10))).state).toBe('starting');
+    expect(only(buildTimeline(subagentConversations, upTo(subagentLog, success.pos))).state).toBe('running');
+    // The parent's turn has ended (23) and the child is still working.
+    const working = only(buildTimeline(subagentConversations, upTo(subagentLog, 30)));
+    expect(working).toMatchObject({ id: Child, state: 'running', latest: 'glob internal/client/*.go' });
+    expect(only(buildTimeline(subagentConversations, upTo(subagentLog, 36))).state).toBe('done');
+    // Before the conversations are read again the child is not listed as
+    // one, and its own frames still say how it is going.
+    const roots = subagentConversations.filter((c) => !c.parent);
+    expect(only(buildTimeline(roots, upTo(subagentLog, 30))).state).toBe('running');
+    expect(only(buildTimeline(roots, subagentLog)).state).toBe('done');
   });
 
   test('is a card in a delegating state before there is a child', () => {
@@ -1263,12 +1302,18 @@ describe('a subagent card', () => {
   });
 
   test('is the same card from the first frame of its call to the last, so it keeps its place and its open state', () => {
-    const keys = new Set<string>();
-    for (const pos of [7, 8, 9, 11, 18, 26, 32]) {
-      const convs = pos < 11 ? subagentConversations.filter((c) => !c.parent) : subagentConversations;
-      keys.add(only(buildTimeline(convs, upTo(subagentLog, pos))).key);
+    const cases = [
+      { convs: subagentConversations, log: subagentLog, at: [8, 9, 10, 12, 13, 23, 30, 36, 45], childFrom: 12, key: `sub:${Call}` },
+      { convs: foregroundConversations, log: foregroundLog, at: [7, 8, 9, 11, 18, 26, 32], childFrom: 11, key: 'sub:call_1794165467525768415' },
+    ];
+    for (const c of cases) {
+      const keys = new Set<string>();
+      for (const pos of c.at) {
+        const convs = pos < c.childFrom ? c.convs.filter((v) => !v.parent) : c.convs;
+        keys.add(only(buildTimeline(convs, upTo(c.log, pos))).key);
+      }
+      expect([...keys]).toEqual([c.key]);
     }
-    expect([...keys]).toEqual(['sub:call_1794165467525768415']);
   });
 
   test('a background child is named by the call that returned at once, and runs on after it', () => {

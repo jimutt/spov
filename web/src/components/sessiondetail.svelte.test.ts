@@ -210,7 +210,7 @@ const stub = vi.hoisted(() => {
 });
 
 import SessionDetail from "./SessionDetail.svelte";
-import { Child, subagentConversations, subagentLog } from "../lib/subagent.fixture";
+import { Child, foregroundConversations, foregroundLog, subagentConversations, subagentLog } from "../lib/subagent.fixture";
 import { callFrames, childEnd, childStart } from "../lib/subagent.frames";
 
 beforeEach(() => {
@@ -511,14 +511,14 @@ describe("an ask on the session page", () => {
 
 describe("a subagent on the session page", () => {
   // The measured log of a session whose agent ran a subagent, replayed
-  // through the page. The child's turn ends (pos 25) while the root's is
-  // still running.
+  // through the page. In the one recorded at 2.2.5 the child's turn ends
+  // (pos 25) while the root's is still running.
   //
   // @decision(DL-111) @decision(DL-059)
   it("keeps Stop drawn while a child's turn ends, and never draws its prompt as the reader's", async () => {
-    stub.withConversations(subagentConversations);
+    stub.withConversations(foregroundConversations);
     const page = await open();
-    for (const ev of subagentLog.filter((e) => e.pos <= 25)) stub.say(ev);
+    for (const ev of foregroundLog.filter((e) => e.pos <= 25)) stub.say(ev);
     await settle();
     expect(page.stop(), "a subagent's turn ending took Stop away from the root's").not.toBeNull();
     expect(page.said()).not.toContain("You are a subagent spawned");
@@ -532,9 +532,47 @@ describe("a subagent on the session page", () => {
     expect(bubbles).toHaveLength(1);
 
     // The root's own ending still takes it away.
-    for (const ev of subagentLog.filter((e) => e.pos > 25)) stub.say(ev);
+    for (const ev of foregroundLog.filter((e) => e.pos > 25)) stub.say(ev);
     await settle();
     expect(page.stop()).toBeNull();
+    page.done();
+  });
+
+  // At 2.3.0 the root's turn ends (pos 23) while the child works (to 36).
+  //
+  // @decision(DL-144)
+  it("says a subagent is working once the agent's own turn has ended, and offers no Interrupt for it", async () => {
+    stub.withJob("running");
+    stub.withConversations(subagentConversations);
+    const page = await open();
+    for (const ev of subagentLog.filter((e) => e.pos <= 30)) stub.say(ev);
+    await settle();
+    expect(page.control("composer-status")?.textContent).toContain("1 subagent working");
+    expect(page.stop(), "Interrupt was drawn for a subagent").toBeNull();
+    expect(page.control("job-state")?.textContent).toContain("1 subagent working");
+    page.control("composer-controls-info")?.querySelector("button")?.click();
+    await settle();
+    expect(page.control("composer-resume-note")?.textContent).toContain("read when the agent's next turn starts");
+
+    for (const ev of subagentLog.filter((e) => e.pos > 30)) stub.say(ev);
+    await settle();
+    expect(page.said()).not.toContain("subagent working");
+    page.done();
+  });
+
+  // The child's conversation did not exist when the page read them.
+  //
+  // @decision(DL-144) @decision(DL-111)
+  it("reads the conversations again for a subagent started after the page opened", async () => {
+    stub.withConversations(subagentConversations.filter((c) => !c.parent));
+    const page = await open();
+    stub.withConversations(subagentConversations);
+    for (const ev of subagentLog.filter((e) => e.pos <= 30)) stub.say(ev);
+    await settle();
+    await settle();
+    expect(page.target.querySelector('[data-testid="subagent"]')?.getAttribute("data-state")).toBe("running");
+    expect(page.control("composer-status")?.textContent).toContain("1 subagent working");
+    expect(page.said()).not.toContain("You are a subagent spawned");
     page.done();
   });
 });
@@ -605,7 +643,7 @@ describe("a subagent's card on the session page", () => {
   it("is running while the child works, with what it did last", async () => {
     stub.withConversations(subagentConversations);
     const page = await open();
-    for (const ev of subagentLog.filter((e) => e.pos <= 18)) stub.say(ev);
+    for (const ev of subagentLog.filter((e) => e.pos <= 30)) stub.say(ev);
     await settle();
     expect(card(page).getAttribute("data-state")).toBe("running");
     expect(card(page).textContent).toContain("Running");
@@ -954,8 +992,8 @@ describe("a subagent's own view", () => {
     }
     await settle();
     const drawn = () => (page.said().match(/line \d+ said/g) ?? []).length;
-    // The conversation's two messages and the card are blocks too.
-    expect(drawn()).toBe(197);
+    // The conversation's four messages and the card are blocks too.
+    expect(drawn()).toBe(195);
     page.control("transcript-earlier")!.click();
     await settle();
     expect(drawn()).toBe(250);
@@ -966,8 +1004,8 @@ describe("a subagent's own view", () => {
     find(page, "subagent-back")!.dispatchEvent(plain());
     await settle();
     // Not the 250 the reader had opened: the newest window again.
-    expect(drawn()).toBe(197);
-    expect(page.control("transcript-earlier")?.textContent).toContain("Show earlier (53 more)");
+    expect(drawn()).toBe(195);
+    expect(page.control("transcript-earlier")?.textContent).toContain("Show earlier (55 more)");
     page.done();
   });
 
