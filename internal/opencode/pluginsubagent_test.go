@@ -98,7 +98,8 @@ func TestOnlyTheJobsOwnRunningChildrenHoldTheLoop(t *testing.T) {
 //
 // @decision(DL-143)
 func TestTheHoldEndsAtTheSubagentWait(t *testing.T) {
-	run := driveEventsPaced(t, []string{holdStarted, kidCreated, kidStarted, holdSucceeded}, "", 30, withSubagentWait(40))
+	kidWorking := `{ type: "session.tool.called", data: { sessionID: "ses_kid", id: "call_k" } }`
+	run := driveEventsPaced(t, []string{holdStarted, kidCreated, kidStarted, holdSucceeded, kidWorking}, "", 30, withSubagentWait(90))
 	got := continuations(run)
 	if len(got) != 1 {
 		t.Fatalf("at the wait the plugin sent %v, want one continuation", got)
@@ -115,6 +116,112 @@ func TestTheHoldEndsAtTheSubagentWait(t *testing.T) {
 	run = driveEventsPaced(t, []string{holdStarted, kidCreated, kidStarted, holdSucceeded, kidDone, holdStarted}, "", 30, withSubagentWait(120))
 	if got := continuations(run); len(got) != 0 {
 		t.Errorf("the wait sent %v though a turn of the job's had started", got)
+	}
+	if ended := evidenceNamed(run, "continue.wait.ended"); len(ended) != 1 || ended[0]["reason"] != "turn-started" {
+		t.Errorf("continue.wait.ended = %v, want the wait to have run out on a started turn", ended)
+	}
+}
+
+// A pause, a stop or a takeover that came during the hold leaves the
+// wait with nothing to send when it runs out.
+//
+// @decision(DL-143) @decision(DL-052)
+func TestTheWaitSendsNothingOnceTheLoopIsPausedStoppedOrTakenOver(t *testing.T) {
+	held := []string{holdStarted, kidCreated, kidStarted, holdSucceeded}
+	for _, c := range []struct {
+		name, command string
+		events        []string
+	}{
+		{"a pause", "pause", held},
+		{"a stop", "stop", held},
+		{"a takeover", "", append(append([]string{}, held...), holdHuman, holdHumanDelivered)},
+	} {
+		run := driveEventsWith(t, eventDrive{events: c.events, command: c.command, gapMs: 30, edit: withSubagentWait(400), tailMs: 500})
+		if got := continuations(run); len(got) != 0 {
+			t.Errorf("%s: the wait sent %v", c.name, got)
+		}
+		if ended := evidenceNamed(run, "continue.wait.ended"); len(ended) != 1 || ended[0]["reason"] != "not-running" {
+			t.Errorf("%s: continue.wait.ended = %v, want one saying the loop was not running", c.name, ended)
+		}
+	}
+}
+
+// A child's report to the job ends its part in the hold, whether or not
+// its own turn's end was seen; and a child that never showed a frame
+// during the hold is dropped when the wait runs out.
+//
+// @decision(DL-143)
+func TestAChildThatReportedOrWentQuietNoLongerHoldsTheLoop(t *testing.T) {
+	run := driveEvents(t, []string{holdStarted, kidCreated, holdSucceeded, kidReport, holdStarted, holdSucceeded}, "")
+	if n := len(evidenceNamed(run, "continue.waiting")); n != 1 {
+		t.Errorf("%d holds, want one: the report did not end the child's part", n)
+	}
+	if len(continuations(run)) != 1 {
+		t.Errorf("after the report's turn the plugin sent %v, want one continuation", continuations(run))
+	}
+
+	// Created, never started, and silent: dropped at the wait, so the
+	// next turn end continues at once.
+	run = driveEventsWith(t, eventDrive{events: []string{holdStarted, kidCreated, holdSucceeded}, gapMs: 30, edit: withSubagentWait(40), tailMs: 100})
+	if got := evidenceNamed(run, "subagent.dropped"); len(got) != 1 {
+		t.Errorf("subagent.dropped = %v, want the silent child dropped", got)
+	}
+	if got := continuations(run); len(got) != 1 || strings.Contains(got[0]["text"].(string), "Still running") {
+		t.Errorf("at the wait the plugin sent %v, want one ordinary continuation", got)
+	}
+}
+
+// The plugin's subscription can begin after a child's session.created as
+// well as after the job's opening: the child's prompt, its own `user`
+// item, is then the first frame. The job's session is learned from
+// OpenCode's own record of each session (ctx.session.get), which names a
+// child's parent, so the child is never taken for the job (S-SA3).
+//
+// @decision(DL-143) @decision(DL-052) @decision(DL-054)
+func TestTheJobsSessionIsLearnedFromWhatOpenCodeSaysOfIt(t *testing.T) {
+	kidPrompt := `{ type: "session.inbox.enqueued", data: { sessionID: "ses_kid", inboxID: "msg_k",` +
+		` item: { type: "user", payload: { text: "You are a subagent spawned by another session." }, delivery: "steer" } } }`
+	kidDelivered := `{ type: "session.inbox.delivered", data: { sessionID: "ses_kid", inboxID: "msg_k" } }`
+	run := driveEvents(t, []string{kidPrompt, kidStarted, kidDelivered, kidDone, kidReport, holdStarted, holdSucceeded}, "")
+	if len(evidenceNamed(run, "loop.held")) != 0 {
+		t.Errorf("a subagent's prompt took the job over: %v", run.Evidence)
+	}
+	if got := continuations(run); len(got) != 1 || got[0]["sessionID"] != "ses_test" {
+		t.Errorf("the plugin sent %v, want one continuation of the job's session", got)
+	}
+	learned := evidenceNamed(run, "session.learned")
+	if len(learned) != 1 || learned[0]["from"] != "info" {
+		t.Errorf("session.learned = %v, want it learned from the session's info", learned)
+	}
+	// A grandchild first: its parent's parent is the job's.
+	grandkidPrompt := strings.ReplaceAll(kidPrompt, "ses_kid", "ses_grandkid")
+	run = driveEvents(t, []string{grandkidPrompt, grandkidStarted, holdStarted, holdSucceeded}, "")
+	if got := continuations(run); len(got) != 1 || got[0]["sessionID"] != "ses_test" || len(evidenceNamed(run, "loop.held")) != 0 {
+		t.Errorf("after a grandchild's frames the plugin sent %v; evidence %v", got, run.Evidence)
+	}
+	// A child the plugin never saw created still holds the loop while it
+	// runs, once OpenCode says whose it is.
+	run = driveEvents(t, []string{holdStarted, kidStarted, holdSucceeded}, "")
+	if len(evidenceNamed(run, "continue.waiting")) != 1 || len(continuations(run)) != 0 {
+		t.Errorf("a running child the plugin saw no created frame for did not hold the loop: %v", run.Evidence)
+	}
+}
+
+// On a build whose plugin context cannot read a session, a person's
+// takeover of a session not yet known to be the job's is kept for it and
+// acted on once it is.
+//
+// @decision(DL-143) @decision(DL-052)
+func TestATakeoverBeforeTheJobsSessionIsKnownWaitsForIt(t *testing.T) {
+	run := driveEventsWith(t, eventDrive{events: []string{holdHuman, holdHumanDelivered, holdStarted, holdSucceeded}, noLookup: true})
+	if len(evidenceNamed(run, "loop.held")) != 1 || len(run.Synth) != 0 {
+		t.Errorf("a takeover seen before the job's session was known did not hold it: %v", run.Evidence)
+	}
+	other := strings.ReplaceAll(holdHuman, `sessionID: "ses_test"`, `sessionID: "ses_kid"`)
+	otherDelivered := strings.ReplaceAll(holdHumanDelivered, `sessionID: "ses_test"`, `sessionID: "ses_kid"`)
+	run = driveEventsWith(t, eventDrive{events: []string{kidCreated, other, otherDelivered, holdStarted, holdSucceeded}, noLookup: true})
+	if len(evidenceNamed(run, "loop.held")) != 0 {
+		t.Errorf("a child's item held the job: %v", run.Evidence)
 	}
 }
 
@@ -149,6 +256,10 @@ func TestThePluginIsGivenTheSubagentWait(t *testing.T) {
 	}
 	if !strings.Contains(cfg.SubagentWaitNote, "{n}") {
 		t.Errorf("the wait's sentence has no place for the count: %q", cfg.SubagentWaitNote)
+	}
+	// The wait counts from the turn's end, and the sentence says so.
+	if !strings.Contains(cfg.SubagentWaitNote, "10 minutes after your last turn ended") {
+		t.Errorf("the wait's sentence does not say what the ten minutes count from: %q", cfg.SubagentWaitNote)
 	}
 }
 

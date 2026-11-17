@@ -1100,6 +1100,8 @@ components:
           type: string
         name:
           type: string
+        parent:
+          type: string
         pos:
           format: int64
           type: integer

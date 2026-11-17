@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/jimutt/spov/internal/jobs"
 	"github.com/jimutt/spov/internal/store"
@@ -67,4 +69,39 @@ func replaceOnce(s, old, new string) string {
 		}
 	}
 	panic("replaceOnce: " + old + " is not in the text")
+}
+
+// Each event of a subagent's conversation carries that conversation's
+// parent, so a client learns a child from the log itself; a root's
+// carries none.
+//
+// @decision(DL-144) @decision(DL-111)
+func TestTheLogSaysWhoseChildAnEventsConversationIs(t *testing.T) {
+	f := newAPIFixture(t)
+	f.srv.streamLifetime = time.Hour
+	f.srv.heartbeat = time.Hour
+	sess := seedSession(t, f, "01ARZ3NDEKTSV4RRFFQ69G5FAV", "mine", store.StateRunning)
+	root := seedConversation(t, f, sess, "ses_root", "root")
+	child, err := f.store.Conversations().UpsertConversation(context.Background(), store.Conversation{
+		ID: store.NewID(seedTime()), OrgID: sess.OrgID, SessionID: sess.ID, OpenCodeID: "ses_kid", ParentOpenCodeID: "ses_root",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, conv := range []store.Conversation{root, child} {
+		seedEvent(t, f, store.Event{
+			OrgID: sess.OrgID, SessionID: sess.ID, ConversationID: conv.ID,
+			Source: store.SourceOpenCode, Seq: int64(i + 1), Name: "session.execution.started", At: recordedAt,
+			Raw: []byte(`{"type":"session.execution.started","data":{"sessionID":"` + conv.OpenCodeID + `"},"durable":{"aggregateID":"x","seq":1,"version":1}}`),
+		})
+	}
+	got := map[string]string{}
+	for _, ev := range runLog(t, f, &logInput{Ref: "mine"}) {
+		if l, ok := ev.(LogEvent); ok && l.Name == "session.execution.started" {
+			got[l.Session] = l.Parent
+		}
+	}
+	if len(got) != 2 || got["ses_kid"] != "ses_root" || got["ses_root"] != "" {
+		t.Errorf("the log's parents are %v, want ses_kid's to be ses_root and the root's none", got)
+	}
 }

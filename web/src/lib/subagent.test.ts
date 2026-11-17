@@ -12,7 +12,7 @@ import {
   type SubagentState,
 } from './subagent';
 import { callFrames, childEnd, childStart, frame } from './subagent.frames';
-import { buildTimelines, unlistedSessions, type Conversation } from './timeline';
+import { buildTimelines, recordingStopped, type Conversation } from './timeline';
 import { Root, subagentConversations, subagentLog } from './subagent.fixture';
 
 /**
@@ -259,21 +259,21 @@ describe('subagents still working', () => {
     expect(subagentsWorking(buildTimelines(convs, done, [], false))).toBe(2);
   });
 
+  test('are none once the recording has stopped, since no frame of theirs will come', () => {
+    // @decision(DL-144) @decision(DL-131)
+    const working = subagentLog.filter((e) => e.pos <= 30);
+    const stopped = { name: 'spov.recorder.stopped', source: 'spov', at: '2026-11-17T22:08:44Z', pos: 31 } as const;
+    expect(recordingStopped(working)).toBe(false);
+    expect(recordingStopped([...working, stopped])).toBe(true);
+    // A recording that went on after the marker has not stopped.
+    expect(recordingStopped([...working, stopped, frame(Root, 32, 'session.execution.started')])).toBe(false);
+    const t = buildTimelines(subagentConversations, [...working, stopped], [], false);
+    expect(subagentsWorking(t)).toBe(1);
+    expect(subagentsWorking(t, true)).toBe(0);
+  });
+
   test('are said in words', () => {
     expect(subagentsWord(1)).toBe('1 subagent working');
     expect(subagentsWord(3)).toBe('3 subagents working');
-  });
-});
-
-describe('a session the page holds no conversation for', () => {
-  // @decision(DL-144) @decision(DL-111)
-  test('is named once, so the page reads the conversations again for it', () => {
-    const convs: Conversation[] = [{ id: 'ses_root', messages: [] }];
-    const asked = new Set<string>();
-    const log = [frame('ses_root', 1, 'session.execution.started'), frame('ses_new', 2, 'session.execution.started'), frame('', 3, 'session.x')];
-    expect(unlistedSessions(log, convs, asked)).toEqual(['ses_new']);
-    expect(unlistedSessions(log, convs, asked)).toEqual([]);
-    expect(unlistedSessions([...log, frame('ses_other', 4, 'session.created')], convs, asked)).toEqual(['ses_other']);
-    expect(unlistedSessions(log, [...convs, { id: 'ses_new', parent: 'ses_root' }], new Set())).toEqual([]);
   });
 });

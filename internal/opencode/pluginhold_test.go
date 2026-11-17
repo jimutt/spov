@@ -44,6 +44,30 @@ func driveEvents(t *testing.T, events []string, command string) resumeRun {
 // plugin that acts on a timer, and edit applied to the rendered source.
 func driveEventsPaced(t *testing.T, events []string, command string, gapMs int, edit func(string) string) resumeRun {
 	t.Helper()
+	return driveEventsWith(t, eventDrive{events: events, command: command, gapMs: gapMs, edit: edit})
+}
+
+// eventDrive is one run of driveEventsWith.
+type eventDrive struct {
+	events  []string
+	command string
+	gapMs   int
+	edit    func(string) string
+	// noLookup makes ctx.session.get fail, as on a build without it.
+	noLookup bool
+	// afterMs is how long the harness waits before the command, past
+	// the events, and tailMs how long after it.
+	afterMs, tailMs int
+}
+
+// harnessParents is each test session's parent as ctx.session.get
+// answers it (the measured shape: Session.Info, parentID absent for a
+// root); a session not named is a root.
+const harnessParents = `{ ses_kid: "ses_test", ses_kid2: "ses_test", ses_grandkid: "ses_kid", ses_sub: "ses_test", ses_x: "ses_else" }`
+
+func driveEventsWith(t *testing.T, d eventDrive) resumeRun {
+	t.Helper()
+	events, command, gapMs, edit := d.events, d.command, d.gapMs, d.edit
 	runtime := jsRuntime(t)
 
 	dir := t.TempDir()
@@ -81,8 +105,17 @@ const __subscription = {
     }
   },
 }
+const __parents = ` + harnessParents + `
 const __ctx = {
-  session: { hook: () => {}, synthetic: async (msg) => { __synth.push(msg) } },
+  session: {
+    hook: () => {},
+    synthetic: async (msg) => { __synth.push(msg) },
+    get: async (arg) => {
+      if (` + strconv.FormatBool(d.noLookup) + `) throw new Error("no session.get")
+      const id = arg?.sessionID
+      return __parents[id] ? { id, parentID: __parents[id] } : { id }
+    },
+  },
   permission: { hook: () => {} },
   command: { transform: (fn) => fn({ add: (def) => { __command = def } }) },
   tool: { transform: () => {} },
@@ -90,11 +123,12 @@ const __ctx = {
 }
 
 await __spovDefault.setup(__ctx)
-await new Promise((r) => setTimeout(r, 50 + ` + strconv.Itoa(2*gapMs*len(events)) + `))
+await new Promise((r) => setTimeout(r, 50 + ` + strconv.Itoa(2*gapMs*len(events)+d.afterMs) + `))
 if (` + jsonString(t, command) + ` !== "") {
   await __command.execute({ sessionID: "ses_test", prompt: { text: ` + jsonString(t, command) + ` } })
   await new Promise((r) => setTimeout(r, 50))
 }
+await new Promise((r) => setTimeout(r, ` + strconv.Itoa(d.tailMs) + `))
 __fs.writeFileSync(` + jsonString(t, synthOut) + `, JSON.stringify(__synth))
 console.log("SPOV_TEST done")
 process.exit(0)

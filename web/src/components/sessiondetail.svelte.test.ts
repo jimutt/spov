@@ -62,6 +62,7 @@ const stub = vi.hoisted(() => {
   const held: (() => void)[] = [];
   const deleted: string[] = [];
   let jobReads = 0;
+  let messageReads = 0;
   let deleteAnswer: { status: number; problem?: Record<string, unknown> } = { status: 204 };
   const fetched = vi.fn(async (input: RequestInfo | URL) => {
     const req = input instanceof Request ? input : new Request(String(input));
@@ -106,7 +107,10 @@ const stub = vi.hoisted(() => {
         { status: 200, headers: { "content-type": "text/event-stream" } },
       );
     }
-    if (url.pathname.endsWith("/messages")) return json({ conversations });
+    if (url.pathname.endsWith("/messages")) {
+      messageReads++;
+      return json({ conversations });
+    }
     if (url.pathname === "/api/v1/jobs/j1/file") {
       const path = url.searchParams.get("path") ?? "";
       files.push(path);
@@ -139,6 +143,7 @@ const stub = vi.hoisted(() => {
     posted: () => posted,
     deleted: () => deleted,
     jobReads: () => jobReads,
+    messageReads: () => messageReads,
     refuseDelete: (status: number, problem: Record<string, unknown>) =>
       (deleteAnswer = { status, problem }),
     setSession: (fields: Record<string, unknown>) => (session = fields),
@@ -151,6 +156,7 @@ const stub = vi.hoisted(() => {
       deleted.splice(0, deleted.length);
       deleteAnswer = { status: 204 };
       jobReads = 0;
+      messageReads = 0;
       credentials = undefined;
       resume = undefined;
       session = {};
@@ -560,16 +566,17 @@ describe("a subagent on the session page", () => {
     page.done();
   });
 
-  // The child's conversation did not exist when the page read them.
+  // The child's conversation did not exist when the page read them; the
+  // log says whose child it is.
   //
   // @decision(DL-144) @decision(DL-111)
-  it("reads the conversations again for a subagent started after the page opened", async () => {
+  it("learns a subagent started after the page opened from the log, reading the conversations once", async () => {
     stub.withConversations(subagentConversations.filter((c) => !c.parent));
     const page = await open();
-    stub.withConversations(subagentConversations);
     for (const ev of subagentLog.filter((e) => e.pos <= 30)) stub.say(ev);
     await settle();
     await settle();
+    expect(stub.messageReads()).toBe(1);
     expect(page.target.querySelector('[data-testid="subagent"]')?.getAttribute("data-state")).toBe("running");
     expect(page.control("composer-status")?.textContent).toContain("1 subagent working");
     expect(page.said()).not.toContain("You are a subagent spawned");

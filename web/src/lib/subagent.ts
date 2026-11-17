@@ -246,11 +246,16 @@ export function subagentState(
 /**
  * subagentsWorking counts the subagents, at any depth, that are running
  * or starting, from the cards a timeline drew: the main list's and each
- * child's own. A session that has ended has none, as its cards say.
+ * child's own. A session that has ended has none, as its cards say, and
+ * nor has one whose recording stopped (`stopped`).
  *
  * @decision(DL-144)
  */
-export function subagentsWorking(t: { entries: readonly Entry[]; children: ReadonlyMap<string, readonly Entry[]> }): number {
+export function subagentsWorking(
+  t: { entries: readonly Entry[]; children: ReadonlyMap<string, readonly Entry[]> },
+  stopped = false,
+): number {
+  if (stopped) return 0;
   let n = 0;
   const count = (list: readonly Entry[]) => {
     for (const e of list) if (e.kind === "subagent" && (e.state === "running" || e.state === "starting")) n++;

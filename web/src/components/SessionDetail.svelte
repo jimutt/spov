@@ -51,7 +51,8 @@
     stopNote,
     timeDividers,
     trimBlankLines,
-    unlistedSessions,
+    withLoggedChildren,
+    recordingStopped,
   } from '../lib/timeline';
   import type { Conversation } from '../lib/timeline';
   import { Tail, atBottom } from '../lib/tail';
@@ -150,12 +151,16 @@
   // proxy over a long conversation makes every read of it a trap.
   //
   // @decision(DL-070)
-  let conversations = $state.raw<Conversation[]>([]);
+  let read = $state.raw<Conversation[]>([]);
   let warnings = $state<string[]>([]);
   let transcriptError = $state<unknown>(undefined);
   let readTranscript = $state(false);
   // @decision(DL-058) @decision(DL-070)
   let activity = $state.raw<LogEvent[]>([]);
+  // The conversations read, and any subagent the log has named since.
+  //
+  // @decision(DL-144)
+  const conversations = $derived(withLoggedChildren(read, activity));
   let connected = $state(true);
   // @decision(DL-018)
   let tailEnded = $state(false);
@@ -227,7 +232,7 @@
         await api.GET('/api/v1/sessions/{ref}/messages', { params: { path: { ref } }, signal }),
       );
       if (signal.aborted || mine !== reading) return;
-      conversations = (body?.conversations ?? []) as Conversation[];
+      read = (body?.conversations ?? []) as Conversation[];
       warnings = body?.warnings ?? [];
       transcriptError = undefined;
       readTranscript = true;
@@ -241,18 +246,6 @@
     const ctl = new AbortController();
     void loadTranscript(ctl.signal);
     return () => ctl.abort();
-  });
-
-  // A frame of a session no conversation names, once they have been
-  // read, reads them again, once per session: a subagent started after
-  // the read is then a child. `asked` is not state, so it cannot loop.
-  //
-  // @decision(DL-144) @decision(DL-111)
-  const asked = new Set<string>();
-  $effect(() => {
-    if (!readTranscript || unlistedSessions(activity, conversations, asked).length === 0) return;
-    const ctl = new AbortController();
-    untrack(() => void loadTranscript(ctl.signal));
   });
 
   // Batches a burst of replayed frames into one update on the following
@@ -405,7 +398,7 @@
   // the agent's own turn is over.
   //
   // @decision(DL-144)
-  const working = $derived(subagentsWorking(timelines));
+  const working = $derived(subagentsWorking(timelines, recordingStopped(activity)));
   const subagentsShown = $derived(!inFlight && working > 0 ? ` · ${subagentsWord(working)}` : '');
   const openWarnings = $derived(shownWarnings(warnings, blocks.length));
 

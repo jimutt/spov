@@ -37,7 +37,7 @@ import (
 //     of the parent once the parent's turn has ended, then of the child;
 //   - D: the same with the parent's own turn still in `probe_wait`.
 //
-// A and B are asserted; C and D are logged. No Modal, no key.
+// A, B and ctx.session.get's answers are asserted; C and D logged.
 //
 //	SPOV_PROBE=1 go test -tags integration ./internal/server/ -run SSA3 -v
 //
@@ -206,6 +206,25 @@ func TestIntegrationSSA3WhatAPluginSeesOfASubagent(t *testing.T) {
 			t.Logf("inbox of %s: %s", e.Session, clip(e.Raw, 700))
 		}
 	}
+	// The job plugin learns its session from ctx.session.get, which
+	// answers Session.Info for {sessionID} and names a child's parent.
+	lookups := map[string]pluginSaw{}
+	for _, e := range log() {
+		if e.Info == "object" {
+			lookups[e.Session] = e
+		}
+	}
+	if l, ok := lookups[childA]; !ok || l.Parent != a.id || l.ID != childA {
+		t.Errorf("ctx.session.get did not name the child's parent: %+v", l)
+	}
+	if l, ok := lookups[a.id]; !ok || l.Parent != "" || l.ID != a.id || l.Error != "" {
+		t.Errorf("ctx.session.get did not answer the root as one: %+v", l)
+	}
+	for _, e := range log() {
+		if e.Info != "" || e.Hook != "" {
+			t.Logf("lookup %s hook %s session %s parent %q id %v keys %v error %s", e.Info, e.Hook, e.Session, e.Parent, e.ID, e.Keys, e.Error)
+		}
+	}
 	t.Logf("model requests:\n%s", model.log())
 	if os.Getenv("SPOV_SA3_FRAMES") != "" {
 		t.Logf("wire frames:\n%s", frames.summary())
@@ -242,10 +261,28 @@ export default {
         },
       })
     })
+    try {
+      ctx.session.hook("context", (event) => {
+        log({ hook: "context", session: event?.sessionID ?? null, keys: Object.keys(event ?? {}).sort() })
+      })
+    } catch (e) { log({ hook: "context", error: String(e) }) }
+    const looked = new Set()
+    const lookUp = async (id) => {
+      if (!id || looked.has(id)) return
+      looked.add(id)
+      for (const [form, arg] of [["id", id], ["object", { sessionID: id }]]) {
+        try {
+          const info = await ctx.session.get(arg)
+          log({ info: form, session: id, parent: info?.parentID ?? info?.data?.parentID ?? null,
+            keys: Object.keys(info ?? {}).sort(), id: info?.id ?? info?.data?.id ?? null })
+        } catch (e) { log({ info: form, session: id, error: String(e).slice(0, 300) }) }
+      }
+    }
     ;(async () => {
       for await (const ev of ctx.event.subscribe()) {
         const type = ev?.type ?? ev?.event
         const data = ev?.data ?? ev?.properties ?? {}
+        await lookUp(data?.sessionID)
         const entry = { event: type, session: data?.sessionID ?? null, keys: Object.keys(ev ?? {}).sort() }
         if (type === "session.created") entry.parent = data?.parentID ?? data?.info?.parentID ?? null
         if (typeof type === "string" && type.startsWith("session.execution.")) entry.reason = data?.reason ?? null
@@ -260,6 +297,10 @@ export default {
 
 // pluginSaw is one line the observing plugin wrote.
 type pluginSaw struct {
+	Info          string   `json:"info"`
+	Hook          string   `json:"hook"`
+	Error         string   `json:"error"`
+	ID            any      `json:"id"`
 	At            int64    `json:"at"`
 	Event         string   `json:"event"`
 	Session       string   `json:"session"`
@@ -628,8 +669,10 @@ func TestIntegrationSSA3TheLoopWaitsForItsSubagent(t *testing.T) {
 		}
 	}
 	t.Logf("the job's model requests, in order: %v", answers)
-	want := []string{"subagent", "called", "read the report", opencode.CompletionTool, "called"}
-	if !slices.Equal(slices.DeleteFunc(answers, func(a string) bool { return a == "title" }), want) {
+	// The answer to the completion's own result may come after the stop.
+	want := []string{"subagent", "called", "read the report", opencode.CompletionTool}
+	answers = slices.DeleteFunc(answers, func(a string) bool { return a == "title" })
+	if len(answers) < len(want) || !slices.Equal(answers[:len(want)], want) {
 		t.Errorf("the job's requests were %v, want %v: a continuation went out while the subagent ran, or none after its report", answers, want)
 	}
 	waiting := j.evidence("continue.waiting")

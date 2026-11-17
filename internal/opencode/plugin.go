@@ -467,7 +467,7 @@ const SubagentNote = "Subagents run in the background and report back to you on 
 // plugin puts the count of subagents still running in place of {n}.
 //
 // @decision(DL-143)
-var subagentWaitNote = fmt.Sprintf(" Still running after %d minutes without a report: {n}. "+
+var subagentWaitNote = fmt.Sprintf(" Still running without a report %d minutes after your last turn ended: {n}. "+
 	"Carry on with work that does not need them, or end your response to wait for their reports.",
 	int(SubagentWait/time.Minute))
 

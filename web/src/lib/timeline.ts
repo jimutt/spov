@@ -49,24 +49,45 @@ export function childIds(conversations: readonly Conversation[]): ReadonlySet<st
   return new Set(conversations.filter((c) => c.parent).map((c) => c.id));
 }
 
+/** The marker the recorder writes when it stops recording a session (DL-131). */
+export const RecordingStopped = "spov.recorder.stopped";
+
 /**
- * unlistedSessions is the sessions the log names that no conversation
- * does and `asked` does not hold yet, which it then holds: the page reads
- * the conversations again for each, so a subagent started after they were
- * read becomes a child.
+ * recordingStopped says the session's recording has stopped: spov's
+ * marker is the last thing the log holds from anyone but spov, so no
+ * frame of the sandbox's will follow it.
+ *
+ * @decision(DL-144) @decision(DL-131)
+ */
+export function recordingStopped(activity: readonly Activity[]): boolean {
+  for (let i = activity.length - 1; i >= 0; i--) {
+    const ev = activity[i];
+    if (ev.source === "spov" && ev.name === RecordingStopped) return true;
+    if (ev.source !== "spov") return false;
+  }
+  return false;
+}
+
+/**
+ * withLoggedChildren is the conversations plus one for each subagent the
+ * log names that they do not list: the server puts each event's
+ * conversation's parent on the log, so a child started after the
+ * conversations were read is one at once, with no second read. The
+ * same array when there is none to add.
  *
  * @decision(DL-144) @decision(DL-111)
  */
-export function unlistedSessions(activity: readonly Activity[], conversations: readonly Conversation[], asked: Set<string>): string[] {
-  const listed = new Set(conversations.map((c) => c.id));
-  const out: string[] = [];
+export function withLoggedChildren(conversations: Conversation[], activity: readonly Activity[]): Conversation[] {
+  let listed: Set<string> | undefined;
+  let added: Conversation[] | undefined;
   for (const ev of activity) {
-    const id = ev.session ?? "";
-    if (!id || listed.has(id) || asked.has(id)) continue;
-    asked.add(id);
-    out.push(id);
+    if (!ev.parent || !ev.session) continue;
+    listed ??= new Set(conversations.map((c) => c.id));
+    if (listed.has(ev.session)) continue;
+    listed.add(ev.session);
+    (added ??= []).push({ id: ev.session, parent: ev.parent, messages: [] });
   }
-  return out;
+  return added ? [...conversations, ...added] : conversations;
 }
 
 /**
@@ -838,12 +859,11 @@ export function buildTimelines(
   const children = new Map<string, Entry[]>();
   const labels = new Map<string, string>();
   // The frames of a child a call names that no conversation lists as one
-  // (a log from before parentage, or a subagent started after the read):
-  // its own frames still say how it is going, though it is drawn as a
-  // root's until the conversations are read again.
+  // (a log from before parentage): its own frames still say how it is
+  // going, though they are drawn as a root's. Grouped by session once.
   //
   // @decision(DL-144)
-  const unlisted = new Map<string, Activity[] | undefined>();
+  let unlisted: Map<string, Activity[]> | undefined;
   // How each child last reported it ended, from its reports to its
   // parent, on the log or in the transcript.
   //
@@ -853,9 +873,14 @@ export function buildTimelines(
   for (const ev of activity) if (ev.report?.child) reported.set(ev.report.child, ev.report.state ?? "");
   const unlistedFrames = (id: string): Activity[] | undefined => {
     if (!id || kids.has(id)) return undefined;
-    if (!unlisted.has(id)) {
-      const mine = activity.filter((e) => e.session === id);
-      unlisted.set(id, mine.length ? mine : undefined);
+    if (!unlisted) {
+      unlisted = new Map();
+      for (const e of activity) {
+        if (!e.session || kids.has(e.session)) continue;
+        const list = unlisted.get(e.session);
+        if (list) list.push(e);
+        else unlisted.set(e.session, [e]);
+      }
     }
     return unlisted.get(id);
   };

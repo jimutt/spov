@@ -28,7 +28,9 @@ type abortRun struct {
 
 // driveCompletionScript renders a report job's plugin whose check is
 // check, runs setup(), and then script, which calls the completion tool
-// through `complete(context)` and may wait with `pause(ms)`.
+// through `complete(context)`, may run /spov-goal with `command(text)`,
+// deliver an event through the plugin's subscription with `push(event)`
+// and wait with `pause(ms)`.
 func driveCompletionScript(t *testing.T, check, script string) abortRun {
 	t.Helper()
 	runtime := jsRuntime(t)
@@ -47,15 +49,23 @@ func driveCompletionScript(t *testing.T, check, script string) abortRun {
 import * as __fs from "node:fs"
 const __synth = []
 let __tool = null
+let __command = null
+const __queue = []
+let __wake = null
+const push = (ev) => { __queue.push(ev); if (__wake) { __wake(); __wake = null } }
 const __ctx = {
-  session: { hook: () => {}, synthetic: async (msg) => { __synth.push(msg) } },
+  session: { hook: () => {}, synthetic: async (msg) => { __synth.push(msg) }, get: async (arg) => ({ id: arg?.sessionID }) },
   permission: { hook: () => {} },
-  command: { transform: () => {} },
+  command: { transform: (fn) => fn({ add: (def) => { __command = def } }) },
   tool: { transform: (fn) => fn({ add: (def) => { if (def.name === CONFIG.completionTool) __tool = def } }) },
-  event: { subscribe: () => ({ [Symbol.asyncIterator]: () => ({ next: async () => ({ done: true }) }) }) },
+  event: { subscribe: () => ({ [Symbol.asyncIterator]: () => ({ next: async () => {
+    while (__queue.length === 0) await new Promise((r) => { __wake = r })
+    return { value: __queue.shift(), done: false }
+  } }) }) },
 }
 await __spovDefault.setup(__ctx)
 const pause = (ms) => new Promise((r) => setTimeout(r, ms))
+const command = (text) => __command.execute({ sessionID: "ses_test", prompt: { text } })
 const complete = async (context) => {
   const r = await __tool.execute({ summary: "done" }, { sessionID: "ses_test", ...context })
   console.log("SPOV_TEST returned: " + JSON.stringify(r?.content ?? null))
@@ -187,25 +197,60 @@ await pause(50)
 	}
 }
 
-// A stop that arrived while the check ran, the wall clock's, is not the
-// call's to undo: it stands, and is announced with its own reason.
+// A stop that arrived while the check ran is not the call's to undo:
+// the wall clock's `bound` (then EndRun's interrupt) or a person's
+// `stop` stands, the declaration is recorded, the stop is announced
+// under its own reason, and the killed check is not run again.
 //
-// @decision(DL-146) @decision(DL-049)
-func TestAWithdrawnCompletionLeavesAnotherStopStanding(t *testing.T) {
-	run := driveCompletionScript(t, "sleep 1; exit 0", `
+// @decision(DL-146) @decision(DL-049) @decision(DL-050)
+func TestAStopThatCameDuringTheCheckStandsAndTheCheckRunsOnce(t *testing.T) {
+	for _, c := range []struct{ command, reason string }{{"bound", "wall-clock"}, {"stop", "stopped"}} {
+		run := driveCompletionScript(t, "echo ran >> runs; sleep 1; exit 0", `
 const ac = new AbortController()
-setTimeout(() => { loop.stopReason = "wall-clock"; ac.abort() }, 200)
+setTimeout(async () => { await command(`+jsonString(t, c.command)+`); ac.abort() }, 200)
 await complete({ signal: ac.signal })
 await pause(1500)
+console.log("SPOV_TEST runs: " + __fs.readFileSync("runs", "utf8").trim().split("\n").length)
 `)
-	if !run.LoopStopped {
-		t.Error("the wall clock's stop was undone by the withdrawn completion")
+		if !run.LoopStopped {
+			t.Errorf("%s: the stop was undone by the interrupted completion", c.command)
+		}
+		if m := run.markers(); len(m) != 1 || !strings.Contains(m[0], `"reason":"`+c.reason+`"`) {
+			t.Errorf("%s: the stop was announced as %v, want once as %s", c.command, m, c.reason)
+		}
+		if n := len(run.named("completion.declared")); n != 1 {
+			t.Errorf("%s: %d declarations recorded, want the call's summary kept", c.command, n)
+		}
+		if len(run.named("completion.interrupted")) != 0 {
+			t.Errorf("%s: the declaration was withdrawn though another stop stood", c.command)
+		}
+		if !strings.Contains(run.Stdout, "SPOV_TEST runs: 1") || len(run.named(CheckEvent)) != 0 || len(run.named("check.interrupted")) != 1 {
+			t.Errorf("%s: the check ran more than once, or its kill was not kept: %v\n%s", c.command, run.Evidence, run.Stdout)
+		}
 	}
-	if m := run.markers(); len(m) != 1 || !strings.Contains(m[0], `"reason":"wall-clock"`) {
-		t.Errorf("the stop that stands was announced as %v", m)
-	}
-	if len(run.named("completion.declared")) != 0 {
-		t.Errorf("the withdrawn completion was recorded as declared: %v", run.Evidence)
+}
+
+// A person's interrupt holds the loop whichever comes first, the abort
+// of the completion's call or the turn's interrupted frame.
+//
+// @decision(DL-146) @decision(DL-053)
+func TestAnInterruptDuringTheCheckHoldsTheLoopInEitherOrder(t *testing.T) {
+	interrupted := `{ type: "session.execution.interrupted", data: { sessionID: "ses_test", reason: "user" } }`
+	for name, order := range map[string]string{
+		"the frame first": `push(` + interrupted + `); await pause(50); ac.abort()`,
+		"the abort first": `ac.abort(); await pause(50); push(` + interrupted + `)`,
+	} {
+		run := driveCompletionScript(t, "sleep 1; exit 0", `
+push({ type: "session.execution.started", data: { sessionID: "ses_test" } })
+const ac = new AbortController()
+setTimeout(async () => { `+order+` }, 200)
+await complete({ signal: ac.signal })
+await pause(300)
+console.log("SPOV_TEST paused: " + String(loop.paused))
+`)
+		if run.LoopStopped || !strings.Contains(run.Stdout, "SPOV_TEST paused: true") {
+			t.Errorf("%s: the interrupt did not leave the job held by the person:\n%s", name, run.Stdout)
+		}
 	}
 }
 

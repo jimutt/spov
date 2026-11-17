@@ -206,6 +206,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.inbox.enqueued",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "role": "user",
     "message": "msg_1eb8e20940012UW255x7ax5jin",
@@ -233,6 +234,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.execution.started",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:43.179Z",
     "pos": 15
@@ -240,6 +242,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.instructions.updated",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:43.185Z",
     "pos": 16
@@ -247,6 +250,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.inbox.delivered",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "message": "msg_1eb8e20940012UW255x7ax5jin",
     "at": "2026-11-17T22:08:43.187Z",
@@ -298,6 +302,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.step.started",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:43.233Z",
     "pos": 24
@@ -305,6 +310,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.step.first-token",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:43.235Z",
     "pos": 25
@@ -312,6 +318,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.tool.input.started",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "call": "call_1794953323204335765",
     "tool": "glob",
@@ -321,6 +328,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.tool.input.ended",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "text": "{\"pattern\":\"internal/client/*.go\"}",
     "call": "call_1794953323204335765",
@@ -330,6 +338,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.tool.called",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "call": "call_1794953323204335765",
     "at": "2026-11-17T22:08:43.241Z",
@@ -338,6 +347,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.tool.success",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "call": "call_1794953323204335765",
     "at": "2026-11-17T22:08:44.958Z",
@@ -346,6 +356,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.step.ended",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:44.961Z",
     "pos": 30
@@ -353,6 +364,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.step.started",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:44.98Z",
     "pos": 31
@@ -360,6 +372,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.step.first-token",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:44.982Z",
     "pos": 32
@@ -367,6 +380,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.text.started",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:44.984Z",
     "pos": 33
@@ -374,6 +388,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.text.ended",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "text": "The retry change is safe to merge. Backoff is capped at 30 s and the context is checked before every attempt. I read internal/client/retry.go and retry_test.go.",
     "at": "2026-11-17T22:08:44.987Z",
@@ -382,6 +397,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.step.ended",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:44.992Z",
     "pos": 35
@@ -389,6 +405,7 @@ export const subagentLog: Activity[] = [
   {
     "name": "session.execution.succeeded",
     "session": "ses_e1471df72ffecZP6FsFzTsQbBa",
+    "parent": "ses_e1471e21effe4tvd6dRsbSyJeb",
     "source": "opencode",
     "at": "2026-11-17T22:08:44.995Z",
     "pos": 36

@@ -12,6 +12,7 @@ import {
   taskOf,
   messageStatuses,
   timeDividers,
+  withLoggedChildren,
   runSummary,
   seamText,
   shown,
@@ -1216,6 +1217,35 @@ describe('a subagent', () => {
 
 // The 2.3.0 conversations as read before the child reported to its parent.
 const beforeTheReport = subagentConversations.map((c) => ({ ...c, messages: (c.messages ?? []).filter((m) => !m.report) }));
+
+describe('a subagent the log names', () => {
+  // The server puts each event's conversation's parent on the log, so a
+  // child started after the conversations were read is one at once.
+  //
+  // @decision(DL-144) @decision(DL-111)
+  const roots = subagentConversations.filter((c) => !c.parent);
+  const only = (t: Entry[]) => {
+    const cards = t.filter((e) => e.kind === 'subagent');
+    expect(cards).toHaveLength(1);
+    return cards[0];
+  };
+  const wordsOf = (t: Entry[]) => t.flatMap((e) => (e.kind === 'message' ? [e.text] : []));
+
+  test('is a conversation the page knows, with no read of the conversations', () => {
+    const known = withLoggedChildren(roots, subagentLog);
+    expect(known.map((c) => [c.id, c.parent])).toEqual([
+      [Root, undefined],
+      [Child, Root],
+    ]);
+    expect(only(buildTimeline(known, subagentLog.filter((e) => e.pos <= 30)))).toMatchObject({ id: Child, state: 'running' });
+    expect(wordsOf(buildTimeline(known, subagentLog)).join('\n')).not.toContain('You are a subagent spawned');
+  });
+
+  test('changes nothing the conversations already say, nor a log without parents', () => {
+    expect(withLoggedChildren(subagentConversations, subagentLog)).toBe(subagentConversations);
+    expect(withLoggedChildren(foregroundConversations, foregroundLog)).toBe(foregroundConversations);
+  });
+});
 
 describe('a subagent card', () => {
   // The card stands where the call that started it stood. These run over

@@ -1450,6 +1450,7 @@ export interface components {
             message?: string;
             model?: string;
             name: string;
+            parent?: string;
             /** Format: int64 */
             pos: number;
             report?: components["schemas"]["SubagentReport"];
