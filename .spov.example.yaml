@@ -37,7 +37,7 @@ sandbox:
   # sync: false
 
 opencode:
-  version: 2.2.5
+  version: 2.3.0
   port: 4096
 
 modal:
