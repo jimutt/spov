@@ -350,7 +350,11 @@ it, and it is never an administrator, whatever the allowlist says. Its
 address is `<name>@service.invalid`, and no allowlist entry under
 `service.invalid` can be stored.
 
-There is no page and no command for them yet. Every call below needs an
+An administrator manages them on the dashboard's **Settings** page,
+under **Service accounts** ([DL-142](../decisions/records/web/DL-142.md)):
+create one, change its commit author, issue and revoke its tokens, and
+delete it. A token issued there is shown once, until you press Done.
+There is no command for them. For a script, every call below needs an
 administrator's credential of the org the allowlist governs, as for the
 allowlist, and a local server answers 501.
 

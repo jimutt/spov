@@ -199,3 +199,25 @@ describe("the People section on the Settings page", () => {
     target.remove();
   });
 });
+
+/**
+ * A non-admin's page draws no Service accounts section and never asks
+ * for the accounts.
+ *
+ * @decision(DL-142)
+ */
+describe("the Service accounts section on the Settings page", () => {
+  it("is absent for a non-admin, who never reads the accounts", async () => {
+    const target = document.createElement("div");
+    document.body.append(target);
+    const app = mount(Settings, { target });
+    await settle();
+    const asked = stub.fetched.mock.calls.some(([input]) =>
+      String(input instanceof Request ? input.url : input).includes("/api/v1/service-accounts"),
+    );
+    expect(asked).toBe(false);
+    expect([...target.querySelectorAll("h2")].map((h) => h.textContent)).not.toContain("Service accounts");
+    unmount(app);
+    target.remove();
+  });
+});
