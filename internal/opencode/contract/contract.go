@@ -371,15 +371,14 @@ func (d *Document) validate(v any, schema map[string]any, at string) error {
 	if branches, ok := schema["anyOf"].([]any); ok {
 		var first error
 		for _, b := range branches {
-			bs, _ := b.(map[string]any)
-			err := d.validate(v, bs, at)
+			err := d.validateSchema(v, b, at)
 			if err == nil {
 				first = nil
 				break
 			}
 			// Report the branch of the value's own type, which says
 			// more than "matched nothing".
-			if first == nil || typeMatches(v, bs) {
+			if bs, _ := b.(map[string]any); first == nil || typeMatches(v, bs) {
 				first = err
 			}
 		}
@@ -391,13 +390,12 @@ func (d *Document) validate(v any, schema map[string]any, at string) error {
 	// branch's additionalProperties does not see the parent's properties.
 	if all, ok := schema["allOf"].([]any); ok {
 		for _, b := range all {
-			bs, _ := b.(map[string]any)
-			if err := d.validate(v, bs, at); err != nil {
+			if err := d.validateSchema(v, b, at); err != nil {
 				return err
 			}
 		}
 	}
-	if not, ok := schema["not"].(map[string]any); ok && d.validate(v, not, at) == nil {
+	if not, ok := schema["not"]; ok && d.validateSchema(v, not, at) == nil {
 		return fmt.Errorf("%s: %s matches a schema it must not", at, literal(v))
 	}
 	if _, ok := schema["type"]; ok && !typeMatches(v, schema) {
@@ -435,6 +433,23 @@ func (d *Document) validate(v any, schema map[string]any, at string) error {
 	return nil
 }
 
+// validateSchema checks a value against a subschema, which may be a
+// boolean: true accepts every value and false none.
+//
+// @decision(DL-145)
+func (d *Document) validateSchema(v any, schema any, at string) error {
+	switch s := schema.(type) {
+	case bool:
+		if !s {
+			return fmt.Errorf("%s: %s is where the schema allows no value", at, literal(v))
+		}
+		return nil
+	case map[string]any:
+		return d.validate(v, s, at)
+	}
+	return fmt.Errorf("%s: a schema of type %T", at, schema)
+}
+
 func (d *Document) validateObject(v map[string]any, schema map[string]any, at string) error {
 	props, _ := schema["properties"].(map[string]any)
 	for _, r := range asStrings(schema["required"]) {
@@ -444,9 +459,9 @@ func (d *Document) validateObject(v map[string]any, schema map[string]any, at st
 	}
 	patterned, _ := schema["patternProperties"].(map[string]any)
 	for _, k := range sortedKeys(v) {
-		ps, named := props[k].(map[string]any)
+		ps, named := props[k]
 		if named {
-			if err := d.validate(v[k], ps, at+"."+k); err != nil {
+			if err := d.validateSchema(v[k], ps, at+"."+k); err != nil {
 				return err
 			}
 		}
@@ -462,8 +477,9 @@ func (d *Document) validateObject(v map[string]any, schema map[string]any, at st
 			if !extra {
 				return fmt.Errorf("%s: unknown field %q", at, k)
 			}
-		case map[string]any:
-			if err := d.validate(v[k], extra, at+"."+k); err != nil {
+		case nil:
+		default:
+			if err := d.validateSchema(v[k], extra, at+"."+k); err != nil {
 				return err
 			}
 		}
@@ -487,8 +503,7 @@ func (d *Document) validatePatterned(name string, v any, patterned map[string]an
 			continue
 		}
 		matched = true
-		ps, _ := patterned[p].(map[string]any)
-		if err := d.validate(v, ps, at+"."+name); err != nil {
+		if err := d.validateSchema(v, patterned[p], at+"."+name); err != nil {
 			return false, err
 		}
 	}
@@ -501,16 +516,14 @@ func (d *Document) validateArray(v []any, schema map[string]any, at string) erro
 	}
 	prefix, _ := schema["prefixItems"].([]any)
 	for i, item := range v {
-		var s map[string]any
+		s, ok := schema["items"]
 		if i < len(prefix) {
-			s, _ = prefix[i].(map[string]any)
-		} else {
-			s, _ = schema["items"].(map[string]any)
+			s, ok = prefix[i], true
 		}
-		if s == nil {
+		if !ok {
 			continue
 		}
-		if err := d.validate(item, s, fmt.Sprintf("%s[%d]", at, i)); err != nil {
+		if err := d.validateSchema(item, s, fmt.Sprintf("%s[%d]", at, i)); err != nil {
 			return err
 		}
 	}
