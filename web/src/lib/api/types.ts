@@ -1452,6 +1452,7 @@ export interface components {
             name: string;
             /** Format: int64 */
             pos: number;
+            report?: components["schemas"]["SubagentReport"];
             role?: string;
             session?: string;
             /** @enum {string} */
@@ -1485,6 +1486,7 @@ export interface components {
             /** Format: date-time */
             at?: string;
             id?: string;
+            report?: components["schemas"]["SubagentReport"];
             /** @description Who spoke: user or assistant */
             role?: string;
             text?: string;
@@ -2188,6 +2190,12 @@ export interface components {
             state: "started" | "done" | "failed";
             /** @description Launch step name */
             step: string;
+        };
+        SubagentReport: {
+            /** @description The OpenCode session of the subagent that reported */
+            child: string;
+            /** @description How the subagent's work ended, as OpenCode reports it: completed or cancelled */
+            state?: string;
         };
         SwitchedModel: {
             /**

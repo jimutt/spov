@@ -1103,6 +1103,8 @@ components:
         pos:
           format: int64
           type: integer
+        report:
+          $ref: "#/components/schemas/SubagentReport"
         role:
           type: string
         session:
@@ -1176,6 +1178,8 @@ components:
           type: string
         id:
           type: string
+        report:
+          $ref: "#/components/schemas/SubagentReport"
         role:
           description: "Who spoke: user or assistant"
           type: string
@@ -2582,6 +2586,18 @@ components:
         - step
         - state
         - at
+      type: object
+    SubagentReport:
+      additionalProperties: false
+      properties:
+        child:
+          description: The OpenCode session of the subagent that reported
+          type: string
+        state:
+          description: "How the subagent's work ended, as OpenCode reports it: completed or cancelled"
+          type: string
+      required:
+        - child
       type: object
     SwitchedModel:
       additionalProperties: false

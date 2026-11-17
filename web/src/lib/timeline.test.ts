@@ -43,6 +43,7 @@ import {
 import { callFrames, childEnd, childStart, frame, toolFrames } from './subagent.frames';
 import { pendingAskIds, latestAction } from './timeline';
 import { windowOf } from './transcriptwindow';
+import { unseen } from './steer';
 
 /** ev builds one frame of the log, at the position the store gave it. */
 function ev(pos: number, name: string, at = '', text?: string): Activity {
@@ -1213,6 +1214,9 @@ describe('a subagent', () => {
   });
 });
 
+// The 2.3.0 conversations as read before the child reported to its parent.
+const beforeTheReport = subagentConversations.map((c) => ({ ...c, messages: (c.messages ?? []).filter((m) => !m.report) }));
+
 describe('a subagent card', () => {
   // The card stands where the call that started it stood. These run over
   // the measured frames of the foreground pair and the background pair,
@@ -1276,8 +1280,59 @@ describe('a subagent card', () => {
     expect(card.final).toMatch(/^The retry change is safe to merge\./);
   });
 
+  describe("a subagent's report", () => {
+    // At 2.3.0 a child's report reaches its parent as a synthetic inbox
+    // item, which the server names as a report on the log and the
+    // transcript alike.
+    //
+    // @decision(DL-144)
+    const reportText = (t: Entry[]) => t.filter((e) => e.kind === 'message' && e.text.includes('<subagent'));
+    const strip = <T extends { report?: unknown }>(x: T): T => {
+      const { report: _report, ...rest } = x;
+      return rest as T;
+    };
+
+    test('is not drawn as a message: the card already shows what the child concluded', () => {
+      const main = buildTimeline(subagentConversations, subagentLog);
+      expect(reportText(main)).toEqual([]);
+      expect(main.filter((e) => e.kind === 'message' && e.role === 'synthetic')).toEqual([]);
+      expect(only(main).final).toMatch(/^The retry change is safe to merge\./);
+      expect(reportText(buildTimelines(subagentConversations, subagentLog).children.get(Child) ?? [])).toEqual([]);
+    });
+
+    test("never counts as a person's message", () => {
+      const reports = subagentLog.filter((e) => e.report);
+      expect(reports).toHaveLength(1);
+      const ids = reports.map((e) => e.message ?? '');
+      expect([...messageStatuses(subagentLog, false).keys()].some((id) => ids.includes(id))).toBe(false);
+      // It does not clear the reader's echo either.
+      const echo = { key: 'msg_mine', id: 'msg_mine', text: 'and the docs?', at: 1, sending: false };
+      expect(unseen([echo], subagentConversations, subagentLog)).toHaveLength(1);
+      const bubbles = buildTimeline(subagentConversations, subagentLog).filter((e) => e.kind === 'message' && e.role === 'user');
+      expect(bubbles).toHaveLength(1);
+    });
+
+    test("says how the child ended when the child's own frames are not read", () => {
+      const rootOnly = subagentLog.filter((e) => e.session !== Child);
+      expect(only(buildTimeline(subagentConversations, rootOnly)).state).toBe('done');
+      const cancelled = rootOnly.map((e) => (e.report ? { ...e, report: { ...e.report, state: 'cancelled' } } : e));
+      expect(only(buildTimeline(subagentConversations, cancelled)).state).toBe('stopped');
+      // Without the report the card waits on the child, as before.
+      const convs = subagentConversations.map((c) => ({ ...c, messages: (c.messages ?? []).map(strip) }));
+      expect(only(buildTimeline(convs, rootOnly.map(strip))).state).toBe('starting');
+    });
+
+    test('of a session recorded before the field draws as before', () => {
+      const convs = subagentConversations.map((c) => ({ ...c, messages: (c.messages ?? []).map(strip) }));
+      const main = buildTimeline(convs, subagentLog.map(strip));
+      expect(reportText(main)).toHaveLength(1);
+    });
+  });
+
   test("at 2.3.0 the call returns at once and the card follows the child's own frames", () => {
     // @decision(DL-144)
+    // The conversations as read before the child reported.
+    const subagentConversations = beforeTheReport;
     const success = subagentLog.find((e) => e.name === 'session.tool.success' && e.session === Root)!;
     expect(success.child).toBe(Child);
     // Before the child's first frame the card is starting; its call's

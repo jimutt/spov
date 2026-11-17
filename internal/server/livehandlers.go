@@ -84,6 +84,12 @@ type LogEvent struct {
 	//
 	// @decision(DL-112)
 	Child string `json:"child,omitempty"`
+	// Report says an inbox item is a subagent's report to this
+	// conversation, not a message: which child sent it and how it ended.
+	// Absent on every other event.
+	//
+	// @decision(DL-144)
+	Report *SubagentReport `json:"report,omitempty"`
 	// Ask is a permission request or question form, or its answer, on
 	// the five ask frames only.
 	//
@@ -304,6 +310,7 @@ func (s *Server) logEvent(ctx context.Context, names *conversationNames, ev stor
 		Call:     call,
 		Tool:     tool,
 		Child:    storedChild(ev),
+		Report:   storedReport(ev, role),
 		Ask:      storedAsk(ev),
 		Model:    storedModel(ev),
 		At:       ev.At,
@@ -372,6 +379,30 @@ func storedInbox(ev store.Event, role string) (delivery, after string) {
 		return "", ""
 	}
 	return jobs.InboxItemDelivery(ev.Raw), jobs.InboxItemAfter(ev.Raw)
+}
+
+// SubagentReport is a subagent's report to its parent conversation:
+// the child's OpenCode session and the state it reported.
+//
+// @decision(DL-144)
+type SubagentReport struct {
+	Child string `json:"child" doc:"The OpenCode session of the subagent that reported"`
+	State string `json:"state,omitempty" doc:"How the subagent's work ended, as OpenCode reports it: completed or cancelled"`
+}
+
+// storedReport re-derives, from an OpenCode inbox frame's raw item,
+// whether it is a subagent's report and whose (jobs.InboxItemReport).
+//
+// @decision(DL-144)
+func storedReport(ev store.Event, role string) *SubagentReport {
+	if ev.Source != store.SourceOpenCode || ev.Name != jobs.EventInboxEnqueued || role != "synthetic" {
+		return nil
+	}
+	child, state := jobs.InboxItemReport(ev.Raw)
+	if child == "" {
+		return nil
+	}
+	return &SubagentReport{Child: child, State: state}
 }
 
 // toolEventPrefix names the events storedToolCall reads.

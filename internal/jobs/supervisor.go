@@ -248,6 +248,30 @@ func InboxItemAfter(raw []byte) string {
 	return after
 }
 
+// InboxItemReport reads which subagent an enqueued item reports for and
+// how it ended: a synthetic item whose metadata's source is "subagent"
+// names its child in `childID` and its end in `state` (spike S-SA3).
+// Empty for any other item.
+//
+// @decision(DL-144)
+func InboxItemReport(raw []byte) (child, state string) {
+	item := inboxItem(raw)
+	if item["type"] != "synthetic" {
+		return "", ""
+	}
+	payload, _ := item["payload"].(map[string]any)
+	metadata, _ := payload["metadata"].(map[string]any)
+	if metadata["source"] != "subagent" {
+		return "", ""
+	}
+	child, _ = metadata["childID"].(string)
+	if child == "" {
+		return "", ""
+	}
+	state, _ = metadata["state"].(string)
+	return child, state
+}
+
 // InboxItemDelivery reads an enqueued item's delivery, "" when it has
 // none.
 //

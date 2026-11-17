@@ -603,6 +603,10 @@ describe("a subagent's card on the session page", () => {
     expect(card(page).querySelector('[data-testid="subagent-summary"]')?.textContent).toBe("1 tool call");
     // Closed: what it concluded, and none of its work.
     expect(card(page).querySelector('[data-testid="subagent-final"]')?.textContent).toContain("The retry change is safe to merge.");
+    // The child's report to its parent is not drawn: the card says it.
+    // @decision(DL-144)
+    expect(page.said()).not.toContain("<subagent");
+    expect(page.target.querySelectorAll('[data-testid="spov-tag"]')).toHaveLength(0);
     expect(card(page).querySelector('[data-testid="subagent-work"]')).toBeNull();
     expect(page.said()).not.toContain("You are a subagent spawned");
     expect(toggle(page).getAttribute("aria-expanded")).toBe("false");
@@ -992,8 +996,9 @@ describe("a subagent's own view", () => {
     }
     await settle();
     const drawn = () => (page.said().match(/line \d+ said/g) ?? []).length;
-    // The conversation's four messages and the card are blocks too.
-    expect(drawn()).toBe(195);
+    // The conversation's three messages and the card are blocks too; the
+    // child's report is not drawn.
+    expect(drawn()).toBe(196);
     page.control("transcript-earlier")!.click();
     await settle();
     expect(drawn()).toBe(250);
@@ -1004,8 +1009,8 @@ describe("a subagent's own view", () => {
     find(page, "subagent-back")!.dispatchEvent(plain());
     await settle();
     // Not the 250 the reader had opened: the newest window again.
-    expect(drawn()).toBe(195);
-    expect(page.control("transcript-earlier")?.textContent).toContain("Show earlier (55 more)");
+    expect(drawn()).toBe(196);
+    expect(page.control("transcript-earlier")?.textContent).toContain("Show earlier (54 more)");
     page.done();
   });
 

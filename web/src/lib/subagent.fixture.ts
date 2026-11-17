@@ -63,7 +63,11 @@ export const subagentConversations: Conversation[] = [
         "id": "msg_1eb8e2096001rsTFIhAbeAfYj3",
         "role": "synthetic",
         "text": "<subagent sessionID=\"ses_e1471df72ffecZP6FsFzTsQbBa\" state=\"completed\" description=\"Review the retry change\">\nThe retry change is safe to merge. Backoff is capped at 30 s and the context is checked before every attempt. I read internal/client/retry.go and retry_test.go.\n</subagent>",
-        "at": "2026-11-17T22:08:45.005Z"
+        "at": "2026-11-17T22:08:45.005Z",
+        "report": {
+          "child": "ses_e1471df72ffecZP6FsFzTsQbBa",
+          "state": "completed"
+        }
       },
       {
         "id": "msg_1eb8e29d0001DuiVLW7Gdka7gs",
@@ -396,6 +400,10 @@ export const subagentLog: Activity[] = [
     "role": "synthetic",
     "message": "msg_1eb8e2096001rsTFIhAbeAfYj3",
     "text": "<subagent sessionID=\"ses_e1471df72ffecZP6FsFzTsQbBa\" state=\"completed\" description=\"Review the retry change\">\nThe retry change is safe to merge. Backoff is capped at 30 s and the context is checked before every attempt. I read internal/client/retry.go and retry_test.go.\n</subagent>",
+    "report": {
+      "child": "ses_e1471df72ffecZP6FsFzTsQbBa",
+      "state": "completed"
+    },
     "at": "2026-11-17T22:08:45Z",
     "pos": 37
   },

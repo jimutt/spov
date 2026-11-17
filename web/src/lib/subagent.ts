@@ -195,14 +195,18 @@ const Ended: Readonly<Record<string, SubagentState>> = {
   "session.execution.interrupted": "stopped",
 };
 
+/** A report's `state` as a card's, for the states measured (S-SA3). */
+const Reported: Readonly<Record<string, SubagentState>> = { completed: "done", cancelled: "stopped" };
+
 /**
  * subagentState says how a subagent is going. From the child's own
  * frames when it has any: its last execution frame, by position, and
  * running while none has ended. A call's success says nothing of its
  * child, since every call returns at once: with none of the child's
  * frames read (`child` empty, or undefined for a card with no
- * conversation behind it) the card is starting, unless the call failed
- * and so started no child. `ended` is the whole session having ended,
+ * conversation behind it) the card is starting, unless the child's
+ * report to its parent says how it ended (`reported`), or the call
+ * failed and so started no child. `ended` is the whole session having ended,
  * which turns a child still running into a stopped one.
  *
  * @decision(DL-112) @decision(DL-144)
@@ -211,6 +215,7 @@ export function subagentState(
   child: readonly LogEvent[] | undefined,
   call: DelegatedCall | undefined,
   ended: boolean,
+  reported = "",
 ): SubagentState {
   let at = -1;
   let state: SubagentState | undefined;
@@ -224,6 +229,8 @@ export function subagentState(
       state = Ended[ev.name];
     }
   }
+  // @decision(DL-144)
+  if (!state) state = Reported[reported];
   if (!state) {
     if (child?.length) state = "running";
     else if (call?.state === "failed") state = "failed";

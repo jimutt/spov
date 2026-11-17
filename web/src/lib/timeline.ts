@@ -23,6 +23,13 @@ export type Message = {
   role?: string;
   text?: string;
   at?: string;
+  /**
+   * Set on a subagent's report to this conversation, which the page
+   * never draws as a message.
+   *
+   * @decision(DL-144)
+   */
+  report?: Activity["report"];
 };
 /**
  * `parent` is the OpenCode id of the conversation that started this one as
@@ -599,6 +606,10 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       //
       // @decision(DL-058)
       if (!text.trim()) return;
+      // A subagent's report: its card says what the child concluded.
+      //
+      // @decision(DL-144)
+      if (m.report) return;
       // A child's `user` message is its task prompt, written by the
       // parent agent.
       //
@@ -648,6 +659,11 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       }
       continue;
     }
+    // A subagent's report is neither a message nor a line: its card
+    // says what the child concluded.
+    //
+    // @decision(DL-144)
+    if (ev.report) continue;
     const name = ev.name ?? "";
     const text = ev.text ?? "";
     const at = millis(ev.at);
@@ -828,6 +844,13 @@ export function buildTimelines(
   //
   // @decision(DL-144)
   const unlisted = new Map<string, Activity[] | undefined>();
+  // How each child last reported it ended, from its reports to its
+  // parent, on the log or in the transcript.
+  //
+  // @decision(DL-144)
+  const reported = new Map<string, string>();
+  for (const c of conversations) for (const m of c.messages ?? []) if (m.report?.child) reported.set(m.report.child, m.report.state ?? "");
+  for (const ev of activity) if (ev.report?.child) reported.set(ev.report.child, ev.report.state ?? "");
   const unlistedFrames = (id: string): Activity[] | undefined => {
     if (!id || kids.has(id)) return undefined;
     if (!unlisted.has(id)) {
@@ -871,7 +894,7 @@ export function buildTimelines(
         call: call?.call ?? "",
         title: label,
         agent: call?.agent ?? "",
-        state: subagentState(conv ? (byChild.get(conv.id) ?? []) : unlistedFrames(call?.child ?? ""), call, ended),
+        state: subagentState(conv ? (byChild.get(conv.id) ?? []) : unlistedFrames(call?.child ?? ""), call, ended, reported.get(conv?.id ?? call?.child ?? "")),
         calls: plain.filter((e) => e.calls).length,
         summary: runSummary(plain),
         latest: latestAction(plain),
