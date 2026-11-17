@@ -94,18 +94,31 @@ func TestIntegrationSSA1Subagents(t *testing.T) {
 	if !probeWait(ctx, func() bool { return model.saw("CHILD-BG", "final") }) {
 		t.Fatal("the child called with background never finished")
 	}
-	if !probeWait(ctx, func() bool { return frames.count(bg.id, "session.execution.succeeded") >= 2 }) {
-		t.Fatal("the background parent never ran a turn on its child's report")
+	for _, root := range []*spikeRun{fg, bg} {
+		if !probeWait(ctx, func() bool { return frames.count(root.id, "session.execution.succeeded") >= 2 }) {
+			t.Fatalf("the parent %s never ran a turn on its child's report", root.id)
+		}
 	}
 	time.Sleep(time.Second)
 	for _, root := range []*spikeRun{fg, bg} {
-		for _, st := range frames.subagentStatuses(root.id) {
+		statuses := frames.subagentStatuses(root.id)
+		if len(statuses) != 1 {
+			t.Errorf("%s made %d subagent calls whose success names a child, want 1: %v", root.id, len(statuses), statuses)
+		}
+		for _, st := range statuses {
 			if st != "running" {
 				t.Errorf("a subagent call of %s returned with status %q, want running: the call waited for its child", root.id, st)
 			}
 		}
 	}
-	t.Logf("the subagent tool's parameters: %v", model.subagentParams())
+	params := model.subagentParams()
+	t.Logf("the subagent tool's parameters: %v", params)
+	if params == nil {
+		t.Error("the subagent tool was never offered to the model")
+	}
+	if slices.Contains(params, "background") {
+		t.Errorf("the subagent tool takes background again: %v", params)
+	}
 
 	out := map[string]json.RawMessage{
 		"list_default": get("/api/session"),
