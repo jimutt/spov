@@ -57,6 +57,8 @@ const stub = vi.hoisted(() => {
         }),
       );
   });
+  // Whether /me says the caller is an admin.
+  const state = { admin: false };
   const fetched = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
@@ -75,6 +77,8 @@ const stub = vi.hoisted(() => {
         ],
       });
     }
+    if (url.includes("/api/v1/service-accounts")) return json({ accounts: [] });
+    if (url.includes("/api/v1/allowlist")) return json({ entries: [] });
     if (url.includes("/api/v1/me/credentials")) {
       return json({ enabled: true, credentials: [] });
     }
@@ -82,7 +86,7 @@ const stub = vi.hoisted(() => {
       return json({
         user_id: "u",
         org_id: "o",
-        admin: false,
+        admin: state.admin,
         default_model: "anthropic/claude-sonnet-5",
         git_name: "Ada",
         git_email: "ada@example.com",
@@ -98,7 +102,7 @@ const stub = vi.hoisted(() => {
     return new Response(null, { status: 404 });
   });
   globalThis.fetch = fetched as unknown as typeof globalThis.fetch;
-  return { fetched, release: () => release() };
+  return { fetched, release: () => release(), state };
 });
 
 // Imported AFTER the hoisted stub is installed, which is what the
@@ -219,5 +223,21 @@ describe("the Service accounts section on the Settings page", () => {
     expect([...target.querySelectorAll("h2")].map((h) => h.textContent)).not.toContain("Service accounts");
     unmount(app);
     target.remove();
+  });
+
+  it("is drawn for an admin", async () => {
+    stub.state.admin = true;
+    try {
+      const target = document.createElement("div");
+      document.body.append(target);
+      const app = mount(Settings, { target });
+      await settle();
+      await settle();
+      expect([...target.querySelectorAll("h2")].map((h) => h.textContent)).toContain("Service accounts");
+      unmount(app);
+      target.remove();
+    } finally {
+      stub.state.admin = false;
+    }
   });
 });

@@ -3,6 +3,7 @@ import { ApiError } from "./api/client";
 import {
   type ServiceAccountView,
   type ServiceTokenView,
+  accountGone,
   accountPath,
   authorPatch,
   copyText,
@@ -17,6 +18,7 @@ import {
   lastUsedText,
   lifetimeProblem,
   nameProblem,
+  partialDeletion,
   sortAccounts,
   tokenCountText,
   tokenPath,
@@ -191,5 +193,22 @@ describe("copyText", () => {
     expect(took).toEqual(["t"]);
     expect(await copyText("t", { writeText: async () => Promise.reject(new Error("denied")) })).toBe(false);
     expect(await copyText("t", undefined)).toBe(false);
+  });
+});
+
+describe("reading the list again", () => {
+  const list = [account("live"), account("gone", { disabled_at: "2026-11-17T00:00:00Z" })];
+  it("tells a live account from a deleted or missing one", () => {
+    expect(accountGone(list, "live")).toBe(false);
+    expect(accountGone(list, "gone")).toBe(true);
+    expect(accountGone(list, "never-was")).toBe(true);
+    expect(accountGone(undefined, "live")).toBe(true);
+  });
+  it("calls a 500 partial only when the account is deleted afterwards", () => {
+    const err = new ApiError(500, { type: "about:blank", title: "Internal Server Error", status: 500 });
+    expect(partialDeletion(err, list, "gone")).toBe(true);
+    expect(partialDeletion(err, list, "live")).toBe(false);
+    expect(partialDeletion(err, list, "never-was")).toBe(false);
+    expect(partialDeletion(new ApiError(409, { type: "about:blank", title: "Conflict", status: 409 }), list, "gone")).toBe(false);
   });
 });

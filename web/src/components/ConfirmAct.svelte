@@ -11,6 +11,9 @@
   // `tone` is "safe" for an act that costs money but destroys nothing,
   // such as Resume, which is drawn as a primary button and backs out
   // with `no`. @decision(DL-090)
+  // `disabled` keeps the control from being opened or confirmed while
+  // its caller is busy, and `name` is the buttons' accessible name when
+  // the label alone is ambiguous. @decision(DL-142)
   let {
     label,
     question,
@@ -19,6 +22,8 @@
     testid,
     tone = 'danger',
     no = 'Keep it',
+    disabled = false,
+    name = undefined,
   }: {
     label: string;
     question: string;
@@ -27,6 +32,8 @@
     testid: string;
     tone?: 'danger' | 'safe';
     no?: string;
+    disabled?: boolean;
+    name?: string;
   } = $props();
 
   let asking = $state(false);
@@ -35,6 +42,7 @@
   let opener = $state<HTMLButtonElement | undefined>(undefined);
 
   async function ask() {
+    if (disabled) return;
     asking = true;
     await tick();
     keep?.focus();
@@ -47,7 +55,7 @@
   }
 
   async function confirm() {
-    if (pending) return;
+    if (pending || disabled) return;
     pending = true;
     try {
       await run();
@@ -80,7 +88,8 @@
         type="button"
         data-testid={`${testid}-yes`}
         class={tone === 'safe' ? primary : dangerConfirm}
-        disabled={pending}
+        disabled={pending || disabled}
+        aria-label={name}
         onkeydown={onKeydown}
         onclick={confirm}>{pending ? 'Working…' : yes}</button
       >
@@ -100,6 +109,8 @@
     type="button"
     data-testid={testid}
     class={tone === 'safe' ? secondary : danger}
+    {disabled}
+    aria-label={name}
     bind:this={opener}
     onclick={ask}>{label}</button
   >

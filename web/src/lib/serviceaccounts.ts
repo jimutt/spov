@@ -246,3 +246,31 @@ export async function copyText(text: string, clipboard: Pick<Clipboard, "writeTe
     return false;
   }
 }
+
+/**
+ * accountGone reports whether a re-read list no longer holds name as an
+ * account that is not deleted: it is deleted, or not listed at all.
+ *
+ * @decision(DL-142)
+ */
+export function accountGone(accounts: readonly ServiceAccountView[] | null | undefined, name: string): boolean {
+  const a = (accounts ?? []).find((x) => x.name === name);
+  return !a || isDeleted(a);
+}
+
+/**
+ * partialDeletion reports a delete of name that answered 500 and, by the
+ * list read after it, left the account deleted: an off-boarding step
+ * failed, and Delete again retries it. A 500 that left the account as it
+ * was is only a refusal.
+ *
+ * @decision(DL-142) @decision(DL-140)
+ */
+export function partialDeletion(
+  error: unknown,
+  accounts: readonly ServiceAccountView[] | null | undefined,
+  name: string,
+): boolean {
+  const a = (accounts ?? []).find((x) => x.name === name);
+  return isPartialDeletion(error) && Boolean(a && isDeleted(a));
+}
