@@ -238,7 +238,7 @@ func TestTheCheckRunsBeforeTheStopIsAnnounced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	check := strings.Index(source, "await runCheck()")
+	check := strings.Index(source, "await runCheck(")
 	if check < 0 {
 		t.Fatal("announceStop never runs the check")
 	}

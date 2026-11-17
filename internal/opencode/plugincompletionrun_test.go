@@ -461,17 +461,18 @@ func TestTheCompletionToolReturnsWhatTheDispatcherAccepts(t *testing.T) {
 }
 
 // TestTheOutcomeLinesAreKeptApart checks a declared completion copies the
-// completion, the check and the loop's stop to the outcome file, and
-// nothing else, so the evidence file's size bound cannot lose them.
+// check, the completion and the loop's stop to the outcome file, and
+// nothing else, so the evidence file's size bound cannot lose them. The
+// completion is recorded once the check is done (DL-146).
 //
-// @decision(DL-051) @decision(DL-050)
+// @decision(DL-051) @decision(DL-050) @decision(DL-146)
 func TestTheOutcomeLinesAreKeptApart(t *testing.T) {
 	run := driveCompletionTool(t, "done", true)
 	var events []string
 	for _, e := range run.Outcome {
 		events = append(events, e["event"].(string))
 	}
-	if strings.Join(events, ",") != "completion.declared,"+CheckEvent+",loop.stopped" {
+	if strings.Join(events, ",") != CheckEvent+",completion.declared,loop.stopped" {
 		t.Errorf("the outcome file holds %v", events)
 	}
 	if len(run.Evidence) <= len(run.Outcome) {

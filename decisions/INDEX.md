@@ -2,7 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-146 | The job plugin's tools stop when OpenCode aborts their call, and an aborted completion is withdrawn | proposed | opencode | opencode-2-3, opencode, plugin, completion |
+| DL-146 | The job plugin's tools stop when OpenCode aborts their call, and an aborted completion is withdrawn | accepted | opencode | opencode-2-3, opencode, plugin, completion |
 | DL-145 | Event frames in tests and probes are checked against the schemas the pinned OpenCode publishes | proposed | opencode | opencode-2-3, opencode, contract |
 | DL-144 | Every subagent call is a background call, and the session page says when only subagents are working | proposed | web | opencode-2-3, web, subagents |
 | DL-143 | A job ends whatever subagents still run, and its loop waits for a running subagent instead of continuing | proposed | jobs | opencode-2-3, jobs, plugin, subagents, completion |

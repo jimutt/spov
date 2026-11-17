@@ -137,7 +137,9 @@ enough for its clock, its launch and delivery, and an hour of steering.
 ## How it is judged
 
 When the agent declares the work done, or the time limit runs out, spov stops
-the run and checks three gates:
+the run and checks three gates. Declaring runs the check first; if you
+interrupt while that check is running, the check stops, the declaration is
+withdrawn and the job carries on under your control. The gates:
 
 1. **Check**: the check command exits 0.
 2. **Deliverable**: each pull request the agent recorded is open or merged on

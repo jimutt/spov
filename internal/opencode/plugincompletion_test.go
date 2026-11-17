@@ -88,7 +88,7 @@ func decodeRenderedConfig(t *testing.T, src string) pluginConfig {
 func TestTheCompletionToolTakesTheOrdinaryStopPath(t *testing.T) {
 	src := renderedCompletionPlugin(t)
 
-	if !strings.Contains(src, `announceStop(ctx, sessionID, "declared")`) {
+	if !strings.Contains(src, `announceStop(ctx, sessionID, "declared"`) {
 		t.Error("the completion tool does not announce through announceStop: the run would " +
 			"stop continuing but never tell the supervisor, stranding the job at running")
 	}

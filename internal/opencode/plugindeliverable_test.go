@@ -22,6 +22,13 @@ type pullRequestRun struct {
 // input, if the plugin registered it.
 func drivePullRequestTool(t *testing.T, kind string, inputs ...string) pullRequestRun {
 	t.Helper()
+	return drivePullRequestToolIn(t, kind, `{ sessionID: "ses_test" }`, inputs...)
+}
+
+// drivePullRequestToolIn is drivePullRequestTool with each call made in
+// the call context callContext, a JavaScript expression.
+func drivePullRequestToolIn(t *testing.T, kind, callContext string, inputs ...string) pullRequestRun {
+	t.Helper()
 	runtime := jsRuntime(t)
 	dir := t.TempDir()
 	evidence := filepath.Join(dir, "evidence.jsonl")
@@ -44,7 +51,7 @@ func drivePullRequestTool(t *testing.T, kind string, inputs ...string) pullReque
 	for _, in := range inputs {
 		calls.WriteString(`
 if (__tools[` + jsonString(t, PullRequestTool) + `]) {
-  const r = await __tools[` + jsonString(t, PullRequestTool) + `].execute(` + in + `, { sessionID: "ses_test" })
+  const r = await __tools[` + jsonString(t, PullRequestTool) + `].execute(` + in + `, ` + callContext + `)
   console.log("SPOV_TEST returned: " + JSON.stringify(r?.content ?? null))
 }
 `)

@@ -121,6 +121,23 @@ const DEFERRED_COMPLETION =
   "next. Read it and act on it, then call this tool again when the goal is met. " +
   "Nothing from this call was recorded."
 
+// What the completion tool answers when its call was stopped before the
+// job began to end.
+//
+// @decision(DL-146)
+const WITHDRAWN_COMPLETION =
+  "Withdrawn: this call was stopped before the job began to end, so the goal is not " +
+  "declared complete and nothing from this call was recorded. Call this tool again " +
+  "when the goal is met."
+
+// aborted reads a tool call's abort signal. A context without one is
+// never aborted.
+//
+// @decision(DL-146)
+function aborted(signal) {
+  return signal?.aborted === true
+}
+
 // The token the supervisor matches to learn that the run has ended. It
 // is a literal shared with the Go side (opencode.LoopStoppedMarker) and
 // changing it in one place alone strands every job at `running`.
@@ -322,9 +339,13 @@ async function reply(ctx, sessionID, text) {
 // has, as a synthetic with resume: false so it starts no turn and is
 // never mistaken for a human steering the session (DL-048). Sent at
 // most once, since the event subscription can deliver more turns after
-// the loop has stopped.
-async function announceStop(ctx, sessionID, reason) {
-  if (loop.announced) return
+// the loop has stopped. With opts.signal, a signal raised while the
+// check runs withdraws the announcement: it returns false and sends
+// nothing. opts.before runs once the check is done, before the marker.
+//
+// @decision(DL-048) @decision(DL-146)
+async function announceStop(ctx, sessionID, reason, opts) {
+  if (loop.announced) return true
   loop.announced = true
   // The loop is over whatever brought it here. Without this a
   // continuation that FAILED to send would announce the end and then
@@ -337,10 +358,16 @@ async function announceStop(ctx, sessionID, reason) {
   //
   // @decision(DL-050)
   try {
-    await runCheck()
+    await runCheck(opts?.signal)
   } catch (e) {
     record("check.failed", { error: String(e) })
   }
+  // @decision(DL-146)
+  if (aborted(opts?.signal)) {
+    loop.announced = false
+    return false
+  }
+  opts?.before?.()
   const payload = {
     reason,
     continuations: loop.continuations,
@@ -361,19 +388,25 @@ async function announceStop(ctx, sessionID, reason) {
     line = STOP_MARKER + ' {"reason":"' + String(reason) + '"}'
   }
   await reply(ctx, sessionID, line)
+  return true
 }
 
 // Gate 1 of DL-050: the repo's own check, run once when the loop stops.
 // It runs here, in the sandbox, spawning the command directly rather
 // than asking the agent — and outside the permission hook, since the
-// hook guards the agent and this is not the agent.
-async function runCheck() {
+// hook guards the agent and this is not the agent. A signal raised while
+// it runs kills it as a timeout does and records nothing, so a later
+// stop runs it again.
+//
+// @decision(DL-050) @decision(DL-146)
+async function runCheck(signal) {
   if (!CONFIG.checkCommand) {
     // No check configured. Gate 1 is then unverified rather than
     // failed, which is the server's reading of a missing record.
     return
   }
   if (loop.checked) return
+  if (aborted(signal)) return
   loop.checked = true
 
   let spawn
@@ -415,9 +448,10 @@ async function runCheck() {
         if (settled) return
         settled = true
         if (timer !== null) clearTimeout(timer)
+        try { signal?.removeEventListener?.("abort", onAbort) } catch (e) {}
         resolve(value)
       }
-      timer = setTimeout(() => {
+      const stop = () => {
         // Killed, and recorded as a TIMEOUT rather than as an exit
         // code. DL-050 needs the two distinguishable so a slow suite
         // is not read as a broken one; a killed process reports a
@@ -434,18 +468,34 @@ async function runCheck() {
         try { child.stdout?.destroy() } catch (e) {}
         try { child.stderr?.destroy() } catch (e) {}
         try { child.unref() } catch (e) {}
+      }
+      timer = setTimeout(() => {
+        stop()
         finish({ timeout: true, output: out })
       }, CONFIG.checkTimeoutMs)
+      // @decision(DL-146)
+      const onAbort = () => {
+        stop()
+        finish({ aborted: true, output: out })
+      }
+      try { signal?.addEventListener?.("abort", onAbort) } catch (e) {}
+      if (aborted(signal)) onAbort()
 
       child.on("error", (e) => finish({ infra: true, output: String(e) }))
-      child.on("close", (code, signal) => {
-        if (signal) {
-          finish({ timeout: false, infra: true, output: out + "\nkilled by " + String(signal) })
+      child.on("close", (code, killedBy) => {
+        if (killedBy) {
+          finish({ timeout: false, infra: true, output: out + "\nkilled by " + String(killedBy) })
           return
         }
         finish({ exit: typeof code === "number" ? code : 1, output: out })
       })
     })
+    // @decision(DL-146)
+    if (result.aborted) {
+      loop.checked = false
+      record("check.interrupted", { command: CONFIG.checkCommand, durationMs: Date.now() - started })
+      return
+    }
     record(CONFIG.checkEvent, {
       ...result,
       command: CONFIG.checkCommand,
@@ -777,25 +827,49 @@ export default {
               record("completion.deferred", { pending: inbox.pending.size })
               return { content: DEFERRED_COMPLETION }
             }
-            record("completion.declared", {
+            const declare = () => record("completion.declared", {
               summary,
               unfinished,
               sessionID: String(sessionID ?? ""),
             })
+            // Whether this call is what stops the loop, which decides
+            // what a withdrawal may undo.
+            //
+            // @decision(DL-146)
+            const stopsHere = !loop.stopped
             loop.stopped = true
             loop.stopReason = "declared"
-            if (sessionID) {
+            if (!sessionID || loop.announced) {
+              declare()
+              // Without a session there is nothing to announce into;
+              // the event subscription announces on the next turn's
+              // end, which is why loop.stopped is set above regardless.
+              if (!sessionID) record("completion.no.session", { keys: describe(Object.keys(context ?? {}), 200) })
+            } else {
               // Awaited inside the tool call, blocking the agent's turn
               // for as long as the check runs: the supervisor collects
               // evidence in the same visit the marker triggers, so a
               // check still running when the marker goes out is a
-              // check nobody reads.
-              await announceStop(ctx, sessionID, "declared")
-            } else {
-              // Without a session there is nothing to announce into;
-              // the event subscription announces on the next turn's
-              // end, which is why loop.stopped is set above regardless.
-              record("completion.no.session", { keys: describe(Object.keys(context ?? {}), 200) })
+              // check nobody reads. The declaration is recorded once
+              // the check is done, so a call stopped during it leaves
+              // none behind.
+              //
+              // @decision(DL-146)
+              const signal = context?.signal
+              const announced = await announceStop(ctx, sessionID, "declared", { signal, before: declare })
+              if (!announced) {
+                record("completion.interrupted", { sessionID: String(sessionID) })
+                if (stopsHere && loop.stopReason === "declared") {
+                  loop.stopped = false
+                  loop.stopReason = null
+                } else {
+                  // A stop that arrived meanwhile stands, under its own
+                  // reason.
+                  announceStop(ctx, sessionID, loop.stopReason ?? "stopped").catch((e) =>
+                    record("completion.stop.failed", { error: String(e) }))
+                }
+                return { content: WITHDRAWN_COMPLETION }
+              }
             }
             // The return MUST be an object carrying `content`: a bare
             // string throws in the dispatcher, and the errored part is
@@ -867,7 +941,11 @@ export default {
               required: ["repository", "branch"],
               additionalProperties: false,
             },
-            execute: async (input) => {
+            execute: async (input, context) => {
+              // @decision(DL-146)
+              if (aborted(context?.signal)) {
+                return { content: "Stopped: this call was stopped before it recorded anything, so nothing was recorded." }
+              }
               const repo = matchRepo(String(input?.repository ?? ""))
               // Trimmed of a remote prefix the agent may include out of
               // habit: the forge matches on the string.
