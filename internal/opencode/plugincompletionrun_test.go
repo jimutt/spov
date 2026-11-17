@@ -25,6 +25,8 @@ type completionRun struct {
 	Synth    []map[string]any
 	Stdout   string
 	Returned string
+	// Description is the registered tool's description.
+	Description string
 	// LoopStopped is the plugin's own loop.stopped after the call. It
 	// is read out of the running plugin rather than inferred, because
 	// on the no-session path there is no marker to infer it from.
@@ -100,6 +102,7 @@ if (__registered === null) {
   process.exit(3)
 }
 console.log("SPOV_TEST registered name: " + __registered.name)
+console.log("SPOV_TEST description: " + JSON.stringify(__registered.description))
 ` + before + `
 
 const __returned = await __registered.execute(
@@ -132,6 +135,9 @@ __fs.writeFileSync(` + jsonString(t, synthOut) + `, JSON.stringify(__synth))
 
 	run := completionRun{Stdout: string(out)}
 	for _, line := range strings.Split(run.Stdout, "\n") {
+		if d, ok := strings.CutPrefix(line, "SPOV_TEST description: "); ok {
+			_ = json.Unmarshal([]byte(d), &run.Description)
+		}
 		if strings.HasPrefix(line, "SPOV_TEST returned: ") {
 			run.Returned = strings.TrimPrefix(line, "SPOV_TEST returned: ")
 		}

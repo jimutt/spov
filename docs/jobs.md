@@ -128,6 +128,12 @@ a person:
 - `steered`: someone sent the job a message or interrupted it. The agent reads
   the message and the job waits until someone resumes it.
 
+**Subagents.** An agent can hand work to subagents, which run in the
+background and report back to it. While only they are working, spov sends
+the agent no further prompts, for up to ten minutes at a time. Declaring the
+work done ends the job whatever they are still doing, and anything they have
+not reported is lost; the agent is told to wait for the reports it needs.
+
 **Its time limit.** A job has one time allowance. It counts while the job runs
 or is blocked, pauses while someone steers it, and a resume continues with
 what is left. No number of turns ends a job. A run that keeps repeating a call

@@ -96,6 +96,77 @@ const loop = {
   // execution event. A subagent's session is not this one, and its
   // turns must not move the loop's own in-flight flag.
   session: null,
+  // How many turns of the job's session have started, and the timer
+  // that ends a hold for subagents (DL-143).
+  started: 0,
+  subagentTimer: null,
+}
+
+// The job session's direct children, and which of them have a turn in
+// flight. A child counts as running from its session.created, which
+// arrives as its first turn starts (spike S-SA3), until a turn of its
+// ends. A child's own children are its to report on. A child created
+// while the job's session is unknown names it.
+//
+// @decision(DL-143)
+const subagents = { known: new Set(), running: new Set() }
+
+// trackSubagent follows a frame of one of the job's subagents, and
+// reports whether the frame was one.
+//
+// @decision(DL-143)
+function trackSubagent(type, ev) {
+  const data = ev?.data ?? ev?.properties ?? {}
+  const id = data?.sessionID
+  if (typeof id !== "string" || id === "") return false
+  if (type === "session.created") {
+    const parent = data?.parentID
+    // The plugin may have subscribed after the job's opening turn began,
+    // and a child is then the first session it hears of: its parent is
+    // the job's, and the child never is.
+    if (!loop.session && typeof parent === "string" && parent !== "") {
+      loop.session = parent
+      record("session.learned", { from: "subagent" })
+    }
+    if (!loop.session || parent !== loop.session) return false
+    subagents.known.add(id)
+    subagents.running.add(id)
+    record("subagent.created", { session: id, running: subagents.running.size })
+    return true
+  }
+  if (!subagents.known.has(id) || !type.startsWith("session.execution.")) return false
+  if (type === "session.execution.started") subagents.running.add(id)
+  else if (type === "session.execution.succeeded" || type === "session.execution.failed" ||
+    type === "session.execution.interrupted") subagents.running.delete(id)
+  return true
+}
+
+// waitForSubagents holds the continuation of a turn that ended while a
+// subagent of the job runs: the child's report starts the next turn. At
+// CONFIG.subagentWaitMs with no turn of the job's started since, the
+// ordinary continuation goes out, saying how many still run.
+//
+// @decision(DL-143)
+function waitForSubagents(ctx, sessionID) {
+  record("continue.waiting", { running: subagents.running.size })
+  const started = loop.started
+  if (loop.subagentTimer !== null) clearTimeout(loop.subagentTimer)
+  loop.subagentTimer = setTimeout(() => {
+    loop.subagentTimer = null
+    if (loop.stopped || loop.paused || loop.inFlight || loop.started !== started) {
+      record("continue.wait.ended", { reason: loop.started !== started ? "turn-started" : "not-running" })
+      return
+    }
+    const n = subagents.running.size
+    const note = n > 0 ? String(CONFIG.subagentWaitNote ?? "").replace("{n}", n === 1 ? "1 subagent" : n + " subagents") : ""
+    continueRun(ctx, sessionID, note).then(
+      () => record("continue.sent", { continuations: loop.continuations, waited: true, running: n }),
+      (e) => {
+        record("continue.failed", { error: String(e) })
+        return announceStop(ctx, sessionID, "continue-failed")
+      },
+    ).catch((e) => record("continue.wait.failed", { error: String(e) }))
+  }, CONFIG.subagentWaitMs)
 }
 
 // What a pause says, to both audiences that read it: the loop stops,
@@ -235,8 +306,8 @@ function trackInbox(ev) {
 
 // A continuation goes out as a synthetic, never as a prompt: a prompt
 // arrives indistinguishable from a human's and would move the job to
-// steered on its own first turn.
-async function continueRun(ctx, sessionID) {
+// steered on its own first turn. extra is added to its text.
+async function continueRun(ctx, sessionID, extra) {
   // Counted for the status reply and the evidence log; no count ends a
   // run. A continuation that cannot be sent ends it instead.
   //
@@ -247,7 +318,7 @@ async function continueRun(ctx, sessionID) {
   // @decision(DL-052)
   await ctx.session.synthetic({
     sessionID,
-    text: CONFIG.continueText,
+    text: CONFIG.continueText + (extra ?? ""),
     resume: true,
     delivery: "queue",
   })
@@ -785,7 +856,9 @@ export default {
             "collects the deliverable and shuts the sandbox down, so anything you do afterwards " +
             "is not collected and may be cut off part-way. Finish every file write, commit and " +
             "push BEFORE calling this. It is the only way to end the run, and stating completion " +
-            "in a reply does nothing.",
+            "in a reply does nothing." +
+            // @decision(DL-143)
+            (CONFIG.subagentNote ? " " + CONFIG.subagentNote : ""),
           input: {
             type: "object",
             properties: {
@@ -1086,6 +1159,11 @@ export default {
           // it belongs to.
           //
           // @decision(DL-054)
+          // A subagent of the job's: whether it is still working decides
+          // whether the job's own turn end continues.
+          //
+          // @decision(DL-143)
+          if (trackSubagent(type, ev)) continue
           const execSession = ev?.data?.sessionID ?? ev?.properties?.sessionID
           if (type.startsWith("session.execution.")) {
             if (!loop.session && execSession) loop.session = execSession
@@ -1093,6 +1171,7 @@ export default {
           }
           if (type === "session.execution.started") {
             loop.inFlight = true
+            loop.started += 1
             continue
           }
           // A turn ends three ways and only one continues the loop, but
@@ -1145,6 +1224,11 @@ export default {
             if (loop.stopped) {
               await announceStop(ctx, sessionID, reason)
             }
+            continue
+          }
+          // @decision(DL-143)
+          if (subagents.running.size > 0) {
+            waitForSubagents(ctx, sessionID)
             continue
           }
           try {

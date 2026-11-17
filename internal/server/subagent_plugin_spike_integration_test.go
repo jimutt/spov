@@ -37,9 +37,7 @@ import (
 //     of the parent once the parent's turn has ended, then of the child;
 //   - D: the same with the parent's own turn still in `probe_wait`.
 //
-// A and B are asserted, as DL-143's hold and DL-146's withdrawal rely on
-// them; what an interrupt does to a child (C, D) is logged. No Modal, no
-// key.
+// A and B are asserted; C and D are logged. No Modal, no key.
 //
 //	SPOV_PROBE=1 go test -tags integration ./internal/server/ -run SSA3 -v
 //
@@ -584,4 +582,61 @@ func TestIntegrationSSA3AnInterruptWithdrawsADeclarationDuringItsCheck(t *testin
 		t.Error("the check ran on after the interrupt")
 	}
 	t.Logf("model requests:\n%s", model.log())
+}
+
+// The real plugin at the pin, against DL-143: the job's turn ends while
+// its subagent works, no continuation is sent, the child's report starts
+// the next turn, and the loop then continues as before.
+//
+//	SPOV_PROBE=1 go test -tags integration ./internal/server/ -run SSA3 -v
+//
+// @decision(DL-143)
+func TestIntegrationSSA3TheLoopWaitsForItsSubagent(t *testing.T) {
+	if os.Getenv("SPOV_PROBE") == "" && os.Getenv("SPOV_PROBE_OPENCODE") == "" {
+		t.Skip("set SPOV_PROBE=1 to run the spike")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	model := newTaggedModel(t, func(q taggedRequest) taggedAnswer {
+		switch {
+		case !q.offered:
+			return taggedAnswer{text: "title"}
+		case q.tag == "CHILD-H" && q.tools == 0:
+			return taggedAnswer{tool: "glob", args: `{"pattern":"*.txt"}`, delay: 8 * time.Second}
+		case q.tag == "CHILD-H":
+			return taggedAnswer{text: "child report"}
+		case q.tools > 0, strings.Contains(q.latest, opencode.LoopStoppedMarker):
+			return taggedAnswer{text: "called"}
+		case strings.Contains(q.latest, "subagent sessionID="):
+			return taggedAnswer{text: "read the report"}
+		case strings.Contains(q.latest, "Continue working"):
+			return taggedAnswer{tool: opencode.CompletionTool, args: `{"summary":"done"}`}
+		case q.tag == "JOB-H":
+			return taggedAnswer{tool: "subagent", args: `{"agent":"general","description":"probe child h","prompt":"CHILD-H run one glob"}`}
+		}
+		return taggedAnswer{text: "ok"}
+	})
+	j := startJobProbe(ctx, t, model, opencode.Plugin{Kind: "report", Goal: "JOB-H delegate to a subagent"})
+	if !probeWait(ctx, func() bool { return len(j.evidence("loop.stopped")) == 1 }) {
+		t.Fatalf("the job never ended; model requests:\n%s\nevidence:\n%s", model.log(), j.evidenceLog())
+	}
+	answers := []string{}
+	for _, line := range strings.Split(model.log(), "\n") {
+		if strings.HasPrefix(line, "JOB-H") {
+			_, a, _ := strings.Cut(line, "-> ")
+			answers = append(answers, a)
+		}
+	}
+	t.Logf("the job's model requests, in order: %v", answers)
+	want := []string{"subagent", "called", "read the report", opencode.CompletionTool, "called"}
+	if !slices.Equal(slices.DeleteFunc(answers, func(a string) bool { return a == "title" }), want) {
+		t.Errorf("the job's requests were %v, want %v: a continuation went out while the subagent ran, or none after its report", answers, want)
+	}
+	waiting := j.evidence("continue.waiting")
+	if len(waiting) != 1 || waiting[0]["running"] != float64(1) {
+		t.Errorf("continue.waiting = %v, want one with one subagent running; evidence:\n%s", waiting, j.evidenceLog())
+	}
+	if got := j.evidence("loop.stopped"); got[0]["reason"] != opencode.CompletionReason {
+		t.Errorf("the run stopped as %v", got)
+	}
 }
