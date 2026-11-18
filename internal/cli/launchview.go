@@ -41,6 +41,7 @@ type launchPalette struct {
 
 func newPalette(darkBackground bool) launchPalette {
 	pick := lipgloss.LightDark(darkBackground)
+	t := newTones(darkBackground)
 	return launchPalette{
 		// The bird is warm against a cool sky; the distant flock is
 		// paler, as distance washes colour out; the ground is earth.
@@ -52,11 +53,11 @@ func newPalette(darkBackground bool) launchPalette {
 		// The status column is deliberately near-neutral: it is text to
 		// read, and the colour it does carry marks state — done, in
 		// progress, not started — rather than decorating.
-		title:   pick(lipgloss.Color("#2b2b2b"), lipgloss.Color("#e6e6e6")),
-		done:    pick(lipgloss.Color("#2f7d55"), lipgloss.Color("#7fd6a3")),
-		running: pick(lipgloss.Color("#a8761f"), lipgloss.Color("#e0b341")),
-		pending: pick(lipgloss.Color("#9aa7b4"), lipgloss.Color("#5c6773")),
-		detail:  pick(lipgloss.Color("#5c6773"), lipgloss.Color("#9aa7b4")),
+		title:   t.title,
+		done:    t.ok,
+		running: t.warn,
+		pending: t.faint,
+		detail:  t.dim,
 	}
 }
 
@@ -345,17 +346,7 @@ func (e *Env) launchView() *launchView {
 //
 // @decision(DL-024)
 func terminalIsDark() bool {
-	// COLORFGBG is set by several terminals as "fg;bg"; a bg of 15 or 7
-	// means light. Anything else falls through to dark.
-	if v := os.Getenv("COLORFGBG"); v != "" {
-		if i := strings.LastIndex(v, ";"); i >= 0 {
-			switch v[i+1:] {
-			case "15", "7":
-				return false
-			}
-		}
-	}
-	return true
+	return darkBackground(os.Getenv)
 }
 
 // progressFraction is the share of steps completed, which draws the

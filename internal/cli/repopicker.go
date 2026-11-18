@@ -97,16 +97,16 @@ type pickerStyles struct {
 }
 
 func newPickerStyles(dark bool) pickerStyles {
-	pick := lipgloss.LightDark(dark)
+	t := newTones(dark)
 	return pickerStyles{
 		title:     lipgloss.NewStyle().Bold(true),
-		count:     lipgloss.NewStyle().Foreground(pick(lipgloss.Color("#5c6773"), lipgloss.Color("#9aa7b4"))),
-		cursor:    lipgloss.NewStyle().Foreground(pick(lipgloss.Color("#a8761f"), lipgloss.Color("#e0b341"))),
-		match:     lipgloss.NewStyle().Bold(true).Foreground(pick(lipgloss.Color("#a8761f"), lipgloss.Color("#e0b341"))),
-		detail:    lipgloss.NewStyle().Foreground(pick(lipgloss.Color("#5c6773"), lipgloss.Color("#9aa7b4"))),
-		help:      lipgloss.NewStyle().Foreground(pick(lipgloss.Color("#9aa7b4"), lipgloss.Color("#5c6773"))),
-		selected:  lipgloss.NewStyle().Foreground(pick(lipgloss.Color("#2f7d55"), lipgloss.Color("#7fd6a3"))),
-		emptyHint: lipgloss.NewStyle().Foreground(pick(lipgloss.Color("#9aa7b4"), lipgloss.Color("#5c6773"))),
+		count:     lipgloss.NewStyle().Foreground(t.dim),
+		cursor:    lipgloss.NewStyle().Foreground(t.warn),
+		match:     lipgloss.NewStyle().Bold(true).Foreground(t.warn),
+		detail:    lipgloss.NewStyle().Foreground(t.dim),
+		help:      lipgloss.NewStyle().Foreground(t.faint),
+		selected:  lipgloss.NewStyle().Foreground(t.ok),
+		emptyHint: lipgloss.NewStyle().Foreground(t.faint),
 	}
 }
 

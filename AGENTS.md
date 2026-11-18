@@ -52,6 +52,7 @@ A code comment says what the code does, plus anything local and non-obvious, the
 | Modal SDK | `github.com/modal-labs/modal-client/go` | `github.com/modal-labs/libmodal/modal-go` (deprecated) |
 | Charm TUI | `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2` | `github.com/charmbracelet/*` (pkg.go.dev serves stale v2 betas) |
 | koanf | `github.com/knadh/koanf/v2` and `github.com/knadh/koanf/providers/env/v2` | v1 paths without the `/v2` suffix |
+| Charm's colour profile and ANSI helpers | `github.com/charmbracelet/colorprofile`, `github.com/charmbracelet/x/ansi` (these never moved to `charm.land`) | `charm.land/colorprofile`, `charm.land/x/ansi` |
 
 The Modal SDK is pre-1.0 and ships breaking minor releases. Keep its exact pin in `go.mod` and keep its types behind `internal/sandbox` (DL-029).
 
@@ -402,6 +403,7 @@ A stopped interactive session is reopened in a new sandbox, the same row, as its
 - `config.AddPlatform` is the user file's only writer. It creates the file or appends a `platforms` block to one that has none, byte for byte around it, and never edits a list, a multi-document file or a flow-style one; init prints the lines instead. After a write init drops `Env.cachedConfig` and loads again, restoring the file if it no longer loads (DL-124; `TestAddPlatformCreatesOrAppends`, `TestAddPlatformNeverEditsAList`).
 - Without an embedded credential proxy gh's token would live inside the sandbox, so the gh question is followed by a second one that says so (DL-124, DL-034; `TestInitAsksTwiceWithoutTheProxy`).
 - A local server reads platforms and keys once at start, so after a fix init stops an idle one and leaves one with a live session (`settleLocalServer`) (DL-124).
+- Init's stdout is styled only on a terminal with `NO_COLOR` unset and `TERM` not `dumb`. Every line init itself prints on stdout, and its questions, go through `initStyle` (`initstyle.go`, colours from `palette.go`'s `tones`), which shows control characters as escapes and line breaks and tabs as spaces (`initText`, through `printableLine`), so a styled run is the plain run's lines with escape sequences added, both wrapped at 80 columns under their indent. Its one stderr notice and the lines of the commands a fix calls keep their own form; `--json` is never styled (DL-152; `TestInitIsStyledOnATerminalWithTheSameText`, `TestInitIsPlainWithoutAColourTerminal`, `TestInitPrintsOddTextTheSameInBothModes`).
 - Three first-run errors name init: no Modal credentials (checked in `spawnLocal` before the spawn, only where the provider is the real one), no git platform (`Env.noPlatforms`, which names the user file and never `.spov.yaml`), and an unpublished base image (DL-125; `TestFirstRunErrorsNameInit`).
 
 ## Sandbox templates
