@@ -2,6 +2,9 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-151 | The session list and the session page lead with the title when there is one | proposed | web | session-titles, web, layout, sessions |
+| DL-150 | The prep pass gives a job its title | proposed | jobs | session-titles, jobs, prep |
+| DL-149 | A session has a title: OpenCode's for its main conversation, else its job's | proposed | server | session-titles, sessions, jobs, api |
 | DL-148 | A session's preview is the newest message that says something | accepted | server | web, sessions, store |
 | DL-147 | The session list leads with the repository at every width | accepted | web | web, layout, sessions |
 | DL-146 | The job plugin's tools stop when OpenCode aborts their call, and an aborted completion is withdrawn | accepted | opencode | opencode-2-3, opencode, plugin, completion |
