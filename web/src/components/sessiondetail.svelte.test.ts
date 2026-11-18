@@ -1351,6 +1351,19 @@ describe("the session page on a phone", () => {
     page.done();
   });
 
+  // @decision(DL-151)
+  it("leads the bar, the heading and the document title with the title, and keeps the repository below it", async () => {
+    stub.setSession({ title: "Fix the flaky login test", repos: [{ platform: "github", owner: "acme", name: "storefront" }] });
+    const page = await open();
+    const bar = page.control("session-bar")!;
+    const [lead, below] = Array.from(bar.querySelectorAll("p"));
+    expect(lead.textContent!.trim()).toBe("Fix the flaky login test");
+    expect(below.textContent).toContain("acme/storefront");
+    expect(page.target.querySelector("h1")!.textContent!.trim()).toBe("Fix the flaky login test");
+    expect(document.title).toBe("Fix the flaky login test — spov");
+    page.done();
+  });
+
   it("returns to the end when a message is sent from further up the page", async () => {
     const page = await open();
     // A page a long way from its end: the latch is released by a move up.

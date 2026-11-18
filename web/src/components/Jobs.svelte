@@ -4,10 +4,11 @@
   // route. Polled, and a store read, so no sandbox is touched.
   //
   // Below `md` the page is a single line of limit and Start, a filter row
-  // that does not wrap, and rows of four lines or fewer: the goal, the
-  // state and kind with the time, and how it came out.
+  // that does not wrap, and rows of four lines or fewer: the title or
+  // the goal, the state and kind with the time, and how it came out.
   //
   // @decision(DL-060) @decision(DL-057) @decision(DL-018) @decision(DL-106)
+  // @decision(DL-151)
   import { untrack } from 'svelte';
   import { api, unwrap } from '../lib/api/client';
   import { resource } from '../lib/resource.svelte';
@@ -15,8 +16,8 @@
   import {
     FILTERS,
     type Show,
-    goalLine,
     jobAge,
+    jobHeadline,
     outcomeOf,
     searchFor,
     showFrom,
@@ -210,7 +211,7 @@
           <div class="min-w-0 max-md:contents" role="cell">
             <a
               class="text-base font-semibold text-ink no-underline after:absolute after:inset-0 focus-visible:outline-none max-md:col-span-2 max-md:row-start-1 max-md:line-clamp-2"
-              href={`/session/?id=${encodeURIComponent(job.session_id)}`}>{goalLine(job.goal) || job.id}</a
+              href={`/session/?id=${encodeURIComponent(job.session_id)}`}>{jobHeadline(job)}</a
             >
             <p class="m-0 mt-0.5 text-md text-soft max-md:hidden">{kindName(job.kind)} job</p>
             {#if outcome.kind === 'link'}

@@ -57,9 +57,12 @@ A server with a database also serves a dashboard, signed in to with GitHub.
 allowlist.
 
 - **Sessions**: every session, live, with its state, its job if it has one,
-  and its age.
+  and its age. A row leads with the session's title when it has one (the
+  title OpenCode gave its conversation, or for a job the one the preparation
+  pass gave it), else with its repository.
 - **Jobs**: every job, filtered by All, Active, Needs you (blocked or steered)
-  and Finished, with each job's outcome.
+  and Finished, with each job's outcome. A row leads with the job's title,
+  else the first line of its goal.
 - **Start a session** and **Start a job**: from a form each, with a picker of
   your repositories. The job form makes the same job as `spov jobs create`.
 - **A session's page** is also its job's page:

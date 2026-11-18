@@ -4,6 +4,7 @@ import {
   FILTERS,
   GROUP,
   goalLine,
+  jobHeadline,
   jobAge,
   linkLabel,
   outcomeOf,
@@ -94,6 +95,15 @@ describe("a row", () => {
       "Fix the flaky test",
     );
     expect(goalLine("   ")).toBe("");
+  });
+
+  // @decision(DL-151)
+  it("leads with the job's title in place of its goal when it has one", () => {
+    const j = { id: "j1", goal: "the login test fails\none run in ten" } as Job;
+    expect(jobHeadline({ ...j, title: "Fix the flaky login test" })).toBe("Fix the flaky login test");
+    expect(jobHeadline({ ...j, title: " " })).toBe("the login test fails");
+    expect(jobHeadline(j)).toBe("the login test fails");
+    expect(jobHeadline({ ...j, goal: "  " })).toBe("j1");
   });
 
   // @decision(DL-060) @decision(DL-051)

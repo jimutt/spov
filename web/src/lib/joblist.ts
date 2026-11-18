@@ -81,6 +81,16 @@ export function goalLine(goal: string): string {
   );
 }
 
+/**
+ * jobHeadline is what a job's row leads with: its title when it has
+ * one, else the first line of its goal, else its id.
+ *
+ * @decision(DL-151)
+ */
+export function jobHeadline(j: Job): string {
+  return j.title?.trim() || goalLine(j.goal) || j.id;
+}
+
 /** One row's outcome line: a link, a note, or nothing. */
 export type Outcome =
   | { kind: "link"; href: string; text: string; short: string }

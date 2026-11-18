@@ -55,6 +55,33 @@ describe("a session list row", () => {
     expect(meta).not.toContain("acme/lib");
   });
 
+  // @decision(DL-151)
+  it("leads with the title, and carries the repository and the name on the meta line", () => {
+    const title = "Fix the flaky login test in the sign-in flow";
+    const { link, meta } = draw({
+      ...base,
+      title,
+      job: { id: "01JOB", kind: "report", state: "running" },
+      repos: [
+        { owner: "acme", name: "app" },
+        { owner: "acme", name: "lib" },
+      ],
+    } as Session);
+    expect(link.textContent!.trim()).toBe(title);
+    expect(link.getAttribute("title")).toBe(title);
+    expect(link.className).toContain("truncate");
+    expect(link.getAttribute("href")).toBe("/session/?id=01SESSION");
+    expect(meta).toBe("Report job acme/app +1 job-01m7nwex");
+    expect(document.querySelectorAll("a")).toHaveLength(1);
+  });
+
+  // @decision(DL-151)
+  it("draws a title as text", () => {
+    const { link } = draw({ ...base, title: "<b>bold</b> & <img src=x>", repos: [] } as Session);
+    expect(link.textContent!.trim()).toBe("<b>bold</b> & <img src=x>");
+    expect(link.querySelector("b, img")).toBeNull();
+  });
+
   it("leads with the name when the session has no repository", () => {
     const { link, meta } = draw({ ...base, repos: [] } as Session);
     expect(link.textContent!.trim()).toBe("job-01m7nwex");
