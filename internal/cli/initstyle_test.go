@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -63,6 +64,13 @@ func TestInitIsStyledOnATerminalWithTheSameText(t *testing.T) {
 			styledRun.onATerminal()
 			styled, _, _ := styledRun.run()
 			styled = strings.ReplaceAll(styled, styledRun.cfgHome, "CONFIG")
+			var asked []string
+			for _, q := range styledRun.asked {
+				asked = append(asked, stripStyle(q))
+			}
+			if strings.Join(asked, "\n") != strings.Join(plainRun.asked, "\n") {
+				t.Errorf("the questions differ.\nterminal: %q\nplain:    %q", asked, plainRun.asked)
+			}
 
 			if strings.Contains(plain, "\x1b") {
 				t.Errorf("the plain output has an escape sequence:\n%q", plain)
@@ -192,5 +200,130 @@ func TestInitProseWrapsUnderItsIndent(t *testing.T) {
 	}
 	if code != 3 {
 		t.Errorf("%d runs are code, want the variable, the path and the span", code)
+	}
+}
+
+// Text from a forge, Modal or the filesystem prints alike in both modes:
+// a line break or a tab is a space, inside a backtick span too, and an
+// escape sequence, another control character or a byte that is not
+// UTF-8 is shown as an escape, never written.
+//
+// @decision(DL-152) @decision(DL-136)
+func TestInitPrintsOddTextTheSameInBothModes(t *testing.T) {
+	plain := newInitStyle(false, colorprofile.NoTTY, true, 40)
+	styled := newInitStyle(true, colorprofile.TrueColor, true, 40)
+	for name, text := range map[string]string{
+		"a tab":                    "a\tb and `c\td` e",
+		"line breaks":              "one\r\ntwo\rthree\nfour `five\nsix seven` eight",
+		"a long span with a break": "see `a fairly long command\nwith a second line that is longer` now",
+		"not UTF-8":                "bad \xff byte `in \xfe span`",
+		"an escape and an OSC":     "red \x1b[31mtext\x1b[0m and \x1b]8;;https://x.example\x07link\x1b]8;;\x07 `\x1b[2J`",
+	} {
+		t.Run(name, func(t *testing.T) {
+			for kind, draw := range map[string]func(initStyle) []string{
+				"prose":    func(s initStyle) []string { return s.prose(5, roleDim, text) },
+				"labelled": func(s initStyle) []string { return s.labelled(5, "error:", roleErrLabel, roleErrText, text) },
+				"code":     func(s initStyle) []string { return []string{s.codeLine(7, text)} },
+			} {
+				p, st := draw(plain), draw(styled)
+				if got, want := stripStyle(strings.Join(st, "\n")), strings.Join(p, "\n"); got != want {
+					t.Errorf("%s: styled\n%q\nplain\n%q", kind, got, want)
+				}
+				for _, line := range p {
+					if (strings.ContainsAny(line, "\x1b\x07\t\r\n") || !utf8.ValidString(line)) || !strings.HasPrefix(line, "     ") || strings.HasSuffix(line, " ") {
+						t.Errorf("%s: a line %q", kind, line)
+					}
+				}
+				for _, line := range st {
+					if strings.Contains(stripStyle(line), "\x1b") {
+						t.Errorf("%s: a raw escape in the styled line %q", kind, line)
+					}
+				}
+			}
+		})
+	}
+}
+
+// A failed fix whose error carries escape sequences shows them as text.
+//
+// @decision(DL-152) @decision(DL-136)
+func TestInitShowsAnErrorsEscapesAsText(t *testing.T) {
+	var outs []string
+	for _, terminal := range []bool{false, true} {
+		f := newInitFixture(t, "")
+		f.accErr = errors.New("\x1b[31mred\x1b[0m \x1b]0;title\x07")
+		if terminal {
+			f.onATerminal()
+		}
+		out, _, _ := f.run()
+		out = strings.ReplaceAll(out, f.cfgHome, "CONFIG")
+		if strings.Contains(stripStyle(out), "\x1b") || strings.Contains(out, "\x07") || !strings.Contains(out, `\x1b[31mred`) {
+			t.Errorf("terminal %v: the error's escapes were written:\n%q", terminal, out)
+		}
+		outs = append(outs, stripStyle(out))
+	}
+	if outs[0] != outs[1] {
+		t.Errorf("the modes differ:\n%s\n%s", outs[0], outs[1])
+	}
+}
+
+// A fix line that starts or ends with an alternative's joiner draws only
+// its commands.
+//
+// @decision(DL-152)
+func TestAFixWithAnEmptyAlternativeDrawsItsCommands(t *testing.T) {
+	st := newInitStyle(false, colorprofile.NoTTY, true, initWidth)
+	for fix, want := range map[string]string{
+		", or spov login":               "spov login",
+		"spov init, or , or spov login": "spov init, or spov login",
+		"spov init, or ":                "spov init",
+		", or ":                         "",
+	} {
+		got := st.wrap(0, 0, st.fixWords(fix, roleText))
+		if strings.Join(got, "\n") != want {
+			t.Errorf("%q drew %q, want %q", fix, got, want)
+		}
+	}
+}
+
+// A question to a terminal is styled and reads the same once its style is
+// removed.
+//
+// @decision(DL-152)
+func TestInitStylesAQuestionOnATerminal(t *testing.T) {
+	f := newInitFixture(t, "")
+	f.onATerminal()
+	f.no = "Build it now"
+	_, _, _ = f.run()
+	if len(f.asked) == 0 || !strings.Contains(f.asked[0], "\x1b[") {
+		t.Fatalf("the question is not styled: %q", f.asked)
+	}
+	if q := stripStyle(f.asked[0]); !strings.HasPrefix(q, "     ? ") || !strings.HasSuffix(q, " [y/N] ") {
+		t.Errorf("the question is %q", q)
+	}
+}
+
+// A terminal narrower than 80 columns is wrapped at its width, down to 40,
+// each line kept under its indent.
+//
+// @decision(DL-152)
+func TestInitWrapsAtANarrowTerminalsWidth(t *testing.T) {
+	for w, want := range map[int]int{50: 50, 30: initMinWidth, 120: initWidth, 80: initWidth, 0: initWidth} {
+		if got := initWidthOf(w, nil); got != want {
+			t.Errorf("a %d-column terminal wraps at %d, want %d", w, got, want)
+		}
+	}
+	if got := initWidthOf(50, errors.New("not a terminal")); got != initWidth {
+		t.Errorf("no size wraps at %d", got)
+	}
+	st := newInitStyle(false, colorprofile.NoTTY, true, initWidthOf(50, nil))
+	lines := st.labelled(5, "error:", roleErrLabel, roleErrText, "could not check gh's login with GitHub (bad credentials); nothing was changed")
+	if len(lines) < 2 {
+		t.Fatalf("not wrapped: %q", lines)
+	}
+	for i, line := range lines {
+		if len(line) > 50 || (i > 0 && !strings.HasPrefix(line, strings.Repeat(" ", 12))) {
+			t.Errorf("line %d: %q", i, line)
+		}
 	}
 }

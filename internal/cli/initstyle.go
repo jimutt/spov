@@ -88,10 +88,24 @@ func (e *Env) initWidthFor() int {
 		return initWidth
 	}
 	w, _, err := term.GetSize(int(f.Fd()))
+	return initWidthOf(w, err)
+}
+
+// initWidthOf is the width to wrap at on a terminal w columns wide.
+func initWidthOf(w int, err error) int {
 	if err != nil || w <= 0 || w >= initWidth {
 		return initWidth
 	}
 	return max(w, initMinWidth)
+}
+
+// initText is text as init prints it, alike in both modes: a line break
+// or a tab is a space, and an escape sequence, any other control
+// character or a byte that is not UTF-8 is shown as an escape.
+//
+// @decision(DL-152) @decision(DL-136)
+func initText(s string) string {
+	return printableLine(strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ", "\t", " ").Replace(s))
 }
 
 func newInitStyle(on bool, profile colorprofile.Profile, dark bool, width int) initStyle {
@@ -125,15 +139,15 @@ func (s initStyle) render(segs ...seg) string {
 	if !s.on {
 		var b strings.Builder
 		for _, g := range segs {
-			b.WriteString(g.text)
+			b.WriteString(initText(g.text))
 		}
 		return b.String()
 	}
 	var b strings.Builder
 	for i := 0; i < len(segs); {
-		j, text := i+1, segs[i].text
+		j, text := i+1, initText(segs[i].text)
 		for ; j < len(segs) && segs[j].role == segs[i].role; j++ {
-			text += segs[j].text
+			text += initText(segs[j].text)
 		}
 		if segs[i].role == roleText {
 			b.WriteString(text)
@@ -175,7 +189,7 @@ var (
 // spans, paths, addresses and variable names in code.
 func (s initStyle) words(text string, base role) []word {
 	var out []word
-	for _, raw := range splitOutsideBackticks(text) {
+	for _, raw := range splitOutsideBackticks(initText(text)) {
 		var w word
 		for len(raw) > 0 {
 			open := strings.IndexByte(raw, '`')
@@ -307,8 +321,11 @@ var commandWords = map[string]bool{"spov": true, "uvx": true, "pipx": true, "mod
 // and in code, the others as prose.
 func (s initStyle) fixWords(fix string, base role) []word {
 	var out []word
-	for i, part := range strings.Split(fix, ", or ") {
-		if i > 0 {
+	for _, part := range strings.Split(initText(fix), ", or ") {
+		if part = strings.TrimSpace(part); part == "" {
+			continue
+		}
+		if len(out) > 0 {
 			out[len(out)-1] = append(out[len(out)-1], seg{",", roleDim})
 			out = append(out, word{{"or", roleDim}})
 		}
