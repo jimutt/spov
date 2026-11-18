@@ -430,12 +430,14 @@ order by t.at desc nulls last, t.id desc;
 
 -- name: LastMessages :many
 -- Root conversations only: a subagent's message is never a session's
--- preview. Nor is a message with no words. @decision(DL-148)
+-- preview. Nor is a message with no words, nor one that is neither a
+-- person's nor the agent's (store.PreviewRole). @decision(DL-148)
 select distinct on (m.session_id) m.* from messages m
 join conversations c on c.id = m.conversation_id
 where m.org_id = $1 and m.session_id = any(sqlc.arg(session_ids)::text[])
   and c.parent_opencode_id is null
   and btrim(m.text, E' \t\n\r') <> ''
+  and m.role in ('user', 'assistant')
 order by m.session_id, m.at desc nulls last, m.id desc;
 
 -- name: ConversationTitles :many

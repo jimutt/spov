@@ -1045,6 +1045,13 @@ func Primary(convs []Conversation) (Conversation, bool) {
 	return Conversation{}, false
 }
 
+// PreviewRole reports whether a message of this role can be a
+// session's preview: a person's (user) or the agent's (assistant), never
+// spov's synthetic items or any other type OpenCode stores.
+//
+// @decision(DL-148)
+func PreviewRole(role string) bool { return role == "user" || role == "assistant" }
+
 // Message is one thing said in a conversation: the reply, not the parts
 // it arrived in, and never a reasoning part.
 //
@@ -1152,8 +1159,11 @@ type ConversationStore interface {
 	// @decision(DL-131)
 	RecentMessages(ctx context.Context, orgID, sessionID, conversationID string, limit int, maxBytes int64) (msgs []Message, more bool, err error)
 	// LastMessages answers the list page in one query: each session's
-	// latest message, keyed by session ID. A session with none is
+	// latest message of a root conversation that has text and a role
+	// PreviewRole takes, keyed by session ID. A session with none is
 	// absent from the map.
+	//
+	// @decision(DL-148)
 	LastMessages(ctx context.Context, orgID string, sessionIDs []string) (map[string]Message, error)
 	// Titles answers the list page in one query: the title of each
 	// session's main conversation, its oldest root, keyed by session ID.

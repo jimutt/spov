@@ -2308,9 +2308,9 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		quiet := runningSession(t, s, "org", "u1", "beta")
 		conv := conversation(t, s, talky, "ses_1")
 		msgs := []store.Message{
-			{ID: store.NewID(t0), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m1", Text: "first", At: t0},
-			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m2", Text: "last", At: t0.Add(time.Hour)},
-			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m3", Text: "middle", At: t0.Add(time.Minute)},
+			{ID: store.NewID(t0), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m1", Role: "user", Text: "first", At: t0},
+			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m2", Role: "assistant", Text: "last", At: t0.Add(time.Hour)},
+			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m3", Role: "user", Text: "middle", At: t0.Add(time.Minute)},
 		}
 		if _, err := s.Conversations().PutMessages(ctx, msgs); err != nil {
 			t.Fatal(err)
@@ -2349,9 +2349,9 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Fatal(err)
 		}
 		if _, err := s.Conversations().PutMessages(ctx, []store.Message{
-			{ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, ConversationID: root.ID, OpenCodeID: "m1", Text: "the person's", At: t0},
-			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: child.ID, OpenCodeID: "m2", Text: "the subagent's", At: t0.Add(time.Hour)},
-			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: lonely.ID, ConversationID: orphan.ID, OpenCodeID: "m3", Text: "only a subagent", At: t0},
+			{ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, ConversationID: root.ID, OpenCodeID: "m1", Role: "user", Text: "the person's", At: t0},
+			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: child.ID, OpenCodeID: "m2", Role: "assistant", Text: "the subagent's", At: t0.Add(time.Hour)},
+			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: lonely.ID, ConversationID: orphan.ID, OpenCodeID: "m3", Role: "assistant", Text: "only a subagent", At: t0},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -2366,9 +2366,10 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("a session with only a subagent's messages has the preview %q", m.Text)
 		}
 	},
-	// A session's preview is something said: a newer message with no
-	// text (a turn's idle marker, a model switch) never takes its place.
-	// @decision(DL-148)
+	// A session's preview is something a person or the agent said: a
+	// newer message with no text (a turn's idle marker, a model switch),
+	// or of another type (spov's synthetic items, a shell call), never
+	// takes its place. @decision(DL-148)
 	"conversations: the last message is the newest that says something": func(t *testing.T, s store.Store) {
 		ctx := context.Background()
 		sess := runningSession(t, s, "org", "u1", "alpha")
@@ -2380,6 +2381,10 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m2", Role: "idle", At: t0.Add(time.Hour)},
 			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m3", Role: "assistant", Text: " \n\t", At: t0.Add(2 * time.Hour)},
 			{ID: store.NewID(t0.Add(3 * time.Second)), OrgID: "org", SessionID: silent.ID, ConversationID: quiet.ID, OpenCodeID: "m4", Role: "idle", At: t0},
+			{ID: store.NewID(t0.Add(4 * time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m5", Role: "synthetic",
+				Text: `SPOV_LOOP_STOPPED {"reason":"declared"}`, At: t0.Add(3 * time.Hour)},
+			{ID: store.NewID(t0.Add(5 * time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m6", Role: "shell", Text: "ls -la", At: t0.Add(4 * time.Hour)},
+			{ID: store.NewID(t0.Add(6 * time.Second)), OrgID: "org", SessionID: silent.ID, ConversationID: quiet.ID, OpenCodeID: "m7", Role: "synthetic", Text: "the goal", At: t0.Add(time.Hour)},
 		}); err != nil {
 			t.Fatal(err)
 		}
