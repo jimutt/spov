@@ -176,14 +176,15 @@ func (g *GitHubPAT) Login(ctx context.Context) (string, error) {
 }
 
 // Inspect says whose token this is. GitHub's own refusals are told
-// apart as for every forge; a token that names no user is not an error.
+// apart as for every forge, except a rate limit, which is a plain error;
+// a token that names no user is not an error.
 //
 // @decision(DL-041) @decision(DL-124)
 func (g *GitHubPAT) Inspect(ctx context.Context) (TokenInfo, error) {
 	login, err := g.Login(ctx)
 	if err != nil {
 		var refused *githubStatusError
-		if errors.As(err, &refused) && statusError(refused.code) != nil {
+		if errors.As(err, &refused) && !refused.rateLimited && statusError(refused.code) != nil {
 			return TokenInfo{}, fmt.Errorf("%w (%s)", statusError(refused.code), refused.text)
 		}
 		return TokenInfo{}, fmt.Errorf("git: read the token's user on %s: %w", g.host, err)

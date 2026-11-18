@@ -591,7 +591,8 @@ func githubError(resp *http.Response) error {
 	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Message != "" {
 		text = resp.Status + ": " + parsed.Message
 	}
-	return &githubStatusError{code: resp.StatusCode, text: text}
+	return &githubStatusError{code: resp.StatusCode, text: text,
+		rateLimited: resp.Header.Get("X-RateLimit-Remaining") == "0" || strings.Contains(strings.ToLower(parsed.Message), "rate limit")}
 }
 
 // githubStatusError is a response GitHub refused: its status and its own
@@ -599,6 +600,9 @@ func githubError(resp *http.Response) error {
 type githubStatusError struct {
 	code int
 	text string
+	// rateLimited says GitHub refused the request for its rate limit,
+	// which it answers with a 403 or a 429.
+	rateLimited bool
 }
 
 func (e *githubStatusError) Error() string { return e.text }
