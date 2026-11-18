@@ -247,6 +247,9 @@ them.
 
 ## Documentation
 
+The [documentation index](docs/README.md) lists every page by what you
+want to do.
+
 - [Interactive sessions](docs/sessions.md): starting, syncing, resuming, and
   `--json` output for scripts
 - [Autonomous jobs](docs/jobs.md): goals, checks, steering and how a job is
