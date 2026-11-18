@@ -820,6 +820,24 @@ func TestAToolResultNamesTheSessionItStarted(t *testing.T) {
 		{"a large output ahead of it", "session.tool.success",
 			success(`{` + head + `"content":[{"type":"text","text":"` + strings.ReplaceAll(big, `"`, `\"`) + `"}],"metadata":{"sessionID":"ses_c"}}`),
 			store.SourceOpenCode, "ses_c"},
+		{"an envelope metadata after the data", "session.tool.success",
+			contract.Frame(t, `{"id":"evt_9","created":1794958241180,"type":"session.tool.success",`+
+				`"data":{`+head+`"content":[{"type":"text","text":"x"}],"metadata":{"sessionID":"ses_c","status":"running"}},`+
+				`"durable":{"aggregateID":"ses_p","seq":14,"version":2},"metadata":{"sessionID":"ses_envelope"}}`),
+			store.SourceOpenCode, "ses_c"},
+		{"an envelope metadata after a data that names no child", "session.tool.success",
+			contract.Frame(t, `{"id":"evt_9","created":1794958241180,"type":"session.tool.success",`+
+				`"data":{`+head+`"content":[{"type":"text","text":"x"}]},`+
+				`"durable":{"aggregateID":"ses_p","seq":14,"version":2},"metadata":{"sessionID":"ses_envelope"}}`),
+			store.SourceOpenCode, ""},
+		{"an envelope metadata holding a metadata of its own", "session.tool.success",
+			contract.Frame(t, `{"id":"evt_9","created":1794958241180,"type":"session.tool.success",`+
+				`"data":{`+head+`"content":[{"type":"text","text":"x"}],"metadata":{"sessionID":"ses_c"}},`+
+				`"durable":{"aggregateID":"ses_p","seq":14,"version":2},"metadata":{"metadata":{"sessionID":"ses_inner"}}}`),
+			store.SourceOpenCode, "ses_c"},
+		{"brackets and quotes inside the metadata's strings", "session.tool.success",
+			success(`{` + head + `"content":[{"type":"text","text":"x"}],"metadata":{"note":"a } \" ] {","sessionID":"ses_c"}}`),
+			store.SourceOpenCode, "ses_c"},
 		{"a tool with other metadata", "session.tool.success",
 			success(`{` + head + `"content":[{"type":"text","text":"x"}],"metadata":{"count":1,"truncated":false}}`), store.SourceOpenCode, ""},
 		{"no metadata", "session.tool.success", success(`{` + head + `"content":[{"type":"text","text":"x"}]}`), store.SourceOpenCode, ""},

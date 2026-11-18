@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,11 +51,20 @@ func TestASubagentsReportIsNamedOnTheWire(t *testing.T) {
 		{"a report naming no child", contract.Frame(t, replaceOnce(reportFrame, `"childID":"ses_e1473bc9affePssI1WmxBG7Ksh",`, ``))},
 		{"another source", contract.Frame(t, replaceOnce(reportFrame, `"source":"subagent"`, `"source":"plugin"`))},
 		{"unreadable", contract.Unchecked(`{"data":{"item":`, "cut off")},
+		{"a continuation whose envelope metadata claims a report", contract.Frame(t, strings.TrimSuffix(
+			string(contract.Event(t, jobs.EventInboxEnqueued, 24, continuation)), "}")+
+			`,"metadata":{"source":"subagent","childID":"ses_fake","item":{"type":"synthetic","payload":{"text":"x",`+
+			`"metadata":{"source":"subagent","childID":"ses_fake"}},"delivery":"steer"}}}`)},
 	} {
 		ev := store.Event{Source: store.SourceOpenCode, Name: jobs.EventInboxEnqueued, Raw: tc.raw}
 		if got := storedReport(ev, storedRole(ev)); got != nil {
 			t.Errorf("%s read as a report: %+v", tc.name, got)
 		}
+	}
+	withEnvelope := contract.Frame(t, strings.TrimSuffix(reportFrame, "}")+`,"metadata":{"source":"plugin","childID":"ses_fake"}}`)
+	ev = store.Event{Source: store.SourceOpenCode, Name: jobs.EventInboxEnqueued, Raw: withEnvelope}
+	if got := storedReport(ev, storedRole(ev)); got == nil || got.Child != "ses_e1473bc9affePssI1WmxBG7Ksh" {
+		t.Errorf("an envelope metadata after the data changed the report to %+v", got)
 	}
 	if got := storedReport(store.Event{Source: store.SourceSpov, Name: jobs.EventInboxEnqueued, Raw: []byte(reportFrame)}, "synthetic"); got != nil {
 		t.Errorf("spov's own row read as a report: %+v", got)
