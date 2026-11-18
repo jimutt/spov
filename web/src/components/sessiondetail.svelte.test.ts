@@ -63,6 +63,7 @@ const stub = vi.hoisted(() => {
   const deleted: string[] = [];
   let jobReads = 0;
   let messageReads = 0;
+  let sessionReads = 0;
   let deleteAnswer: { status: number; problem?: Record<string, unknown> } = { status: 204 };
   const fetched = vi.fn(async (input: RequestInfo | URL) => {
     const req = input instanceof Request ? input : new Request(String(input));
@@ -129,7 +130,10 @@ const stub = vi.hoisted(() => {
       if (!jobsAnswer) return new Promise<Response>(() => {});
       return json({ jobs });
     }
-    if (url.pathname.startsWith("/api/v1/sessions/")) return json({ ...SESSION, ...session, state, credentials, resume });
+    if (url.pathname.startsWith("/api/v1/sessions/")) {
+      sessionReads++;
+      return json({ ...SESSION, ...session, state, credentials, resume });
+    }
     return new Response(null, { status: 404 });
   });
   globalThis.fetch = fetched as unknown as typeof globalThis.fetch;
@@ -144,6 +148,7 @@ const stub = vi.hoisted(() => {
     deleted: () => deleted,
     jobReads: () => jobReads,
     messageReads: () => messageReads,
+    sessionReads: () => sessionReads,
     refuseDelete: (status: number, problem: Record<string, unknown>) =>
       (deleteAnswer = { status, problem }),
     setSession: (fields: Record<string, unknown>) => (session = fields),
@@ -157,6 +162,7 @@ const stub = vi.hoisted(() => {
       deleteAnswer = { status: 204 };
       jobReads = 0;
       messageReads = 0;
+      sessionReads = 0;
       credentials = undefined;
       resume = undefined;
       session = {};
@@ -1348,6 +1354,58 @@ describe("the session page on a phone", () => {
     const bar = page.control("session-bar")!;
     expect(bar.textContent).toContain("acme/storefront");
     expect(bar.textContent).toContain("live");
+    page.done();
+  });
+
+  // @decision(DL-151)
+  it("leads the bar, the heading and the document title with the title, and keeps the repository below it", async () => {
+    stub.setSession({ title: "Fix the flaky login test", repos: [{ platform: "github", owner: "acme", name: "storefront" }] });
+    const page = await open();
+    const bar = page.control("session-bar")!;
+    const [lead, below] = Array.from(bar.querySelectorAll("p"));
+    expect(lead.textContent!.trim()).toBe("Fix the flaky login test");
+    expect(below.textContent).toContain("acme/storefront");
+    // The name is in the details sheet; the line under a title keeps the
+    // state and the reason, and the repository gives way first.
+    expect(below.textContent).not.toContain("live");
+    expect(below.className).toContain("overflow-hidden");
+    const repo = Array.from(below.querySelectorAll("span")).find((e) => e.textContent === "acme/storefront")!;
+    expect(repo.className).toContain("truncate");
+    expect(repo.className).toContain("min-w-0");
+    expect(page.target.querySelector("h1")!.textContent!.trim()).toBe("Fix the flaky login test");
+    expect(document.title).toBe("Fix the flaky login test — spov");
+    page.done();
+  });
+
+  // @decision(DL-151)
+  it("leads with the repository and the name when the session has no title", async () => {
+    stub.setSession({ repos: [{ platform: "github", owner: "acme", name: "storefront" }] });
+    const page = await open();
+    const [lead, below] = Array.from(page.control("session-bar")!.querySelectorAll("p"));
+    expect(lead.textContent!.replace(/\s+/g, "")).toBe("acme/storefront");
+    expect(below.textContent).toContain("live");
+    expect(page.target.querySelector("h1")!.textContent!.trim()).toBe("live");
+    expect(document.title).toBe("Session — spov");
+    page.done();
+  });
+
+  // @decision(DL-151)
+  it("reads the session again when the main conversation is renamed, and only then", async () => {
+    const page = await open();
+    expect(page.target.querySelector("h1")!.textContent!.trim()).toBe("live");
+    const reads = stub.sessionReads();
+    stub.setSession({ title: "Fix the flaky login test" });
+    stub.say({ name: "session.text.ended", source: "opencode", session: "ses_1", text: "hi", pos: 1 });
+    stub.say({ name: "session.renamed", source: "opencode", session: "ses_kid", parent: "ses_1", pos: 2 });
+    await settle();
+    expect(stub.sessionReads()).toBe(reads);
+    stub.say({ name: "session.renamed", source: "opencode", session: "ses_1", pos: 3 });
+    await settle();
+    await settle();
+    expect(stub.sessionReads()).toBe(reads + 1);
+    expect(page.target.querySelector("h1")!.textContent!.trim()).toBe("Fix the flaky login test");
+    await settle();
+    expect(stub.sessionReads()).toBe(reads + 1);
     page.done();
   });
 

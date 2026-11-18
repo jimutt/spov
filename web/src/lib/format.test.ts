@@ -27,7 +27,10 @@ import {
   live,
   money,
   repoHeadline,
+  repoLine,
   repoNames,
+  sessionHeadline,
+  documentTitle,
   resources,
   tone,
   clockBar,
@@ -205,6 +208,38 @@ describe('summaries', () => {
     });
     expect(repoHeadline(session({ repos: [] }))).toBeNull();
     expect(repoHeadline(session({ repos: null }))).toBeNull();
+  });
+
+  // @decision(DL-151)
+  test('sessionHeadline leads with the title, else the repository, else the name', () => {
+    const repo = (owner: string, name: string) => ({ platform: 'github', owner, name });
+    const repos = [repo('acme', 'widgets'), repo('acme', 'tokens')];
+    expect(sessionHeadline(session({ title: 'Fix the flaky login test', repos }))).toEqual({
+      kind: 'title',
+      title: 'Fix the flaky login test',
+    });
+    expect(sessionHeadline(session({ title: '  ', repos }))).toEqual({
+      kind: 'repo',
+      repo: { owner: 'acme/', name: 'widgets', more: 1 },
+    });
+    expect(sessionHeadline(session({ repos }))).toEqual({ kind: 'repo', repo: { owner: 'acme/', name: 'widgets', more: 1 } });
+    expect(sessionHeadline(session({ repos: [] }))).toEqual({ kind: 'name', name: 'refactor-proxy' });
+    expect(sessionHeadline(session({ repos: [], name: '' }))).toEqual({ kind: 'name', name: 's1' });
+  });
+
+  // @decision(DL-151)
+  test('repoLine names the first repository and counts the rest', () => {
+    const repo = (owner: string, name: string) => ({ platform: 'github', owner, name });
+    expect(repoLine(session({ repos: [repo('acme', 'widgets')] }))).toBe('acme/widgets');
+    expect(repoLine(session({ repos: [repo('acme', 'widgets'), repo('x', 'y'), repo('x', 'z')] }))).toBe('acme/widgets +2');
+    expect(repoLine(session({ repos: [] }))).toBe('');
+  });
+
+  // @decision(DL-151)
+  test('the document title leads with the session title when there is one', () => {
+    expect(documentTitle(session({ title: 'Fix the flaky login test' }))).toBe('Fix the flaky login test — spov');
+    expect(documentTitle(session({}))).toBe('Session — spov');
+    expect(documentTitle(null)).toBe('Session — spov');
   });
 
   test('repoNames is owner/name', () => {

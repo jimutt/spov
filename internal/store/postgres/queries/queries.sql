@@ -430,13 +430,23 @@ order by t.at desc nulls last, t.id desc;
 
 -- name: LastMessages :many
 -- Root conversations only: a subagent's message is never a session's
--- preview. Nor is a message with no words. @decision(DL-148)
+-- preview. Nor is a message with no words, nor one that is neither a
+-- person's nor the agent's (store.PreviewRole). @decision(DL-148)
 select distinct on (m.session_id) m.* from messages m
 join conversations c on c.id = m.conversation_id
 where m.org_id = $1 and m.session_id = any(sqlc.arg(session_ids)::text[])
   and c.parent_opencode_id is null
   and btrim(m.text, E' \t\n\r') <> ''
+  and m.role in ('user', 'assistant')
 order by m.session_id, m.at desc nulls last, m.id desc;
+
+-- name: ConversationTitles :many
+-- Each session's main conversation, its oldest root in ListConversations'
+-- order, with its title; a subagent's never stands in. @decision(DL-149)
+select distinct on (session_id) session_id, title from conversations
+where org_id = $1 and session_id = any(sqlc.arg(session_ids)::text[])
+  and parent_opencode_id is null
+order by session_id, created_at, id;
 
 -- name: InsertEvent :one
 -- A frame already stored is not an error and not a row: the caller
@@ -497,9 +507,9 @@ insert into jobs (id, org_id, owner_id, session_id, kind, state, goal, unfinishe
                   attempt, created_at, updated_at, started_at, stopped_at, check_command,
                   check_proposed, cursor, verdict, assessment, model,
                   max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at,
-                  pr_policy, skip_prep)
+                  pr_policy, skip_prep, title)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26);
+        $19, $20, $21, $22, $23, $24, $25, $26, $27);
 
 -- name: GetJob :one
 select * from jobs where org_id = $1 and id = $2;
@@ -582,7 +592,9 @@ update jobs
 set state = $3, goal = $4, unfinished = $5, error = $6, attempt = $7,
     updated_at = $8, started_at = $9, stopped_at = $10, cursor = $11,
     verdict = $12, assessment = $13, check_command = $14,
-    check_proposed = $15, clock_started_at = $16, clock_used_seconds = $17
+    check_proposed = $15, clock_started_at = $16, clock_used_seconds = $17,
+    -- Set while the row has none, and kept after. @decision(DL-150)
+    title = coalesce(jobs.title, sqlc.narg(title)::text)
 where org_id = $1 and id = $2;
 
 -- name: PutDeliverable :execrows

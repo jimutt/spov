@@ -42,7 +42,7 @@ import {
   subagentLog,
 } from './subagent.fixture';
 import { callFrames, childEnd, childStart, frame, toolFrames } from './subagent.frames';
-import { pendingAskIds, latestAction } from './timeline';
+import { pendingAskIds, latestAction, renamesMain } from './timeline';
 import { windowOf } from './transcriptwindow';
 import { unseen } from './steer';
 
@@ -1572,5 +1572,18 @@ describe('a subagent card', () => {
     const thought = [{ ...own[0], key: 'e99', name: 'session.reasoning.ended', text: 'checking the test', calls: undefined }];
     expect(latestAction([...own.slice(0, 1), ...thought])).toBe('thinking checking the test');
     expect(latestAction([])).toBe('');
+  });
+});
+
+// @decision(DL-151)
+describe('a rename in the log', () => {
+  const ev = (over: Record<string, unknown>) => ({ name: 'session.renamed', source: 'opencode', session: 'ses_1', pos: 1, ...over }) as Activity;
+  test("is the main conversation's only from a root", () => {
+    expect(renamesMain([ev({})])).toBe(true);
+    expect(renamesMain([ev({ name: 'session.text.ended' }), ev({})])).toBe(true);
+    expect(renamesMain([ev({ parent: 'ses_1', session: 'ses_kid' })])).toBe(false);
+    expect(renamesMain([ev({ source: 'spov' })])).toBe(false);
+    expect(renamesMain([ev({ name: 'session.text.ended' }), ev({ name: 'session.created' })])).toBe(false);
+    expect(renamesMain([])).toBe(false);
   });
 });

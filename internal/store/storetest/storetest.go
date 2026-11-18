@@ -2308,9 +2308,9 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		quiet := runningSession(t, s, "org", "u1", "beta")
 		conv := conversation(t, s, talky, "ses_1")
 		msgs := []store.Message{
-			{ID: store.NewID(t0), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m1", Text: "first", At: t0},
-			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m2", Text: "last", At: t0.Add(time.Hour)},
-			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m3", Text: "middle", At: t0.Add(time.Minute)},
+			{ID: store.NewID(t0), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m1", Role: "user", Text: "first", At: t0},
+			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m2", Role: "assistant", Text: "last", At: t0.Add(time.Hour)},
+			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: talky.ID, ConversationID: conv.ID, OpenCodeID: "m3", Role: "user", Text: "middle", At: t0.Add(time.Minute)},
 		}
 		if _, err := s.Conversations().PutMessages(ctx, msgs); err != nil {
 			t.Fatal(err)
@@ -2349,9 +2349,9 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Fatal(err)
 		}
 		if _, err := s.Conversations().PutMessages(ctx, []store.Message{
-			{ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, ConversationID: root.ID, OpenCodeID: "m1", Text: "the person's", At: t0},
-			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: child.ID, OpenCodeID: "m2", Text: "the subagent's", At: t0.Add(time.Hour)},
-			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: lonely.ID, ConversationID: orphan.ID, OpenCodeID: "m3", Text: "only a subagent", At: t0},
+			{ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, ConversationID: root.ID, OpenCodeID: "m1", Role: "user", Text: "the person's", At: t0},
+			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: child.ID, OpenCodeID: "m2", Role: "assistant", Text: "the subagent's", At: t0.Add(time.Hour)},
+			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: lonely.ID, ConversationID: orphan.ID, OpenCodeID: "m3", Role: "assistant", Text: "only a subagent", At: t0},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -2366,9 +2366,10 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("a session with only a subagent's messages has the preview %q", m.Text)
 		}
 	},
-	// A session's preview is something said: a newer message with no
-	// text (a turn's idle marker, a model switch) never takes its place.
-	// @decision(DL-148)
+	// A session's preview is something a person or the agent said: a
+	// newer message with no text (a turn's idle marker, a model switch),
+	// or of another type (spov's synthetic items, a shell call), never
+	// takes its place. @decision(DL-148)
 	"conversations: the last message is the newest that says something": func(t *testing.T, s store.Store) {
 		ctx := context.Background()
 		sess := runningSession(t, s, "org", "u1", "alpha")
@@ -2380,6 +2381,10 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m2", Role: "idle", At: t0.Add(time.Hour)},
 			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m3", Role: "assistant", Text: " \n\t", At: t0.Add(2 * time.Hour)},
 			{ID: store.NewID(t0.Add(3 * time.Second)), OrgID: "org", SessionID: silent.ID, ConversationID: quiet.ID, OpenCodeID: "m4", Role: "idle", At: t0},
+			{ID: store.NewID(t0.Add(4 * time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m5", Role: "synthetic",
+				Text: `SPOV_LOOP_STOPPED {"reason":"declared"}`, At: t0.Add(3 * time.Hour)},
+			{ID: store.NewID(t0.Add(5 * time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m6", Role: "shell", Text: "ls -la", At: t0.Add(4 * time.Hour)},
+			{ID: store.NewID(t0.Add(6 * time.Second)), OrgID: "org", SessionID: silent.ID, ConversationID: quiet.ID, OpenCodeID: "m7", Role: "synthetic", Text: "the goal", At: t0.Add(time.Hour)},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -2392,6 +2397,50 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if m, ok := got[silent.ID]; ok {
 			t.Errorf("a session where nothing was said has the preview %+v", m)
+		}
+	},
+	// A session's title is its oldest root conversation's, never a newer
+	// root's or a subagent's, and a session whose oldest root has none
+	// has none. @decision(DL-149)
+	"conversations: a session's title is its main conversation's": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		upsert := func(sess store.Session, opencodeID, parent, title string, at time.Time) {
+			t.Helper()
+			if _, err := s.Conversations().UpsertConversation(ctx, store.Conversation{
+				ID: store.NewID(at), OrgID: "org", SessionID: sess.ID, OpenCodeID: opencodeID,
+				ParentOpenCodeID: parent, Title: title, CreatedAt: at,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		titled := runningSession(t, s, "org", "u1", "alpha")
+		upsert(titled, "ses_child", "ses_main", "the subagent's", t0)
+		upsert(titled, "ses_main", "", "Fix the flaky login test", t0.Add(time.Second))
+		upsert(titled, "ses_later", "", "a later root's", t0.Add(2*time.Second))
+		untitled := runningSession(t, s, "org", "u1", "beta")
+		upsert(untitled, "ses_quiet", "", "", t0)
+		upsert(untitled, "ses_newer", "", "a newer root's", t0.Add(time.Second))
+		subagentOnly := runningSession(t, s, "org", "u1", "gamma")
+		upsert(subagentOnly, "ses_kid", "ses_gone", "only a subagent's", t0)
+		empty := runningSession(t, s, "org", "u1", "delta")
+
+		got, err := s.Conversations().Titles(ctx, "org", []string{titled.ID, untitled.ID, subagentOnly.ID, empty.ID, "nope"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[titled.ID] != "Fix the flaky login test" {
+			t.Errorf("titles = %+v, want only the main conversation's of %s", got, titled.ID)
+		}
+		// A rename reaches the read.
+		upsert(titled, "ses_main", "", "Fix the login test", t0.Add(time.Second))
+		if got, _ := s.Conversations().Titles(ctx, "org", []string{titled.ID}); got[titled.ID] != "Fix the login test" {
+			t.Errorf("after a rename the title is %q", got[titled.ID])
+		}
+		if none, err := s.Conversations().Titles(ctx, "org", nil); err != nil || len(none) != 0 {
+			t.Errorf("no sessions: %+v, %v", none, err)
+		}
+		if other, _ := s.Conversations().Titles(ctx, "org-2", []string{titled.ID}); len(other) != 0 {
+			t.Error("another org saw the title")
 		}
 	},
 	"conversations: a duplicate frame is one row and pos only grows": func(t *testing.T, s store.Store) {
@@ -3726,6 +3775,8 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		j.Kind = store.JobKindPR
 		j.PRPolicy = store.PRPolicyGoal
 		j.SkipPrep = true
+		// @decision(DL-150)
+		j.Title = "Fix the flaky login test"
 		if err := s.Jobs().Create(ctx, j); err != nil {
 			t.Fatal(err)
 		}
@@ -3749,6 +3800,7 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			{"Model", got.Model, j.Model},
 			{"PRPolicy", got.PRPolicy, j.PRPolicy},
 			{"SkipPrep", got.SkipPrep, j.SkipPrep},
+			{"Title", got.Title, j.Title},
 		} {
 			if f.got != f.want {
 				t.Errorf("a created job lost %s: got %v, want %v", f.name, f.got, f.want)
@@ -3798,6 +3850,41 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		if back.PRPolicy != store.PRPolicyGoal || !back.SkipPrep {
 			t.Errorf("an update changed the job's options: pr policy %q, skip prep %v", back.PRPolicy, back.SkipPrep)
+		}
+		if back.Title != j.Title {
+			t.Errorf("an update changed a job's title: got %q, want %q", back.Title, j.Title)
+		}
+	},
+	// An update sets a job's title while it has none, and never changes
+	// or clears one afterwards. @decision(DL-150)
+	"jobs: an update sets a title only while the job has none": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sess := runningSession(t, s, "org", "u1", "s1")
+		j := job(store.NewID(t0), "org", "u1", sess.ID, store.JobQueued)
+		if err := s.Jobs().Create(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		for _, step := range []struct{ write, want string }{
+			{"", ""},
+			{"Fix the flaky login test", "Fix the flaky login test"},
+			{"a second title", "Fix the flaky login test"},
+			{"", "Fix the flaky login test"},
+		} {
+			cur, err := s.Jobs().Get(ctx, "org", j.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cur.Title = step.write
+			if err := s.Jobs().Update(ctx, cur); err != nil {
+				t.Fatal(err)
+			}
+			back, err := s.Jobs().Get(ctx, "org", j.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if back.Title != step.want {
+				t.Errorf("after writing %q the title is %q, want %q", step.write, back.Title, step.want)
+			}
 		}
 	},
 	"jobs: a job needs a session of its own org": func(t *testing.T, s store.Store) {

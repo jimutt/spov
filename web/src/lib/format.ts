@@ -199,6 +199,49 @@ export function repoHeadline(s: Session): Headline | null {
   return { owner: `${repos[0].owner}/`, name: repos[0].name, more: repos.length - 1 };
 }
 
+/** What a session leads with: its title, its repository, or its name. @decision(DL-151) */
+export type SessionHeadline =
+  | { kind: "title"; title: string }
+  | { kind: "repo"; repo: Headline }
+  | { kind: "name"; name: string };
+
+/**
+ * sessionHeadline is what a session's row, bar and heading lead with:
+ * its title when it has one, else its repository, else its name.
+ *
+ * @decision(DL-151)
+ */
+export function sessionHeadline(s: Session): SessionHeadline {
+  const title = s.title?.trim();
+  if (title) return { kind: "title", title };
+  const repo = repoHeadline(s);
+  if (repo) return { kind: "repo", repo };
+  return { kind: "name", name: s.name || s.id };
+}
+
+/**
+ * repoLine is the repositories as a line below a title names them: the
+ * first as `owner/name`, then "+N" for the rest. Empty for none.
+ *
+ * @decision(DL-151)
+ */
+export function repoLine(s: Session): string {
+  const lead = repoHeadline(s);
+  if (!lead) return "";
+  return `${lead.owner}${lead.name}${lead.more > 0 ? ` +${lead.more}` : ""}`;
+}
+
+/**
+ * documentTitle is the session page's document title, which leads with
+ * the session's title when it has one.
+ *
+ * @decision(DL-151)
+ */
+export function documentTitle(s: Session | null | undefined): string {
+  const title = s?.title?.trim();
+  return title ? `${title} — spov` : "Session — spov";
+}
+
 /**
  * speaker is what a transcript calls whoever said this. Lives here so
  * the list and the page cannot disagree on it.

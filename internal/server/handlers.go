@@ -30,8 +30,12 @@ import (
 //
 // @decision(DL-005)
 type SessionView struct {
-	ID        string             `json:"id" doc:"ULID"`
-	Name      string             `json:"name"`
+	ID   string `json:"id" doc:"ULID"`
+	Name string `json:"name"`
+	// Title is what the session is about, never a reference to it.
+	//
+	// @decision(DL-149)
+	Title     string             `json:"title,omitempty" doc:"What the session is about: its main conversation's title, else its job's; absent when it has neither. One line of at most 120 characters, written by a model, and never a reference to the session"`
 	State     store.SessionState `json:"state" enum:"starting,running,stopped,failed"`
 	OwnerID   string             `json:"owner_id"`
 	SandboxID string             `json:"sandbox_id,omitempty"`
@@ -422,6 +426,11 @@ func (s *Server) viewsOf(ctx context.Context, p auth.Principal, sessions []store
 		return out
 	}
 	s.withRuns(ctx, p, sessions, out, now)
+	// @decision(DL-149)
+	titles := s.titles(ctx, p, ids)
+	for i, sess := range sessions {
+		out[i].Title = titleOf(titles[sess.ID], "")
+	}
 	last, err := s.deps.Store.Conversations().LastMessages(ctx, p.OrgID, ids)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -450,9 +459,38 @@ func (s *Server) viewsOf(ctx context.Context, p auth.Principal, sessions []store
 	for i, sess := range sessions {
 		if j, ok := jobs[sess.ID]; ok {
 			out[i].Job = sessionJobView(j, sess)
+			// @decision(DL-149)
+			out[i].Title = titleOf(titles[sess.ID], j.Title)
 		}
 	}
 	return out
+}
+
+// titles reads the main conversations' titles of a page of sessions in
+// one query. A failed read is warned about and leaves every title to
+// the sessions' jobs.
+//
+// @decision(DL-149)
+func (s *Server) titles(ctx context.Context, p auth.Principal, ids []string) map[string]string {
+	titles, err := s.deps.Store.Conversations().Titles(ctx, p.OrgID, ids)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.deps.Warn(fmt.Sprintf("titles: %s", redact.Error(err)))
+		}
+		return nil
+	}
+	return titles
+}
+
+// titleOf is a session's title: its main conversation's when there is
+// one, else its job's, each cleaned as it is stored.
+//
+// @decision(DL-149)
+func titleOf(conversation, job string) string {
+	if t := store.CleanTitle(conversation); t != "" {
+		return t
+	}
+	return store.CleanTitle(job)
 }
 
 // withRuns decorates views from their sessions' runs and jobs, read in
@@ -499,22 +537,33 @@ func (s *Server) withRuns(ctx context.Context, p auth.Principal, sessions []stor
 }
 
 // sessionJob is the job driving one session, as the listing decorates
-// its rows. A failed read is warned about and leaves the field out.
+// its rows, and the job's own title. A failed read is warned about and
+// leaves both out.
 //
-// @decision(DL-025) @decision(DL-060)
-func (s *Server) sessionJob(ctx context.Context, sess store.Session) *SessionJobView {
+// @decision(DL-025) @decision(DL-060) @decision(DL-149)
+func (s *Server) sessionJob(ctx context.Context, sess store.Session) (*SessionJobView, string) {
 	jobs, err := s.deps.Store.Jobs().BySessions(ctx, sess.OrgID, []string{sess.ID})
 	if err != nil {
 		if ctx.Err() == nil {
 			s.deps.Warn(fmt.Sprintf("job of session %s: %s", sess.ID, redact.Error(err)))
 		}
-		return nil
+		return nil, ""
 	}
 	j, ok := jobs[sess.ID]
 	if !ok {
-		return nil
+		return nil, ""
 	}
-	return sessionJobView(j, sess)
+	return sessionJobView(j, sess), j.Title
+}
+
+// withJobAndTitle decorates one session's view with its job and its
+// title, as the listing decorates a row.
+//
+// @decision(DL-060) @decision(DL-149)
+func (s *Server) withJobAndTitle(ctx context.Context, p auth.Principal, sess store.Session, view *SessionView) {
+	var jobTitle string
+	view.Job, jobTitle = s.sessionJob(ctx, sess)
+	view.Title = titleOf(s.titles(ctx, p, []string{sess.ID})[sess.ID], jobTitle)
 }
 
 // decorationStamp reports what the page's decorated columns hold, as
@@ -542,6 +591,11 @@ func (s *Server) decorationStamp(ctx context.Context, p auth.Principal, sessions
 	}
 	// @decision(DL-088)
 	runs, err := s.deps.Store.Runs().List(ctx, p.OrgID, ids)
+	if err != nil {
+		return "?"
+	}
+	// @decision(DL-149)
+	titles, err := s.deps.Store.Conversations().Titles(ctx, p.OrgID, ids)
 	if err != nil {
 		return "?"
 	}
@@ -573,6 +627,12 @@ func (s *Server) decorationStamp(ctx context.Context, p auth.Principal, sessions
 		if rs := runs[id]; len(rs) > 0 {
 			last := rs[len(rs)-1]
 			_, _ = fmt.Fprintf(h, "\x00run\x00%d\x00%s\x00%t", last.N, last.SnapshotState, last.Ran())
+		}
+		// What the row leads with.
+		//
+		// @decision(DL-149)
+		if title := titleOf(titles[id], jobs[id].Title); title != "" {
+			_, _ = fmt.Fprintf(h, "\x00title\x00%s", title)
 		}
 		if sum := h.Sum64(); sum != empty {
 			fmt.Fprintf(&b, "%s:%x\n", id, sum)
@@ -975,7 +1035,7 @@ func (s *Server) registerSessions() {
 		views := []SessionView{viewOf(sess, now)}
 		s.withRuns(ctx, principal(ctx), []store.Session{sess}, views, now)
 		view := views[0]
-		view.Job = s.sessionJob(ctx, sess)
+		s.withJobAndTitle(ctx, principal(ctx), sess, &view)
 		return &sessionOutput{Body: view}, nil
 	})
 

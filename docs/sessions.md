@@ -260,7 +260,9 @@ that call, as [`api/openapi.yaml`](api/openapi.yaml) describes it, and nothing
 else on stdout: `{"sessions": [...]}`, `{"jobs": [...]}`, one job,
 `{"credentials": [...], "enabled": ...}`, or your identity. Hints and notes go
 to stderr. Tables and messages are for people, and their columns and wording
-can change in any release; script against `--json`.
+can change in any release; script against `--json`. A session's or a job's
+`title` there is one line written by a model, absent when it has none; refer
+to a session by its `id` or `name`, never by its title.
 
 ```sh
 spov jobs --json | jq -r '.jobs[] | select(.state == "blocked") | .id'

@@ -324,3 +324,63 @@ func TestATruncatedGoalIsCutCleanlyAndSaidToBeCut(t *testing.T) {
 		t.Error("the model is not told the request was truncated")
 	}
 }
+
+// The answer names the job in a few words, in the same call.
+//
+// @decision(DL-150)
+func TestAnAnswerCarriesATitle(t *testing.T) {
+	f := &fake{reply: `{"summary": "Fix a flaky test.", "check": "", "title": "Fix the flaky login test"}`}
+	a, err := Pass(context.Background(), f, "fix the flaky test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Title != "Fix the flaky login test" || a.Summary != "Fix a flaky test." {
+		t.Errorf("Assessment = %+v", a)
+	}
+	if f.callCount != 1 {
+		t.Errorf("made %d calls; the title comes in the one call", f.callCount)
+	}
+	// An answer in the shape before the title is still read.
+	if a := run(t, `{"summary": "S", "check": ""}`); a.Title != "" || a.Summary != "S" {
+		t.Errorf("an answer with no title = %+v", a)
+	}
+	// A title that is not a string is no title, and costs the summary
+	// and the check nothing.
+	for _, bad := range []string{`7`, `null`, `["Fix it"]`, `{"text": "Fix it"}`} {
+		a, err := Pass(context.Background(), &fake{reply: `{"summary": "S", "check": "go test ./...", "title": ` + bad + `}`}, "g")
+		if err != nil || a.Title != "" || a.Summary != "S" || a.Check != "go test ./..." {
+			t.Errorf("title %s: %+v, %v; want the summary and the check and no title", bad, a, err)
+		}
+	}
+}
+
+// The prompt asks for the title in the one JSON object, and says it is
+// a name for the task, not something the task asks for.
+//
+// @decision(DL-150)
+func TestThePromptAsksForATitle(t *testing.T) {
+	f := &fake{reply: `{"summary": "", "check": "", "title": ""}`}
+	if _, err := Pass(context.Background(), f, "fix the flaky test"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.system, `{"summary": "...", "check": "...", "title": "..."}`) {
+		t.Errorf("the prompt does not ask for the title in the object:\n%s", f.system)
+	}
+	if !strings.Contains(f.system, `"title" is`) {
+		t.Error("the prompt does not say what the title is")
+	}
+}
+
+// A title is flattened to one line at the parser and bounded, whatever
+// the model sent.
+//
+// @decision(DL-150)
+func TestATitleIsOneLineAndBounded(t *testing.T) {
+	a := run(t, `{"summary": "", "check": "", "title": "Fix\nthe\ttest `+strings.Repeat("x", 9000)+`"}`)
+	if strings.ContainsAny(a.Title, "\n\t") || !strings.HasPrefix(a.Title, "Fix the test x") {
+		t.Errorf("Title = %.40q", a.Title)
+	}
+	if len(a.Title) > MaxTitleBytes {
+		t.Errorf("Title is %d bytes, over %d", len(a.Title), MaxTitleBytes)
+	}
+}

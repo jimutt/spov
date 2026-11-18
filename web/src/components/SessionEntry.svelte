@@ -3,17 +3,19 @@
   // running for. The last thing said is the session cell's caption,
   // answered from the store in one query for the whole page.
   //
-  // The repository leads the session cell at every width, and the meta
-  // line carries the kind and the session's name; requested resources
-  // and the sandbox id are on the session page.
+  // The title leads the session cell at every width when there is one,
+  // else the repository, else the name (sessionHeadline). The meta line
+  // carries the kind and the session's name, and the repository too
+  // below a title; requested resources and the sandbox id are on the
+  // session page.
   //
-  // Below `md` the row is five short lines (repository and time; state;
+  // Below `md` the row is five short lines (headline and time; state;
   // kind and name; the last words; running time) instead of the table's
   // columns, and the lifetime bar is left for the page.
   //
   // @decision(DL-058) @decision(DL-055) @decision(DL-060) @decision(DL-106)
-  // @decision(DL-116) @decision(DL-147)
-  import { age, duration, kindName, lifetime, listState, live, repoHeadline, repoNames, speaker, when } from '../lib/format';
+  // @decision(DL-116) @decision(DL-147) @decision(DL-151)
+  import { age, duration, kindName, lifetime, listState, live, repoLine, repoNames, sessionHeadline, speaker, when } from '../lib/format';
   import type { Session } from '../lib/format';
   import { resumableLine } from '../lib/resume';
   import StateMark from './StateMark.svelte';
@@ -22,7 +24,8 @@
 
   const life = $derived(lifetime(session, now));
   const repos = $derived(repoNames(session));
-  const headline = $derived(repoHeadline(session));
+  const lead = $derived(sessionHeadline(session));
+  const titled = $derived(lead.kind === 'title');
   // The job driving this session, if one is. Its state is what the
   // State column shows, and its kind names the row.
   //
@@ -50,16 +53,19 @@
   <div class="min-w-0 max-md:contents" role="cell">
     <!-- The name stretches over the whole row, so the row is the link. -->
     <a
-      class="text-base font-semibold text-ink no-underline after:absolute after:inset-0 focus-visible:outline-none max-md:col-start-1 max-md:row-start-1 max-md:block max-md:min-w-0 max-md:truncate"
+      class="text-base font-semibold text-ink no-underline after:absolute after:inset-0 focus-visible:outline-none max-md:col-start-1 max-md:row-start-1 max-md:block max-md:min-w-0 max-md:truncate {titled
+        ? 'block min-w-0 truncate'
+        : ''}"
       href={`/session/?id=${encodeURIComponent(session.id)}`}
-      title={headline && headline.more > 0 ? repos.join(', ') : undefined}
-      >{#if headline}<span class="font-normal text-soft">{headline.owner}</span>{headline.name}{#if headline.more > 0}<span
-            class="ml-1.5 text-sm font-normal text-soft">+{headline.more}</span
-          >{/if}{:else}{session.name || session.id}{/if}</a
+      title={lead.kind === 'title' ? lead.title : lead.kind === 'repo' && lead.repo.more > 0 ? repos.join(', ') : undefined}
+      >{#if lead.kind === 'title'}{lead.title}{:else if lead.kind === 'repo'}<span class="font-normal text-soft">{lead.repo.owner}</span
+        >{lead.repo.name}{#if lead.repo.more > 0}<span class="ml-1.5 text-sm font-normal text-soft">+{lead.repo.more}</span
+          >{/if}{:else}{lead.name}{/if}</a
     >
     <div class="mt-0.5 flex flex-wrap gap-x-2.5 gap-y-0.5 text-md text-soft max-md:col-span-2 max-md:row-start-3 max-md:mt-0 max-md:flex-nowrap max-md:overflow-hidden max-md:text-sm max-md:whitespace-nowrap">
       <span>{job ? `${kindName(job.kind)} job` : 'Interactive'}</span>
-      {#if headline}<span class="min-w-0 truncate before:mr-2.5 before:content-['·']">{session.name || session.id}</span>{/if}
+      {#if titled && repos.length > 0}<span class="min-w-0 truncate before:mr-2.5 before:content-['·']">{repoLine(session)}</span>{/if}
+      {#if lead.kind !== 'name'}<span class="min-w-0 truncate before:mr-2.5 before:content-['·']">{session.name || session.id}</span>{/if}
     </div>
     {#if session.error}
       <p class="m-0 mt-1.5 line-clamp-2 max-w-[64ch] text-md text-rust max-md:col-span-2 max-md:row-start-4 max-md:mt-0.5">{session.error}</p>

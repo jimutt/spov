@@ -860,10 +860,12 @@ func (r *Recorder) conversation(ctx context.Context, c *capture, opencodeID stri
 
 // conversationWith is conversation with what is already known: the
 // listing's title and Session.Info, and the parent, each written when
-// there is one and it changed.
+// there is one and it changed. The title is stored cleaned.
 //
-// @decision(DL-089) @decision(DL-110)
+// @decision(DL-089) @decision(DL-110) @decision(DL-149)
 func (r *Recorder) conversationWith(ctx context.Context, c *capture, opencodeID, title string, info []byte, parent string) (store.Conversation, error) {
+	// @decision(DL-149)
+	title = store.CleanTitle(title)
 	// @decision(DL-131)
 	if len(info) > MaxConversationInfoBytes {
 		if !c.warnedInfo {
@@ -1086,6 +1088,14 @@ func (r *Recorder) frame(ctx context.Context, c *capture, raw string) error {
 	}
 	if err != nil {
 		return err
+	}
+	// A rename is the conversation's title from the moment it arrives.
+	//
+	// @decision(DL-149)
+	if title, ok := renamedTitle(decoded); ok {
+		if conv, err = r.conversationWith(ctx, c, ev.Session, title, nil, ""); err != nil {
+			return err
+		}
 	}
 	if err := r.room(ctx, c); err != nil {
 		return err

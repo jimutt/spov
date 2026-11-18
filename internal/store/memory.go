@@ -1604,7 +1604,7 @@ func (s memConversations) RecentMessages(_ context.Context, orgID, sessionID, co
 }
 
 // LastMessages implements ConversationStore, over root conversations
-// only and over messages that say something.
+// only and over messages a person or the agent said with words.
 //
 // @decision(DL-017) @decision(DL-115) @decision(DL-148)
 func (s memConversations) LastMessages(_ context.Context, orgID string, sessionIDs []string) (map[string]Message, error) {
@@ -1616,12 +1616,40 @@ func (s memConversations) LastMessages(_ context.Context, orgID string, sessionI
 	out := map[string]Message{}
 	for id := range want {
 		for _, m := range s.m.sessionMessages(orgID, id) {
-			if !s.m.conversations[m.ConversationID].IsRoot() || strings.TrimSpace(m.Text) == "" {
+			if !s.m.conversations[m.ConversationID].IsRoot() || strings.TrimSpace(m.Text) == "" || !PreviewRole(m.Role) {
 				continue
 			}
 			if cur, ok := out[m.SessionID]; !ok || compareMessages(m, cur) > 0 {
 				out[m.SessionID] = copyMessage(m)
 			}
+		}
+	}
+	return out, nil
+}
+
+// Titles implements ConversationStore.
+//
+// @decision(DL-149)
+func (s memConversations) Titles(_ context.Context, orgID string, sessionIDs []string) (map[string]string, error) {
+	defer s.m.lock()()
+	want := map[string]bool{}
+	for _, id := range sessionIDs {
+		want[id] = true
+	}
+	main := map[string]Conversation{}
+	for _, c := range s.m.conversations {
+		if c.OrgID != orgID || !want[c.SessionID] || !c.IsRoot() {
+			continue
+		}
+		cur, ok := main[c.SessionID]
+		if !ok || c.CreatedAt.Before(cur.CreatedAt) || (c.CreatedAt.Equal(cur.CreatedAt) && c.ID < cur.ID) {
+			main[c.SessionID] = c
+		}
+	}
+	out := map[string]string{}
+	for id, c := range main {
+		if c.Title != "" {
+			out[id] = c.Title
 		}
 	}
 	return out, nil
@@ -1893,6 +1921,12 @@ func (s memJobs) Update(_ context.Context, j Job) error {
 	//
 	// @decision(DL-137) @decision(DL-138)
 	j.PRPolicy, j.SkipPrep = cur.PRPolicy, cur.SkipPrep
+	// Set while the row has none, and kept after.
+	//
+	// @decision(DL-150)
+	if cur.Title != "" {
+		j.Title = cur.Title
+	}
 	// Only SetSyncApplied writes it.
 	//
 	// @decision(DL-102)

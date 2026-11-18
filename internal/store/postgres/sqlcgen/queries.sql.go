@@ -102,6 +102,45 @@ func (q *Queries) ConversationInfos(ctx context.Context, arg ConversationInfosPa
 	return items, nil
 }
 
+const conversationTitles = `-- name: ConversationTitles :many
+select distinct on (session_id) session_id, title from conversations
+where org_id = $1 and session_id = any($2::text[])
+  and parent_opencode_id is null
+order by session_id, created_at, id
+`
+
+type ConversationTitlesParams struct {
+	OrgID      string
+	SessionIds []string
+}
+
+type ConversationTitlesRow struct {
+	SessionID string
+	Title     string
+}
+
+// Each session's main conversation, its oldest root in ListConversations'
+// order, with its title; a subagent's never stands in. @decision(DL-149)
+func (q *Queries) ConversationTitles(ctx context.Context, arg ConversationTitlesParams) ([]ConversationTitlesRow, error) {
+	rows, err := q.db.Query(ctx, conversationTitles, arg.OrgID, arg.SessionIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConversationTitlesRow
+	for rows.Next() {
+		var i ConversationTitlesRow
+		if err := rows.Scan(&i.SessionID, &i.Title); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countAllowlistAdmins = `-- name: CountAllowlistAdmins :one
 select count(*) from allowlist_entries where org_id = $1 and admin
 `
@@ -304,9 +343,9 @@ insert into jobs (id, org_id, owner_id, session_id, kind, state, goal, unfinishe
                   attempt, created_at, updated_at, started_at, stopped_at, check_command,
                   check_proposed, cursor, verdict, assessment, model,
                   max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at,
-                  pr_policy, skip_prep)
+                  pr_policy, skip_prep, title)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26)
+        $19, $20, $21, $22, $23, $24, $25, $26, $27)
 `
 
 type CreateJobParams struct {
@@ -336,6 +375,7 @@ type CreateJobParams struct {
 	SyncAppliedAt      pgtype.Timestamptz
 	PrPolicy           string
 	SkipPrep           bool
+	Title              *string
 }
 
 // EVERY column the row carries, not only the ones a job happens to be
@@ -371,6 +411,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) error {
 		arg.SyncAppliedAt,
 		arg.PrPolicy,
 		arg.SkipPrep,
+		arg.Title,
 	)
 	return err
 }
@@ -1018,7 +1059,7 @@ func (q *Queries) GetImagePrune(ctx context.Context) (pgtype.Timestamptz, error)
 }
 
 const getJob = `-- name: GetJob :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs where org_id = $1 and id = $2
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs where org_id = $1 and id = $2
 `
 
 type GetJobParams struct {
@@ -1056,12 +1097,13 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (Job, error) {
 		&i.SyncAppliedAt,
 		&i.PrPolicy,
 		&i.SkipPrep,
+		&i.Title,
 	)
 	return i, err
 }
 
 const getJobBySession = `-- name: GetJobBySession :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs where org_id = $1 and session_id = $2
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs where org_id = $1 and session_id = $2
 `
 
 type GetJobBySessionParams struct {
@@ -1099,6 +1141,7 @@ func (q *Queries) GetJobBySession(ctx context.Context, arg GetJobBySessionParams
 		&i.SyncAppliedAt,
 		&i.PrPolicy,
 		&i.SkipPrep,
+		&i.Title,
 	)
 	return i, err
 }
@@ -1129,7 +1172,7 @@ func (q *Queries) GetJobFile(ctx context.Context, arg GetJobFileParams) (JobFile
 }
 
 const getJobForUpdate = `-- name: GetJobForUpdate :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs where org_id = $1 and id = $2 for update
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs where org_id = $1 and id = $2 for update
 `
 
 type GetJobForUpdateParams struct {
@@ -1171,6 +1214,7 @@ func (q *Queries) GetJobForUpdate(ctx context.Context, arg GetJobForUpdateParams
 		&i.SyncAppliedAt,
 		&i.PrPolicy,
 		&i.SkipPrep,
+		&i.Title,
 	)
 	return i, err
 }
@@ -1646,7 +1690,7 @@ func (q *Queries) JobExists(ctx context.Context, arg JobExistsParams) (bool, err
 }
 
 const jobsBySessions = `-- name: JobsBySessions :many
-select distinct on (session_id) id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs
+select distinct on (session_id) id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs
 where org_id = $1 and session_id = any($2::text[])
 order by session_id, id desc
 `
@@ -1699,6 +1743,7 @@ func (q *Queries) JobsBySessions(ctx context.Context, arg JobsBySessionsParams) 
 			&i.SyncAppliedAt,
 			&i.PrPolicy,
 			&i.SkipPrep,
+			&i.Title,
 		); err != nil {
 			return nil, err
 		}
@@ -1779,6 +1824,7 @@ join conversations c on c.id = m.conversation_id
 where m.org_id = $1 and m.session_id = any($2::text[])
   and c.parent_opencode_id is null
   and btrim(m.text, E' \t\n\r') <> ''
+  and m.role in ('user', 'assistant')
 order by m.session_id, m.at desc nulls last, m.id desc
 `
 
@@ -1788,7 +1834,8 @@ type LastMessagesParams struct {
 }
 
 // Root conversations only: a subagent's message is never a session's
-// preview. Nor is a message with no words. @decision(DL-148)
+// preview. Nor is a message with no words, nor one that is neither a
+// person's nor the agent's (store.PreviewRole). @decision(DL-148)
 func (q *Queries) LastMessages(ctx context.Context, arg LastMessagesParams) ([]Message, error) {
 	rows, err := q.db.Query(ctx, lastMessages, arg.OrgID, arg.SessionIds)
 	if err != nil {
@@ -2251,7 +2298,7 @@ func (q *Queries) ListJobFiles(ctx context.Context, arg ListJobFilesParams) ([]L
 }
 
 const listJobs = `-- name: ListJobs :many
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs
 where org_id = $1
   and ($2::text is null or session_id = $2::text)
   and ($3::text is null or owner_id = $3::text)
@@ -2315,6 +2362,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.SyncAppliedAt,
 			&i.PrPolicy,
 			&i.SkipPrep,
+			&i.Title,
 		); err != nil {
 			return nil, err
 		}
@@ -2327,7 +2375,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 }
 
 const listLiveJobs = `-- name: ListLiveJobs :many
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep from jobs
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs
 where state not in ('succeeded', 'failed', 'cancelled')
 order by id desc
 `
@@ -2370,6 +2418,7 @@ func (q *Queries) ListLiveJobs(ctx context.Context) ([]Job, error) {
 			&i.SyncAppliedAt,
 			&i.PrPolicy,
 			&i.SkipPrep,
+			&i.Title,
 		); err != nil {
 			return nil, err
 		}
@@ -3965,7 +4014,9 @@ update jobs
 set state = $3, goal = $4, unfinished = $5, error = $6, attempt = $7,
     updated_at = $8, started_at = $9, stopped_at = $10, cursor = $11,
     verdict = $12, assessment = $13, check_command = $14,
-    check_proposed = $15, clock_started_at = $16, clock_used_seconds = $17
+    check_proposed = $15, clock_started_at = $16, clock_used_seconds = $17,
+    -- Set while the row has none, and kept after. @decision(DL-150)
+    title = coalesce(jobs.title, $18::text)
 where org_id = $1 and id = $2
 `
 
@@ -3987,6 +4038,7 @@ type UpdateJobParams struct {
 	CheckProposed    bool
 	ClockStartedAt   pgtype.Timestamptz
 	ClockUsedSeconds int64
+	Title            *string
 }
 
 func (q *Queries) UpdateJob(ctx context.Context, arg UpdateJobParams) (int64, error) {
@@ -4008,6 +4060,7 @@ func (q *Queries) UpdateJob(ctx context.Context, arg UpdateJobParams) (int64, er
 		arg.CheckProposed,
 		arg.ClockStartedAt,
 		arg.ClockUsedSeconds,
+		arg.Title,
 	)
 	if err != nil {
 		return 0, err

@@ -1400,6 +1400,8 @@ export interface components {
             stopped_at?: string;
             /** @description A sync job's repository state and its hold */
             sync?: components["schemas"]["JobSyncView"];
+            /** @description What the job is about: its session's main conversation's title, else the one the preparation pass gave it; absent when it has neither. One line of at most 120 characters, written by a model */
+            title?: string;
             /** @description What the agent said it left unfinished */
             unfinished?: string;
             /** Format: date-time */
@@ -2137,6 +2139,8 @@ export interface components {
             sync?: components["schemas"]["SessionSyncView"];
             /** @description The sandbox template the launch took settings from */
             template?: string;
+            /** @description What the session is about: its main conversation's title, else its job's; absent when it has neither. One line of at most 120 characters, written by a model, and never a reference to the session */
+            title?: string;
             /** Format: date-time */
             updated_at: string;
         };

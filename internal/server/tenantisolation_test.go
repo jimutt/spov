@@ -49,8 +49,11 @@ const (
 	aEmail            = "a-private@example.com"
 	aTemplateText     = "A's private template for the roadmap work"
 	aTemplateEnv      = "a-private-template-value"
-	aTemplate         = "a-tmpl"
-	strangerOrg       = "org-stranger"
+	// @decision(DL-149) @decision(DL-150)
+	aConversationTitle = "A's private conversation title"
+	aJobTitle          = "A's private job title"
+	aTemplate          = "a-tmpl"
+	strangerOrg        = "org-stranger"
 	// The service account's, which only it and an admin may reach.
 	//
 	// @decision(DL-140)
@@ -143,6 +146,8 @@ func (w *tenantWorld) markers() []string {
 	return []string{
 		aSecretCredential, aSecretRouted, aMessageText, aReportBody, aVerifiedAs, aEmail,
 		aTemplateText, aTemplateEnv,
+		// @decision(DL-149) @decision(DL-150)
+		aConversationTitle, aJobTitle,
 		w.webSessionID, w.tokenID, w.attempt,
 		w.run.SandboxID, w.askID, w.formID,
 		// @decision(DL-140)
@@ -252,7 +257,7 @@ func newTenantWorld(t *testing.T) *tenantWorld {
 	}
 
 	// What A said, and what the agent asked A.
-	conv := seedConversation(t, f, w.run, "ses_a", "A's conversation")
+	conv := seedConversation(t, f, w.run, "ses_a", aConversationTitle)
 	// A person's message as the recorder stored it: the message row, and
 	// the inbox event that cancelling one is checked against.
 	w.msgID, w.askID, w.formID = realInboxMessageID, "per_a1", "frm_a1"
@@ -276,6 +281,14 @@ func newTenantWorld(t *testing.T) *tenantWorld {
 	}
 	w.jobSession, err = f.store.Sessions().Get(ctx, auth.LocalID, w.job.SessionID)
 	if err != nil {
+		t.Fatal(err)
+	}
+	// The job's own title, which its session shows while it has no
+	// conversation.
+	//
+	// @decision(DL-150)
+	w.job.Title = aJobTitle
+	if err := f.store.Jobs().Update(ctx, w.job); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.Jobs().PutJobFile(ctx, auth.LocalID, store.JobFile{
@@ -419,7 +432,7 @@ func (w *tenantWorld) snapshot() string {
 	var jrows []string
 	for _, j := range js {
 		files, _ := st.Jobs().JobFiles(ctx, j.OrgID, j.ID)
-		jrows = append(jrows, fmt.Sprintf("%s %s owner=%s files=%d", j.ID, j.State, j.OwnerID, len(files)))
+		jrows = append(jrows, fmt.Sprintf("%s %s owner=%s files=%d title=%q", j.ID, j.State, j.OwnerID, len(files), j.Title))
 	}
 	sort.Strings(jrows)
 	out["jobs"] = jrows

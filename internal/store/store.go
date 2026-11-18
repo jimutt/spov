@@ -1045,6 +1045,13 @@ func Primary(convs []Conversation) (Conversation, bool) {
 	return Conversation{}, false
 }
 
+// PreviewRole reports whether a message of this role can be a
+// session's preview: a person's (user) or the agent's (assistant), never
+// spov's synthetic items or any other type OpenCode stores.
+//
+// @decision(DL-148)
+func PreviewRole(role string) bool { return role == "user" || role == "assistant" }
+
 // Message is one thing said in a conversation: the reply, not the parts
 // it arrived in, and never a reasoning part.
 //
@@ -1152,9 +1159,19 @@ type ConversationStore interface {
 	// @decision(DL-131)
 	RecentMessages(ctx context.Context, orgID, sessionID, conversationID string, limit int, maxBytes int64) (msgs []Message, more bool, err error)
 	// LastMessages answers the list page in one query: each session's
-	// latest message, keyed by session ID. A session with none is
+	// latest message of a root conversation that has text and a role
+	// PreviewRole takes, keyed by session ID. A session with none is
 	// absent from the map.
+	//
+	// @decision(DL-148)
 	LastMessages(ctx context.Context, orgID string, sessionIDs []string) (map[string]Message, error)
+	// Titles answers the list page in one query: the title of each
+	// session's main conversation, its oldest root, keyed by session ID.
+	// A session whose oldest root has no title, or that has no root, is
+	// absent from the map.
+	//
+	// @decision(DL-149)
+	Titles(ctx context.Context, orgID string, sessionIDs []string) (map[string]string, error)
 	// PutEvents inserts, ignoring an OpenCode frame whose
 	// (ConversationID, Seq) is already stored, and returns the rows it
 	// wrote with Pos filled in. A duplicate ID is ErrConflict; an event
@@ -1513,6 +1530,13 @@ type Job struct {
 	//
 	// @decision(DL-138)
 	SkipPrep bool
+	// Title is the preparation pass's few words naming what the job is
+	// to do, cleaned by CleanTitle, or empty. Update sets it only while
+	// the row has none, so no later write changes or clears it. It never
+	// reaches the agent.
+	//
+	// @decision(DL-150)
+	Title string
 	// Error is the terminal failure, redacted of anything secret. It is
 	// set on failure and also on a park, where it says what is being
 	// waited on.

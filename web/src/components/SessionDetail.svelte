@@ -28,8 +28,10 @@
     lifetime,
     listState,
     money,
-    repoHeadline,
+    documentTitle,
+    repoLine,
     repoNames,
+    sessionHeadline,
     sentence,
     sessionMark,
     sessionSettling,
@@ -47,6 +49,7 @@
     pendingAskIds,
     seamText,
     childIds,
+    renamesMain,
     shownWarnings,
     stopNote,
     timeDividers,
@@ -259,8 +262,12 @@
     if (flush) return;
     flush = setTimeout(() => {
       flush = 0;
+      // A rename of the main conversation re-reads the session once per
+      // batch, for its title. @decision(DL-151)
+      const renamed = renamesMain(pending);
       activity = [...activity, ...pending];
       pending = [];
+      if (renamed) void session.refresh();
     }, 0) as unknown as number;
   }
 
@@ -504,6 +511,13 @@
   const dividers = $derived(timeDividers(windowed.shown, now));
 
   const s = $derived(session.data);
+  // The document title leads with the session's title when it has one.
+  //
+  // @decision(DL-151)
+  const pageTitle = $derived(documentTitle(s));
+  $effect(() => {
+    document.title = pageTitle;
+  });
   const life = $derived(s ? lifetime(s, now) : undefined);
 
   // The job this session is running, if it is running one. A store
@@ -940,7 +954,7 @@
            @decision(DL-106) -->
       {#if true}
         {@const st = listState(s)}
-        {@const lead = repoHeadline(s)}
+        {@const lead = sessionHeadline(s)}
         <div
           class="sticky top-0 z-10 -mx-[var(--page-pad-x)] -mt-[var(--main-pad-y)] mb-4 flex items-center gap-1 border-b border-rule bg-raised px-1.5 py-1.5 lg:hidden"
           data-testid="session-bar"
@@ -953,16 +967,23 @@
             <Icon name="back" class="size-5" />
           </a>
           <div class="min-w-0 flex-1">
-            <p class="m-0 truncate text-base leading-tight font-semibold">
-              {#if lead}<span class="font-normal text-soft">{lead.owner}</span>{lead.name}{#if lead.more > 0}<span
-                    class="ml-1.5 text-sm font-normal text-soft">+{lead.more}</span
-                  >{/if}{:else}{s.name || s.id}{/if}
+            <!-- The title leads when there is one, and the repository joins
+                 the line below it. @decision(DL-151) -->
+            <p class="m-0 truncate text-base leading-tight font-semibold" title={lead.kind === 'title' ? lead.title : undefined}>
+              {#if lead.kind === 'title'}{lead.title}{:else if lead.kind === 'repo'}<span class="font-normal text-soft"
+                  >{lead.repo.owner}</span
+                >{lead.repo.name}{#if lead.repo.more > 0}<span class="ml-1.5 text-sm font-normal text-soft">+{lead.repo.more}</span
+                  >{/if}{:else}{lead.name}{/if}
             </p>
-            <p class="m-0 flex min-w-0 items-center gap-x-2 text-sm whitespace-nowrap text-soft">
+            <!-- Under a title the repository stands in for the name, which
+                 is in the details, and gives way before the reason does.
+                 @decision(DL-151) -->
+            <p class="m-0 flex min-w-0 items-center gap-x-2 overflow-hidden text-sm whitespace-nowrap text-soft">
               <StateMark mark={st.mark} word={st.word} />
-              {#if st.why}<span class="truncate">{st.why}</span>
+              {#if st.why}<span class="min-w-0 truncate">{st.why}</span>
               {:else}<span class="tabular-nums">{duration(age(s, now))}</span>{/if}
-              {#if lead}<span class="min-w-0 truncate">{s.name || s.id}</span>{/if}
+              {#if lead.kind === 'title'}{#if repoLine(s)}<span class="min-w-0 shrink-[1000] truncate">{repoLine(s)}</span>{/if}
+              {:else if lead.kind === 'repo'}<span class="min-w-0 truncate">{s.name || s.id}</span>{/if}
             </p>
           </div>
           <button
@@ -980,11 +1001,12 @@
         </div>
       {/if}
 
-      <!-- The title, one facts line, and the clock bar.
-           @decision(DL-057) -->
+      <!-- The title, one facts line, and the clock bar. The heading is
+           the session's title when there is one, and the name then joins
+           the facts line. @decision(DL-057) @decision(DL-151) -->
       <div class="mb-7 max-lg:hidden">
         <h1 class="m-0 mb-1.5 text-xl font-semibold tracking-[-0.01em] [overflow-wrap:anywhere]">
-          {s.name || s.id}
+          {s.title?.trim() || s.name || s.id}
         </h1>
         <div class="flex flex-wrap items-center gap-x-[18px] gap-y-1 text-md text-soft">
           <StateMark
@@ -998,6 +1020,7 @@
           {#each repoNames(s) as repo (repo)}
             <span class="font-mono text-ink">{repo}</span>
           {/each}
+          {#if s.title?.trim()}<span class="text-ink">{s.name || s.id}</span>{/if}
           {#if s.sandbox_id}
             <span>Sandbox <span class="font-mono text-ink">{s.sandbox_id}</span></span>
           {/if}

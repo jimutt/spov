@@ -49,6 +49,17 @@ export function childIds(conversations: readonly Conversation[]): ReadonlySet<st
   return new Set(conversations.filter((c) => c.parent).map((c) => c.id));
 }
 
+/**
+ * renamesMain says a batch of the log renames a root conversation, after
+ * which the session's title may have changed: OpenCode's
+ * `session.renamed` frame of a conversation with no parent.
+ *
+ * @decision(DL-151) @decision(DL-149)
+ */
+export function renamesMain(events: readonly LogEvent[]): boolean {
+  return events.some((ev) => ev.name === "session.renamed" && ev.source === "opencode" && !ev.parent);
+}
+
 /** The marker the recorder writes when it stops recording a session (DL-131). */
 export const RecordingStopped = "spov.recorder.stopped";
 

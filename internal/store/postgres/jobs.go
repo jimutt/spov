@@ -63,6 +63,8 @@ func (p pgJobs) Create(ctx context.Context, j store.Job) error {
 		// @decision(DL-137) @decision(DL-138)
 		PrPolicy: string(j.PRPolicy),
 		SkipPrep: j.SkipPrep,
+		// @decision(DL-150)
+		Title: nonEmptyText(j.Title),
 	}))
 }
 
@@ -271,6 +273,8 @@ func (p pgJobs) update(ctx context.Context, s *Store, j store.Job) error {
 		ClockStartedAt: tsPtr(stamped.ClockStartedAt),
 		// @decision(DL-049)
 		ClockUsedSeconds: int64(stamped.ClockUsed / time.Second),
+		// @decision(DL-150)
+		Title: nonEmptyText(stamped.Title),
 	})
 	if err != nil {
 		return mapErr("update job", err)
