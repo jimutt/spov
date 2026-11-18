@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Unions of event schemas, by the document's name for them: the event
@@ -157,9 +158,10 @@ func (d *Document) eventTypes(union string) (*eventTypes, error) {
 	return types, nil
 }
 
-// envelope wraps data in the fields an event of type typ requires
-// besides its data: id, created, and durable when the type has one.
-func envelope(typ string, seq int64, data string) ([]byte, error) {
+// envelope wraps data, kept byte for byte, in the fields an event of
+// type typ requires besides its data: id, created, and durable when the
+// type has one.
+func envelope(typ string, seq int64, created time.Time, data string) ([]byte, error) {
 	d, err := Load()
 	if err != nil {
 		return nil, err
@@ -167,8 +169,11 @@ func envelope(typ string, seq int64, data string) ([]byte, error) {
 	var fields struct {
 		SessionID string `json:"sessionID"`
 	}
+	if trimmed := strings.TrimSpace(data); !strings.HasPrefix(trimmed, "{") || !json.Valid([]byte(trimmed)) {
+		return nil, fmt.Errorf("%s: data is not a JSON object", typ)
+	}
 	if err := json.Unmarshal([]byte(data), &fields); err != nil {
-		return nil, fmt.Errorf("%s: data is not a JSON object: %w", typ, err)
+		return nil, fmt.Errorf("%s: data: %w", typ, err)
 	}
 	types, err := d.eventTypes(EventUnion)
 	if err != nil {
@@ -178,18 +183,30 @@ func envelope(typ string, seq int64, data string) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("OpenCode %s has no event type %q", Version(), typ)
 	}
-	frame := map[string]any{
-		"id": fmt.Sprintf("evt_%s_%d", strings.ReplaceAll(typ, ".", "_"), seq), "created": 1794165467000 + seq,
-		"type": typ, "data": json.RawMessage(data),
+	head, err := json.Marshal(map[string]any{
+		"id": fmt.Sprintf("evt_%s_%d", strings.ReplaceAll(typ, ".", "_"), seq), "created": created.UnixMilli(), "type": typ,
+	})
+	if err != nil {
+		return nil, err
 	}
+	var frame bytes.Buffer
+	frame.Write(head[:len(head)-1])
+	frame.WriteString(`,"data":`)
+	frame.WriteString(data)
 	if slices.Contains(asStrings(schema["required"]), "durable") {
 		version, err := d.durableVersion(schema)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", typ, err)
 		}
-		frame["durable"] = map[string]any{"aggregateID": fields.SessionID, "seq": seq, "version": version}
+		durable, err := json.Marshal(map[string]any{"aggregateID": fields.SessionID, "seq": seq, "version": version})
+		if err != nil {
+			return nil, err
+		}
+		frame.WriteString(`,"durable":`)
+		frame.Write(durable)
 	}
-	return json.Marshal(frame)
+	frame.WriteByte('}')
+	return frame.Bytes(), nil
 }
 
 // durableVersion is the one version a type's durable shape allows.

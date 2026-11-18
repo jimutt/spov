@@ -303,7 +303,7 @@ func TestTheValidatorsRules(t *testing.T) {
 		{"/a/1", `{"nothing":1}`, "must not"},
 		{"/a/1", `{"odd":1}`, "odd: a schema of type float64"},
 		{"/a/1", `{"either":"x"}`, ""},
-		{"/a/1", `{"either":1}`, "body.either"},
+		{"/a/1", `{"either":1}`, "body.either: integer is not of type string"},
 		{"/a/1", `{"free":{"k":1}}`, ""},
 		{"/a/1", `{"free":{"n_k":1}}`, "free.n_k: 1 is where"},
 		{"/a/1", `[1]`, "not of type object"},

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Checked wraps a fake OpenCode server's handler so that every request
@@ -123,14 +124,26 @@ func Unchecked(raw, why string) []byte {
 }
 
 // Event builds a fixture's event frame of type typ around data, a JSON
-// object, in the envelope the document gives that type: an id, a
-// creation time and, for a durable type, a place at seq in the log of
-// data's sessionID. The frame is checked as Frame checks one.
+// object kept byte for byte, in the envelope the document gives that
+// type: an id, a creation time a second after FixtureEpoch per seq and,
+// for a durable type, a place at seq in the log of data's sessionID. The
+// frame is checked as Frame checks one.
 //
 // @decision(DL-145)
 func Event(t testing.TB, typ string, seq int64, data string) []byte {
 	t.Helper()
-	frame, err := envelope(typ, seq, data)
+	return EventAt(t, typ, seq, FixtureEpoch.Add(time.Duration(seq)*time.Second), data)
+}
+
+// FixtureEpoch is the creation time Event counts from.
+var FixtureEpoch = time.UnixMilli(1794165467000).UTC()
+
+// EventAt is Event created at a time the caller gives.
+//
+// @decision(DL-145)
+func EventAt(t testing.TB, typ string, seq int64, created time.Time, data string) []byte {
+	t.Helper()
+	frame, err := envelope(typ, seq, created, data)
 	if err != nil {
 		t.Fatalf("contract: %v", err)
 	}

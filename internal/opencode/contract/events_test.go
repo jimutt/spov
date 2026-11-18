@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A frame is checked against its own type's schema in the event union,
@@ -145,6 +146,8 @@ func TestEventBuildsTheEnvelopeOfItsType(t *testing.T) {
 	for _, c := range []struct{ typ, data, want string }{
 		{"no.such.type", `{}`, "has no event type"},
 		{"session.idle", `[`, "not a JSON object"},
+		{"session.idle", `[1]`, "not a JSON object"},
+		{"session.idle", `{"sessionID":1}`, "data: json"},
 	} {
 		fatal := &fatalRecorder{recorder: recorder{TB: t}}
 		func() {
@@ -154,6 +157,33 @@ func TestEventBuildsTheEnvelopeOfItsType(t *testing.T) {
 		if len(fatal.errors) != 1 || !strings.Contains(fatal.errors[0], c.want) {
 			t.Errorf("%s: reported %q, want %q", c.typ, fatal.errors, c.want)
 		}
+	}
+}
+
+// Event keeps its data byte for byte, as OpenCode sends it, since spov's
+// readers scan the raw bytes; only the envelope is spov's.
+//
+// @decision(DL-145)
+func TestEventKeepsItsDataByteForByte(t *testing.T) {
+	data := `{ "sessionID" : "ses_1", "assistantMessageID":"msg_1","id":"call_1", "executed":false,` + "\n" +
+		`  "content":[{"type":"text","text":"a <b> & c"}], "metadata" : { "sessionID" : "ses_c" } }`
+	at := time.UnixMilli(1794958241180).UTC()
+	raw := EventAt(t, "session.tool.success", 3, at, data)
+	var frame struct {
+		Data    json.RawMessage `json:"data"`
+		Created int64           `json:"created"`
+	}
+	if err := json.Unmarshal(raw, &frame); err != nil {
+		t.Fatal(err)
+	}
+	if string(frame.Data) != data {
+		t.Errorf("data was rewritten:\n got %s\nwant %s", frame.Data, data)
+	}
+	if frame.Created != at.UnixMilli() {
+		t.Errorf("created = %d, want %d", frame.Created, at.UnixMilli())
+	}
+	if got := Event(t, "session.idle", 2, `{"sessionID":"ses_1"}`); !strings.Contains(string(got), `"created":1794165469000`) {
+		t.Errorf("Event's creation time is not FixtureEpoch plus its seq in seconds: %s", got)
 	}
 }
 

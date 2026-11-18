@@ -374,6 +374,7 @@ func (d *Document) validate(v any, schema map[string]any, at string) error {
 	}
 	if branches, ok := schema["anyOf"].([]any); ok {
 		var first error
+		firstIsSchema := false
 		for _, b := range branches {
 			err := d.validateSchema(v, b, at)
 			if err == nil {
@@ -381,9 +382,11 @@ func (d *Document) validate(v any, schema map[string]any, at string) error {
 				break
 			}
 			// Report the branch of the value's own type, which says
-			// more than "matched nothing".
-			if bs, _ := b.(map[string]any); first == nil || typeMatches(v, bs) {
-				first = err
+			// more than "matched nothing", and a schema branch's
+			// mismatch over a boolean branch's refusal.
+			bs, isSchema := b.(map[string]any)
+			if first == nil || (isSchema && (!firstIsSchema || typeMatches(v, bs))) {
+				first, firstIsSchema = err, isSchema
 			}
 		}
 		if first != nil {
