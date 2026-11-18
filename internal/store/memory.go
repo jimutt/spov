@@ -1627,6 +1627,34 @@ func (s memConversations) LastMessages(_ context.Context, orgID string, sessionI
 	return out, nil
 }
 
+// Titles implements ConversationStore.
+//
+// @decision(DL-149)
+func (s memConversations) Titles(_ context.Context, orgID string, sessionIDs []string) (map[string]string, error) {
+	defer s.m.lock()()
+	want := map[string]bool{}
+	for _, id := range sessionIDs {
+		want[id] = true
+	}
+	main := map[string]Conversation{}
+	for _, c := range s.m.conversations {
+		if c.OrgID != orgID || !want[c.SessionID] || !c.IsRoot() {
+			continue
+		}
+		cur, ok := main[c.SessionID]
+		if !ok || c.CreatedAt.Before(cur.CreatedAt) || (c.CreatedAt.Equal(cur.CreatedAt) && c.ID < cur.ID) {
+			main[c.SessionID] = c
+		}
+	}
+	out := map[string]string{}
+	for id, c := range main {
+		if c.Title != "" {
+			out[id] = c.Title
+		}
+	}
+	return out, nil
+}
+
 // PutEvents implements ConversationStore. Every row is checked before
 // any is written, so a bad batch leaves the store — and eventPos — as
 // they were, which is what the Postgres transaction gives.
@@ -1893,6 +1921,12 @@ func (s memJobs) Update(_ context.Context, j Job) error {
 	//
 	// @decision(DL-137) @decision(DL-138)
 	j.PRPolicy, j.SkipPrep = cur.PRPolicy, cur.SkipPrep
+	// Set while the row has none, and kept after.
+	//
+	// @decision(DL-150)
+	if cur.Title != "" {
+		j.Title = cur.Title
+	}
 	// Only SetSyncApplied writes it.
 	//
 	// @decision(DL-102)

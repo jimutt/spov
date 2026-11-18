@@ -375,7 +375,7 @@ func jobsFromRows(rows []sqlcgen.Job) []store.Job {
 }
 
 func jobFromRow(r sqlcgen.Job) store.Job {
-	return store.Job{
+	j := store.Job{
 		ID:            r.ID,
 		OrgID:         r.OrgID,
 		OwnerID:       r.OwnerID,
@@ -407,6 +407,11 @@ func jobFromRow(r sqlcgen.Job) store.Job {
 		PRPolicy: store.PRPolicy(r.PrPolicy),
 		SkipPrep: r.SkipPrep,
 	}
+	// @decision(DL-150)
+	if r.Title != nil {
+		j.Title = *r.Title
+	}
+	return j
 }
 
 // deliverableFromRow converts a stored member of a job's inventory.

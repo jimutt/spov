@@ -144,7 +144,11 @@ type JobView struct {
 	//
 	// @decision(DL-045)
 	SessionID string `json:"session_id"`
-	Goal      string `json:"goal"`
+	// Title is the job's session's title.
+	//
+	// @decision(DL-149) @decision(DL-150)
+	Title string `json:"title,omitempty" doc:"What the job is about: its session's main conversation's title, else the one the preparation pass gave it; absent when it has neither. One line of at most 120 characters, written by a model"`
+	Goal  string `json:"goal"`
 	// Model is what the job was asked to run on, so a finished job's
 	// verdict is comparable against another run's.
 	//
@@ -292,6 +296,8 @@ func jobViewOf(j store.Job, members []store.Deliverable) JobView {
 	v := JobView{
 		ID: j.ID, Kind: j.Kind, State: j.State, OwnerID: j.OwnerID,
 		SessionID: j.SessionID, Goal: j.Goal, Model: j.Model, Error: j.Error, Verdict: j.Verdict,
+		// @decision(DL-150)
+		Title:        titleOf("", j.Title),
 		Unfinished:   j.Unfinished,
 		Deliverables: make([]DeliverableView, 0, len(members)),
 		Gates:        jobs.ParseGatesNote(j.Verdict),
@@ -360,10 +366,11 @@ func syncViewOf(j store.Job, members []store.Deliverable, sess store.Session, ru
 	return v
 }
 
-// jobViews projects jobs with their inventories, read in one query, and
-// a sync job's hold from its session, read in one more.
+// jobViews projects jobs with their inventories, read in one query, a
+// sync job's hold from its session, read in one more, and their
+// sessions' titles in a third.
 //
-// @decision(DL-051) @decision(DL-060) @decision(DL-101)
+// @decision(DL-051) @decision(DL-060) @decision(DL-101) @decision(DL-149)
 func (s *Server) jobViews(ctx context.Context, list []store.Job) ([]JobView, error) {
 	ids := make([]string, 0, len(list))
 	var syncSessions []string
@@ -381,9 +388,19 @@ func (s *Server) jobViews(ctx context.Context, list []store.Job) ([]JobView, err
 	if err != nil {
 		return nil, err
 	}
+	// @decision(DL-149)
+	sessionIDs := make([]string, 0, len(list))
+	for _, j := range list {
+		sessionIDs = append(sessionIDs, j.SessionID)
+	}
+	var titles map[string]string
+	if len(sessionIDs) > 0 {
+		titles = s.titles(ctx, principal(ctx), sessionIDs)
+	}
 	out := make([]JobView, 0, len(list))
 	for _, j := range list {
 		v := jobViewOf(j, members[j.ID])
+		v.Title = titleOf(titles[j.SessionID], j.Title)
 		if j.Kind == store.JobKindSync {
 			v.Sync = syncViewOf(j, members[j.ID], sessions[j.SessionID], runs[j.SessionID])
 		}

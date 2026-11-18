@@ -128,6 +128,7 @@ type Job struct {
 	SyncAppliedAt      pgtype.Timestamptz
 	PrPolicy           string
 	SkipPrep           bool
+	Title              *string
 }
 
 type JobDeliverable struct {

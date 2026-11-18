@@ -237,6 +237,26 @@ func (p pgConversations) LastMessages(ctx context.Context, orgID string, session
 	return out, nil
 }
 
+// Titles implements store.ConversationStore.
+//
+// @decision(DL-149)
+func (p pgConversations) Titles(ctx context.Context, orgID string, sessionIDs []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(sessionIDs) == 0 {
+		return out, nil
+	}
+	rows, err := p.s.q.ConversationTitles(ctx, sqlcgen.ConversationTitlesParams{OrgID: orgID, SessionIds: sessionIDs})
+	if err != nil {
+		return nil, mapErr("conversation titles", err)
+	}
+	for _, r := range rows {
+		if r.Title != "" {
+			out[r.SessionID] = r.Title
+		}
+	}
+	return out, nil
+}
+
 // PutEvents inserts one at a time inside one transaction, so a batch
 // lands whole or not at all. A frame the index already holds comes back
 // as no row, which is the skip the interface promises.

@@ -94,6 +94,11 @@ func isEphemeralKept(name string) bool { return ephemeralNames[name] }
 // @decision(DL-110)
 const eventSessionCreated = "session.created"
 
+// eventSessionRenamed is the frame that gives a conversation its title.
+//
+// @decision(DL-149)
+const eventSessionRenamed = "session.renamed"
+
 var (
 	nameKeys    = []string{"event", "type"}
 	sessionKeys = []string{"sessionID", "sessionId", "session_id", "session"}
@@ -240,6 +245,19 @@ func createdParent(frame map[string]any) (string, bool) {
 	data, _ := frame["data"].(map[string]any)
 	parent, _ := data["parentID"].(string)
 	return parent, true
+}
+
+// renamedTitle is the title a session.renamed frame gives, and whether
+// the frame is one.
+//
+// @decision(DL-149)
+func renamedTitle(frame map[string]any) (string, bool) {
+	if find(frame, nameKeys) != eventSessionRenamed {
+		return "", false
+	}
+	data, _ := frame["data"].(map[string]any)
+	title, _ := data["title"].(string)
+	return title, true
 }
 
 // parsedMessage is one message with the raw body it was projected

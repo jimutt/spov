@@ -1003,6 +1003,9 @@ components:
         sync:
           $ref: "#/components/schemas/JobSyncView"
           description: A sync job's repository state and its hold
+        title:
+          description: "What the job is about: its session's main conversation's title, else the one the preparation pass gave it; absent when it has neither. One line of at most 120 characters, written by a model"
+          type: string
         unfinished:
           description: What the agent said it left unfinished
           type: string
@@ -2478,6 +2481,9 @@ components:
           description: The local git branch and commit the session started from
         template:
           description: The sandbox template the launch took settings from
+          type: string
+        title:
+          description: "What the session is about: its main conversation's title, else its job's; absent when it has neither. One line of at most 120 characters, written by a model, and never a reference to the session"
           type: string
         updated_at:
           format: date-time
