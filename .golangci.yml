@@ -121,6 +121,8 @@ linters:
               desc: the TUI is internal/cli's
             - pkg: charm.land/lipgloss/v2
               desc: the TUI is internal/cli's
+            - pkg: github.com/charmbracelet/colorprofile
+              desc: the TUI is internal/cli's
   exclusions:
     rules:
       - path: _test\.go

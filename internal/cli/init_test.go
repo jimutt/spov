@@ -126,6 +126,12 @@ func (f *initFixture) ready() {
 	f.provider.built = f.provider.built[:1]
 }
 
+// oneLine is init's output with its wrapping undone, for a phrase that
+// may cross a line.
+func oneLine(out string) string {
+	return strings.Join(strings.Fields(out), " ")
+}
+
 func exitCode(err error) int {
 	var exit *ExitError
 	if errors.As(err, &exit) {
@@ -144,7 +150,7 @@ func TestInitOnAReadySetupAsksNothing(t *testing.T) {
 	f := newInitFixture(t, "")
 	f.ready()
 	out, _, err := f.run()
-	if err != nil || strings.Count(out, "✓ ok") != 5 || !strings.Contains(out, "Ready.") || !strings.Contains(out, "spov fly --repo owner/name") {
+	if err != nil || strings.Count(out, "  ok\n") != 5 || !strings.Contains(out, "Ready.") || !strings.Contains(out, "spov fly --repo owner/name") {
 		t.Errorf("a ready setup: %v\n%s", err, out)
 	}
 	if len(f.asked) != 0 || len(f.ran) != 0 || len(f.provider.built) != 1 {
@@ -193,7 +199,7 @@ func TestInitSetsUpAFreshMachine(t *testing.T) {
 	}
 	// Run again: nothing to do.
 	f.asked = nil
-	if out, _, err := f.run(); err != nil || len(f.asked) != 0 || strings.Count(out, "✓ ok") != 5 {
+	if out, _, err := f.run(); err != nil || len(f.asked) != 0 || strings.Count(out, "  ok\n") != 5 {
 		t.Errorf("a second run asked %v: %v\n%s", f.asked, err, out)
 	}
 }
@@ -275,7 +281,7 @@ func TestInitWithoutModal(t *testing.T) {
 	if exitCode(err) != 1 || len(f.ran) != 1 || f.ran[0] != "uvx modal setup" {
 		t.Errorf("exit %v, ran %v\n%s", err, f.ran, out)
 	}
-	if !strings.Contains(out, "5. Sandbox image  – waiting") || !strings.Contains(out, "waits for Modal") {
+	if !strings.Contains(out, "– 5. Sandbox image  waiting") || !strings.Contains(out, "waits for Modal") {
 		t.Errorf("the image step did not wait for Modal:\n%s", out)
 	}
 	if strings.Contains(strings.Join(f.offered, "|"), "Sign in to OpenCode") || !strings.Contains(out, "offered once Modal is connected") {
@@ -296,7 +302,7 @@ func TestInitWithoutModal(t *testing.T) {
 		return nil, errors.New("token rejected")
 	}
 	out, _, err = g.run("--check")
-	if exitCode(err) != 1 || !strings.Contains(out, "could not use them with Modal: token rejected") {
+	if exitCode(err) != 1 || !strings.Contains(oneLine(out), "could not use them with Modal: token rejected") {
 		t.Errorf("refused credentials: %v\n%s", err, out)
 	}
 
@@ -348,7 +354,7 @@ func TestInitAndGh(t *testing.T) {
 	f.ready()
 	f.gh = func() (string, error) { return "", errGhSignedOut }
 	out, _, err := f.run("--check")
-	if exitCode(err) != 1 || !strings.Contains(out, "2. Git platform  ✗ missing") {
+	if exitCode(err) != 1 || !strings.Contains(out, "✗ 2. Git platform  missing") {
 		t.Errorf("a marker with gh signed out: %v\n%s", err, out)
 	}
 
@@ -390,7 +396,7 @@ func TestInitAsksTwiceWithoutTheProxy(t *testing.T) {
 	f.env.ProxyBinary = func() []byte { return nil }
 	f.no = "inside the sandboxes"
 	out, _, _ := f.run()
-	if !strings.Contains(out, "INSIDE every sandbox") || f.userFile() != "" {
+	if !strings.Contains(oneLine(out), "INSIDE every sandbox") || f.userFile() != "" {
 		t.Errorf("without the proxy a first yes was enough:\n%s\nfile: %q", out, f.userFile())
 	}
 	key, _ := credentials.PlatformKey("github")
@@ -414,7 +420,7 @@ func TestInitModelAndClient(t *testing.T) {
 	}
 	out, _, err := f.run()
 	if err != nil || !strings.Contains(out, "OPENROUTER_API_KEY exported") || !strings.Contains(out, "spov fly --web") ||
-		!strings.Contains(out, "4. OpenCode client  ✗ not found") {
+		!strings.Contains(out, "✗ 4. OpenCode client  not found") {
 		t.Errorf("init: %v\n%s", err, out)
 	}
 	okey, _ := credentials.ProviderKey("OPENROUTER_API_KEY")
@@ -451,7 +457,7 @@ func TestInitWithAHostedServer(t *testing.T) {
 	if strings.Contains(out, "Modal  ") || len(f.asked) != 0 {
 		t.Errorf("a hosted setup ran the local steps: %v\n%s", err, out)
 	}
-	if err != nil || !strings.Contains(out, "1. Server  ✓ ok") || !strings.Contains(out, "signed in to "+srv.URL) {
+	if err != nil || !strings.Contains(out, "✓ 1. Server  ok") || !strings.Contains(out, "signed in to "+srv.URL) {
 		t.Errorf("a signed-in hosted setup: %v\n%s", err, out)
 	}
 	f.env.Environ.(config.MapEnv).Vars[ServerTokenEnvVar] = "wrong"
@@ -588,7 +594,7 @@ func TestInitPrompts(t *testing.T) {
 	options := []string{"key", "sign in", "skip"}
 	for in, want := range map[string]int{"2\n": 1, " 3 \n": 2, "0\n": -1, "9\n": -1, "yes\n": -1, "": -1} {
 		var out strings.Builder
-		if got := chooseFrom(strings.NewReader(in), &out, "Which?", options); got != want {
+		if got := chooseFrom(strings.NewReader(in), &out, initStyle{}, "Which?", options); got != want {
 			t.Errorf("%q chose %d, want %d", in, got, want)
 		}
 		if !strings.Contains(out.String(), "2) sign in") {
@@ -609,7 +615,7 @@ func TestInitPrompts(t *testing.T) {
 	if err := env.runInteractive(context.Background(), "false"); err == nil {
 		t.Error("a program that failed was reported as done")
 	}
-	if _, err := env.choose(context.Background(), "Which?", options); err == nil {
+	if _, err := env.choose(context.Background(), initStyle{}, "Which?", options); err == nil {
 		t.Error("a choice was read with no terminal")
 	}
 }
@@ -639,7 +645,7 @@ func TestInitImageEdges(t *testing.T) {
 	// The fake counts a failed build as built, so only the words are
 	// checked here.
 	out, _, _ = g.run()
-	if !strings.Contains(out, "the build did not finish (run `spov serve image build` to try again): modal is down") {
+	if !strings.Contains(oneLine(out), "error: the build did not finish (run `spov serve image build` to try again): modal is down") {
 		t.Errorf("a failed build:\n%s", out)
 	}
 
@@ -649,7 +655,7 @@ func TestInitImageEdges(t *testing.T) {
 	h.env.NewProvider = func(context.Context, config.Config) (sandbox.Provider, error) { return nil, errors.New("refused") }
 	h.env.LookPath = func(string) (string, error) { return "/bin/modal", nil }
 	out, _, _ = h.run()
-	if len(h.ran) != 0 || !strings.Contains(out, "win over a sign-in") {
+	if len(h.ran) != 0 || !strings.Contains(oneLine(out), "win over a sign-in") {
 		t.Errorf("environment tokens: ran %v\n%s", h.ran, out)
 	}
 }
