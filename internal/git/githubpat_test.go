@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -368,5 +369,31 @@ func TestGitHubPATWideTokenIsTheToken(t *testing.T) {
 	tok, err := p.IssueWideToken(context.Background(), time.Hour)
 	if err != nil || tok.Secret != "github_pat_secret" || tok.Username != GitHubPATUser || tok.Revoke != nil {
 		t.Errorf("wide token %+v, %v", tok, err)
+	}
+}
+
+// A GitHub token says whose it is, which `spov init` needs before it
+// stores gh's login. @decision(DL-124)
+func TestAGitHubTokenDescribesItself(t *testing.T) {
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"login":"alice"}`))
+	}))
+	defer srv.Close()
+	p, _ := NewGitHubPAT(GitHubPATConfig{Name: "gh", APIURL: srv.URL, Token: "gho_x"})
+
+	info, err := Inspect(context.Background(), p)
+	if err != nil || info.User != "alice" {
+		t.Fatalf("Inspect = %+v, %v; want the token's user", info, err)
+	}
+	for code, want := range map[int]error{http.StatusUnauthorized: ErrBadToken, http.StatusForbidden: ErrMissingPermission} {
+		status = code
+		if _, err := Inspect(context.Background(), p); !errors.Is(err, want) {
+			t.Errorf("a %d: %v, want %v", code, err, want)
+		}
 	}
 }

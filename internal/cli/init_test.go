@@ -653,3 +653,19 @@ func TestInitImageEdges(t *testing.T) {
 		t.Errorf("environment tokens: ran %v\n%s", h.ran, out)
 	}
 }
+
+// The platform init builds for gh's login can say whose token it is:
+// the fixture's fake must not have an ability the real one lacks.
+//
+// @decision(DL-124)
+func TestThePlatformInitBuildsForGhCanBeInspected(t *testing.T) {
+	built, err := newPlatform(context.Background(), config.Platform{Name: "github", Kind: config.KindGitHub}, "gho_token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := git.Inspect(ctx, built); err == nil || errors.Is(err, git.ErrUnsupported) {
+		t.Errorf("Inspect on the real GitHub platform: %v; want a request that was attempted", err)
+	}
+}
