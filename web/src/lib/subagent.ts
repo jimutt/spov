@@ -1,4 +1,5 @@
 import type { LogEvent } from "./api/live";
+import type { Entry } from "./timeline";
 
 /**
  * What the page knows about a subagent from the parent's side: the call
@@ -43,15 +44,17 @@ export interface DelegatedCall {
   child: string;
   description: string;
   agent: string;
-  background: boolean;
 }
 
 /**
  * Names a call's input carries. `sessionID` is a follow-up to an
- * existing child (spike S-SA1).
+ * existing child (spike S-SA1). A 2.2.5 input's `background` is not
+ * read: every call returns at once from 2.3.0.
+ *
+ * @decision(DL-144)
  */
-function readInput(text: string): { description: string; agent: string; background: boolean; child: string } {
-  const none = { description: "", agent: "", background: false, child: "" };
+function readInput(text: string): { description: string; agent: string; child: string } {
+  const none = { description: "", agent: "", child: "" };
   if (!text.trim()) return none;
   try {
     const f: unknown = JSON.parse(text);
@@ -61,7 +64,6 @@ function readInput(text: string): { description: string; agent: string; backgrou
     return {
       description: str(o.description),
       agent: str(o.agent) || str(o.subagent_type),
-      background: o.background === true,
       child: str(o.sessionID),
     };
   } catch {
@@ -89,7 +91,6 @@ export function delegatedCalls(activity: readonly LogEvent[]): DelegatedCall[] {
           child: "",
           description: "",
           agent: "",
-          background: false,
         });
       }
       continue;
@@ -101,7 +102,6 @@ export function delegatedCalls(activity: readonly LogEvent[]): DelegatedCall[] {
         const input = readInput(ev.text ?? "");
         c.description = input.description;
         c.agent = input.agent;
-        c.background = input.background;
         if (input.child && !c.child) c.child = input.child;
         break;
       }
@@ -195,19 +195,27 @@ const Ended: Readonly<Record<string, SubagentState>> = {
   "session.execution.interrupted": "stopped",
 };
 
+/** A report's `state` as a card's, for the states measured (S-SA3). */
+const Reported: Readonly<Record<string, SubagentState>> = { completed: "done", cancelled: "stopped" };
+
 /**
  * subagentState says how a subagent is going. From the child's own
- * frames when it has any: its last execution frame, by position. Else
- * from the call that started it: a call still running is a card that is
- * starting, a failed one failed, and a finished foreground one done (a
- * background call finishes at once and says nothing of the child).
- * `ended` is the whole session having ended, which turns a child still
- * running into a stopped one.
+ * frames when it has any: its last execution frame, by position, and
+ * running while none has ended. A call's success says nothing of its
+ * child, since every call returns at once: with none of the child's
+ * frames read (`child` empty, or undefined for a card with no
+ * conversation behind it) the card is starting, unless the child's
+ * report to its parent says how it ended (`reported`), or the call
+ * failed and so started no child. `ended` is the whole session having ended,
+ * which turns a child still running into a stopped one.
+ *
+ * @decision(DL-112) @decision(DL-144)
  */
 export function subagentState(
   child: readonly LogEvent[] | undefined,
   call: DelegatedCall | undefined,
   ended: boolean,
+  reported = "",
 ): SubagentState {
   let at = -1;
   let state: SubagentState | undefined;
@@ -221,12 +229,45 @@ export function subagentState(
       state = Ended[ev.name];
     }
   }
+  // @decision(DL-144)
+  if (!state) state = Reported[reported];
   if (!state) {
-    if (call?.state === "failed") state = "failed";
-    else if (call?.state === "done" && !call.background) state = "done";
-    else state = child?.length ? "running" : "starting";
+    if (child?.length) state = "running";
+    else if (call?.state === "failed") state = "failed";
+    // A finished call with no conversation behind it that names none,
+    // as in a log recorded before parentage (DL-110), has nothing to
+    // wait for.
+    else if (call?.state === "done" && child === undefined && !call.child) state = "done";
+    else state = "starting";
   }
   return ended && (state === "running" || state === "starting") ? "stopped" : state;
+}
+
+/**
+ * subagentsWorking counts the subagents, at any depth, that are running
+ * or starting, from the cards a timeline drew: the main list's and each
+ * child's own. A session that has ended has none, as its cards say, and
+ * nor has one whose recording stopped (`stopped`).
+ *
+ * @decision(DL-144)
+ */
+export function subagentsWorking(
+  t: { entries: readonly Entry[]; children: ReadonlyMap<string, readonly Entry[]> },
+  stopped = false,
+): number {
+  if (stopped) return 0;
+  let n = 0;
+  const count = (list: readonly Entry[]) => {
+    for (const e of list) if (e.kind === "subagent" && (e.state === "running" || e.state === "starting")) n++;
+  };
+  count(t.entries);
+  for (const list of t.children.values()) count(list);
+  return n;
+}
+
+/** subagentsWord says how many subagents are working. @decision(DL-144) */
+export function subagentsWord(n: number): string {
+  return n === 1 ? "1 subagent working" : `${n} subagents working`;
 }
 
 /** The words a state is drawn with. */

@@ -121,6 +121,8 @@ func TestEveryStopReasonThePluginSendsHasALabel(t *testing.T) {
 	for _, re := range []*regexp.Regexp{
 		regexp.MustCompile(`announceStop\(ctx, sessionID, "([a-z-]+)"\)`),
 		regexp.MustCompile(`loop\.stopReason = "([a-z-]+)"`),
+		// @decision(DL-146)
+		regexp.MustCompile(`stopLoop\("([a-z-]+)"\)`),
 	} {
 		for _, m := range re.FindAllStringSubmatch(src, -1) {
 			found[m[1]] = true

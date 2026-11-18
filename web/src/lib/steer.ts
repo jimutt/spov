@@ -1,6 +1,7 @@
 import { ApiError, type Problem } from "./api/client";
 import type { components } from "./api/types";
 import { childIds, type Activity, type Conversation } from "./timeline";
+import { subagentsWord } from "./subagent";
 
 /**
  * The composer's logic, kept out of the component so it can be tested:
@@ -651,39 +652,50 @@ export function queuedNote(delivery?: string, after?: string): string {
 /**
  * composerStatus is the one line above the box: what the agent is doing
  * and whose the job is, or null when there is nothing to say. An ask in
- * the transcript waiting on the reader comes first.
+ * the transcript waiting on the reader comes first. With the agent's own
+ * turn over, `working` subagents still at it are said instead.
  *
- * @decision(DL-059) @decision(DL-020)
+ * @decision(DL-059) @decision(DL-020) @decision(DL-144)
  */
 export function composerStatus(
   state: string | undefined,
   inFlight: boolean,
   asking = false,
+  working = 0,
 ): { mark: "run" | "wait"; word: string } | null {
   if (asking) return { mark: "wait", word: "Waiting on your answer" };
   if (state === "blocked") return { mark: "wait", word: "Waiting on a question" };
+  const subagents = !inFlight && working > 0 ? subagentsWord(working) : "";
   if (state === "steered") {
-    return inFlight
-      ? { mark: "run", word: "Working on a step · paused for you" }
-      : { mark: "wait", word: "Paused for you" };
+    if (inFlight) return { mark: "run", word: "Working on a step · paused for you" };
+    return subagents ? { mark: "run", word: `${subagents} · paused for you` } : { mark: "wait", word: "Paused for you" };
   }
-  return inFlight ? { mark: "run", word: "Working on a step" } : null;
+  if (inFlight) return { mark: "run", word: "Working on a step" };
+  return subagents ? { mark: "run", word: subagents } : null;
 }
 
 /**
  * controlsNote explains the status bar's buttons, for its (i): only the
- * ones drawn, each under the button's own name.
+ * ones drawn, each under the button's own name. While only subagents
+ * work (`working`, zero otherwise), it says when a message is read.
  *
- * @decision(DL-059) @decision(DL-053)
+ * @decision(DL-059) @decision(DL-053) @decision(DL-144)
  */
 export function controlsNote(
   state: string | undefined,
   stoppable: boolean,
   releasable: boolean,
+  working = 0,
 ): { control: string; does: string }[] {
   const out: { control: string; does: string }[] = [];
   if (stoppable) {
     out.push({ control: "Interrupt", does: "Stops the step running now, and anything you sent is read at once." });
+  }
+  if (!stoppable && working > 0) {
+    out.push({
+      control: "Subagents",
+      does: "They work on their own and report back to the agent. A message you send now is read when the agent's next turn starts.",
+    });
   }
   if (releasable) out.push({ control: "Resume job", does: resumeNote(state) });
   return out;

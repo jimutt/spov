@@ -128,6 +128,12 @@ a person:
 - `steered`: someone sent the job a message or interrupted it. The agent reads
   the message and the job waits until someone resumes it.
 
+**Subagents.** An agent can hand work to subagents, which run in the
+background and report back to it. While only they are working, spov sends
+the agent no further prompts, for up to ten minutes at a time. Declaring the
+work done ends the job whatever they are still doing, and anything they have
+not reported is lost; the agent is told to wait for the reports it needs.
+
 **Its time limit.** A job has one time allowance. It counts while the job runs
 or is blocked, pauses while someone steers it, and a resume continues with
 what is left. No number of turns ends a job. A run that keeps repeating a call
@@ -137,7 +143,9 @@ enough for its clock, its launch and delivery, and an hour of steering.
 ## How it is judged
 
 When the agent declares the work done, or the time limit runs out, spov stops
-the run and checks three gates:
+the run and checks three gates. Declaring runs the check first; if you
+interrupt while that check is running, the check stops, the declaration is
+withdrawn and the job carries on under your control. The gates:
 
 1. **Check**: the check command exits 0.
 2. **Deliverable**: each pull request the agent recorded is open or merged on

@@ -25,6 +25,8 @@ type completionRun struct {
 	Synth    []map[string]any
 	Stdout   string
 	Returned string
+	// Description is the registered tool's description.
+	Description string
 	// LoopStopped is the plugin's own loop.stopped after the call. It
 	// is read out of the running plugin rather than inferred, because
 	// on the no-session path there is no marker to infer it from.
@@ -100,6 +102,7 @@ if (__registered === null) {
   process.exit(3)
 }
 console.log("SPOV_TEST registered name: " + __registered.name)
+console.log("SPOV_TEST description: " + JSON.stringify(__registered.description))
 ` + before + `
 
 const __returned = await __registered.execute(
@@ -132,6 +135,9 @@ __fs.writeFileSync(` + jsonString(t, synthOut) + `, JSON.stringify(__synth))
 
 	run := completionRun{Stdout: string(out)}
 	for _, line := range strings.Split(run.Stdout, "\n") {
+		if d, ok := strings.CutPrefix(line, "SPOV_TEST description: "); ok {
+			_ = json.Unmarshal([]byte(d), &run.Description)
+		}
 		if strings.HasPrefix(line, "SPOV_TEST returned: ") {
 			run.Returned = strings.TrimPrefix(line, "SPOV_TEST returned: ")
 		}
@@ -461,17 +467,18 @@ func TestTheCompletionToolReturnsWhatTheDispatcherAccepts(t *testing.T) {
 }
 
 // TestTheOutcomeLinesAreKeptApart checks a declared completion copies the
-// completion, the check and the loop's stop to the outcome file, and
-// nothing else, so the evidence file's size bound cannot lose them.
+// check, the completion and the loop's stop to the outcome file, and
+// nothing else, so the evidence file's size bound cannot lose them. The
+// completion is recorded once the check is done (DL-146).
 //
-// @decision(DL-051) @decision(DL-050)
+// @decision(DL-051) @decision(DL-050) @decision(DL-146)
 func TestTheOutcomeLinesAreKeptApart(t *testing.T) {
 	run := driveCompletionTool(t, "done", true)
 	var events []string
 	for _, e := range run.Outcome {
 		events = append(events, e["event"].(string))
 	}
-	if strings.Join(events, ",") != "completion.declared,"+CheckEvent+",loop.stopped" {
+	if strings.Join(events, ",") != CheckEvent+",completion.declared,loop.stopped" {
 		t.Errorf("the outcome file holds %v", events)
 	}
 	if len(run.Evidence) <= len(run.Outcome) {

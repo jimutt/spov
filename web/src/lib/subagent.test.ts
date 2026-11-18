@@ -6,10 +6,14 @@ import {
   stateMark,
   stateWord,
   subagentState,
+  subagentsWord,
+  subagentsWorking,
   type DelegatedCall,
   type SubagentState,
 } from './subagent';
 import { callFrames, childEnd, childStart, frame } from './subagent.frames';
+import { buildTimelines, recordingStopped, type Conversation } from './timeline';
+import { Root, subagentConversations, subagentLog } from './subagent.fixture';
 
 /**
  * Which child belongs to which call, and how a subagent is going. The
@@ -27,7 +31,6 @@ const call = (id: string, start: number, o: Partial<DelegatedCall> = {}): Delega
   child: '',
   description: '',
   agent: '',
-  background: false,
   ...o,
 });
 
@@ -38,10 +41,12 @@ describe('reading the calls', () => {
       ...callFrames('ses_p', 'call_b', 20, { description: 'Audit', background: true }),
     ];
     const got = delegatedCalls(log);
-    expect(got.map((c) => [c.call, c.start, c.end, c.state, c.child, c.description, c.agent, c.background])).toEqual([
-      ['call_a', 10, 13, 'done', 'ses_c', 'Review it', 'general', false],
-      ['call_b', 20, undefined, 'running', '', 'Audit', 'general', true],
+    expect(got.map((c) => [c.call, c.start, c.end, c.state, c.child, c.description, c.agent])).toEqual([
+      ['call_a', 10, 13, 'done', 'ses_c', 'Review it', 'general'],
+      ['call_b', 20, undefined, 'running', '', 'Audit', 'general'],
     ]);
+    // A 2.2.5 input's `background` is read as nothing: every call is one.
+    expect(Object.keys(got[1])).not.toContain('background');
   });
 
   test('only a subagent tool is a call, whichever of its names the build uses', () => {
@@ -114,10 +119,10 @@ describe('pairing calls with children', () => {
   });
 
   test('a background child that outlives its call is paired by the name, or stands alone', () => {
-    const calls = [call('a', 1, { end: 3, child: 'bg', background: true })];
+    const calls = [call('a', 1, { end: 3, child: 'bg' })];
     expect(pairSubagents(calls, [kid('bg', 14)]).byCall.get('a')).toBe('bg');
     // Without the id, past the call's end: drawn standalone, never dropped.
-    const lost = pairSubagents([call('a', 1, { end: 3, background: true })], [kid('bg', 14)]);
+    const lost = pairSubagents([call('a', 1, { end: 3 })], [kid('bg', 14)]);
     expect(lost.byCall.size).toBe(0);
     expect(lost.standalone).toEqual(['bg']);
   });
@@ -182,16 +187,19 @@ describe("a subagent's state", () => {
     expect(subagentState([started, ending('session.execution.succeeded')], failed, false)).toBe('done');
   });
 
-  test('without execution frames it falls back to the call', () => {
+  test('without execution frames a finished call says nothing of its child', () => {
+    // @decision(DL-144)
     expect(subagentState(undefined, call('a', 1), false)).toBe('starting');
+    // Every call returns at once (2.3.0): its success is not the child's.
+    expect(subagentState([], call('a', 1, { end: 3, state: 'done', child: 'ses_c' }), false)).toBe('starting');
+    expect(subagentState(undefined, call('a', 1, { end: 3, state: 'done', child: 'ses_c' }), false)).toBe('starting');
+    // One with nothing behind it that names nothing (a log from before
+    // parentage) has nothing to wait for.
     expect(subagentState(undefined, call('a', 1, { end: 3, state: 'done' }), false)).toBe('done');
-    expect(subagentState(undefined, call('a', 1, { end: 3, state: 'failed' }), false)).toBe('failed');
-    // A background call is done at once and says nothing of its child.
-    expect(subagentState(undefined, call('a', 1, { end: 3, state: 'done', background: true }), false)).toBe('starting');
-    expect(subagentState([frame('ses_c', 6, 'session.tool.called')], call('a', 1, { end: 3, state: 'done', background: true }), false)).toBe(
-      'running',
-    );
+    expect(subagentState([frame('ses_c', 6, 'session.tool.called')], call('a', 1, { end: 3, state: 'done' }), false)).toBe('running');
     expect(subagentState([frame('ses_c', 6, 'session.tool.called')], undefined, false)).toBe('running');
+    // A call that failed started no child.
+    expect(subagentState(undefined, call('a', 1, { end: 3, state: 'failed' }), false)).toBe('failed');
   });
 
   test('a session that has ended stops what was still going, and nothing else', () => {
@@ -214,5 +222,58 @@ describe("a subagent's state", () => {
     const all: SubagentState[] = ['starting', 'running', 'done', 'failed', 'stopped'];
     expect(all.map(stateWord)).toEqual(['Delegating…', 'Running', 'Done', 'Failed', 'Stopped']);
     expect(all.map(stateMark)).toEqual(['wait', 'run', 'done', 'fail', 'stop']);
+  });
+});
+
+describe('subagents still working', () => {
+  // @decision(DL-144)
+  const at = (pos: number, ended = false) =>
+    subagentsWorking(buildTimelines(subagentConversations, subagentLog.filter((e) => e.pos <= pos), [], ended));
+
+  test("are counted from the measured log while the parent's turn has ended", () => {
+    // 2.3.0: the root's first turn ends (23) while the child works (15 to 36).
+    const rootEnd = subagentLog.find((e) => e.session === Root && e.name === 'session.execution.succeeded')!.pos;
+    expect(at(rootEnd)).toBe(1);
+    expect(at(35)).toBe(1);
+    expect(at(36)).toBe(0);
+    expect(at(subagentLog.length)).toBe(0);
+  });
+
+  test('count every depth, starting ones too, and none once the session has ended', () => {
+    const P = 'ses_p';
+    const convs: Conversation[] = [
+      { id: P, messages: [] },
+      { id: 'ses_c', parent: P, messages: [] },
+      { id: 'ses_g', parent: 'ses_c', messages: [] },
+    ];
+    const log = [
+      ...callFrames(P, 'call_a', 1, { end: 'success', child: 'ses_c' }),
+      ...childStart('ses_c', 10),
+      ...callFrames('ses_c', 'call_b', 20, { end: 'success', child: 'ses_g' }),
+      ...childStart('ses_g', 30),
+      ...callFrames(P, 'call_x', 40, {}),
+    ];
+    expect(subagentsWorking(buildTimelines(convs, log, [], false))).toBe(3);
+    expect(subagentsWorking(buildTimelines(convs, log, [], true))).toBe(0);
+    const done = [...log, ...childEnd('ses_g', 50, 'ok')];
+    expect(subagentsWorking(buildTimelines(convs, done, [], false))).toBe(2);
+  });
+
+  test('are none once the recording has stopped, since no frame of theirs will come', () => {
+    // @decision(DL-144) @decision(DL-131)
+    const working = subagentLog.filter((e) => e.pos <= 30);
+    const stopped = { name: 'spov.recorder.stopped', source: 'spov', at: '2026-11-17T22:08:44Z', pos: 31 } as const;
+    expect(recordingStopped(working)).toBe(false);
+    expect(recordingStopped([...working, stopped])).toBe(true);
+    // A recording that went on after the marker has not stopped.
+    expect(recordingStopped([...working, stopped, frame(Root, 32, 'session.execution.started')])).toBe(false);
+    const t = buildTimelines(subagentConversations, [...working, stopped], [], false);
+    expect(subagentsWorking(t)).toBe(1);
+    expect(subagentsWorking(t, true)).toBe(0);
+  });
+
+  test('are said in words', () => {
+    expect(subagentsWord(1)).toBe('1 subagent working');
+    expect(subagentsWord(3)).toBe('3 subagents working');
   });
 });

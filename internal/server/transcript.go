@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -44,6 +45,11 @@ type MessageView struct {
 	//
 	// @decision(DL-058)
 	At *time.Time `json:"at,omitempty"`
+	// Report says this synthetic message is a subagent's report, not a
+	// message, and whose.
+	//
+	// @decision(DL-144)
+	Report *SubagentReport `json:"report,omitempty"`
 }
 
 type messagesOutput struct {
@@ -153,5 +159,30 @@ func messageViewOf(m store.Message) MessageView {
 		at := m.At.UTC()
 		v.At = &at
 	}
+	// @decision(DL-144)
+	v.Report = messageReport(m)
 	return v
+}
+
+// messageReport reads a stored synthetic message as a subagent's report:
+// at 2.3.0 its top-level `metadata` names `source: "subagent"`, the
+// child in `childID` and its end in `state` (spike S-SA1).
+//
+// @decision(DL-144)
+func messageReport(m store.Message) *SubagentReport {
+	if m.Role != "synthetic" || len(m.Raw) == 0 {
+		return nil
+	}
+	var raw struct {
+		Type     string `json:"type"`
+		Metadata struct {
+			Source  string `json:"source"`
+			ChildID string `json:"childID"`
+			State   string `json:"state"`
+		} `json:"metadata"`
+	}
+	if json.Unmarshal(m.Raw, &raw) != nil || raw.Type != "synthetic" || raw.Metadata.Source != "subagent" || raw.Metadata.ChildID == "" {
+		return nil
+	}
+	return &SubagentReport{Child: raw.Metadata.ChildID, State: raw.Metadata.State}
 }

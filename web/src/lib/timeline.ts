@@ -23,6 +23,13 @@ export type Message = {
   role?: string;
   text?: string;
   at?: string;
+  /**
+   * Set on a subagent's report to this conversation, which the page
+   * never draws as a message.
+   *
+   * @decision(DL-144)
+   */
+  report?: Activity["report"];
 };
 /**
  * `parent` is the OpenCode id of the conversation that started this one as
@@ -40,6 +47,47 @@ export type Conversation = { id: string; title?: string; parent?: string; messag
  */
 export function childIds(conversations: readonly Conversation[]): ReadonlySet<string> {
   return new Set(conversations.filter((c) => c.parent).map((c) => c.id));
+}
+
+/** The marker the recorder writes when it stops recording a session (DL-131). */
+export const RecordingStopped = "spov.recorder.stopped";
+
+/**
+ * recordingStopped says the session's recording has stopped: spov's
+ * marker is the last thing the log holds from anyone but spov, so no
+ * frame of the sandbox's will follow it.
+ *
+ * @decision(DL-144) @decision(DL-131)
+ */
+export function recordingStopped(activity: readonly Activity[]): boolean {
+  for (let i = activity.length - 1; i >= 0; i--) {
+    const ev = activity[i];
+    if (ev.source === "spov" && ev.name === RecordingStopped) return true;
+    if (ev.source !== "spov") return false;
+  }
+  return false;
+}
+
+/**
+ * withLoggedChildren is the conversations plus one for each subagent the
+ * log names that they do not list: the server puts each event's
+ * conversation's parent on the log, so a child started after the
+ * conversations were read is one at once, with no second read. The
+ * same array when there is none to add.
+ *
+ * @decision(DL-144) @decision(DL-111)
+ */
+export function withLoggedChildren(conversations: Conversation[], activity: readonly Activity[]): Conversation[] {
+  let listed: Set<string> | undefined;
+  let added: Conversation[] | undefined;
+  for (const ev of activity) {
+    if (!ev.parent || !ev.session) continue;
+    listed ??= new Set(conversations.map((c) => c.id));
+    if (listed.has(ev.session)) continue;
+    listed.add(ev.session);
+    (added ??= []).push({ id: ev.session, parent: ev.parent, messages: [] });
+  }
+  return added ? [...conversations, ...added] : conversations;
 }
 
 /**
@@ -579,6 +627,10 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       //
       // @decision(DL-058)
       if (!text.trim()) return;
+      // A subagent's report: its card says what the child concluded.
+      //
+      // @decision(DL-144)
+      if (m.report) return;
       // A child's `user` message is its task prompt, written by the
       // parent agent.
       //
@@ -628,6 +680,11 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       }
       continue;
     }
+    // A subagent's report is neither a message nor a line: its card
+    // says what the child concluded.
+    //
+    // @decision(DL-144)
+    if (ev.report) continue;
     const name = ev.name ?? "";
     const text = ev.text ?? "";
     const at = millis(ev.at);
@@ -801,6 +858,32 @@ export function buildTimelines(
 
   const children = new Map<string, Entry[]>();
   const labels = new Map<string, string>();
+  // The frames of a child a call names that no conversation lists as one
+  // (a log from before parentage): its own frames still say how it is
+  // going, though they are drawn as a root's. Grouped by session once.
+  //
+  // @decision(DL-144)
+  let unlisted: Map<string, Activity[]> | undefined;
+  // How each child last reported it ended, from its reports to its
+  // parent, on the log or in the transcript.
+  //
+  // @decision(DL-144)
+  const reported = new Map<string, string>();
+  for (const c of conversations) for (const m of c.messages ?? []) if (m.report?.child) reported.set(m.report.child, m.report.state ?? "");
+  for (const ev of activity) if (ev.report?.child) reported.set(ev.report.child, ev.report.state ?? "");
+  const unlistedFrames = (id: string): Activity[] | undefined => {
+    if (!id || kids.has(id)) return undefined;
+    if (!unlisted) {
+      unlisted = new Map();
+      for (const e of activity) {
+        if (!e.session || kids.has(e.session)) continue;
+        const list = unlisted.get(e.session);
+        if (list) list.push(e);
+        else unlisted.set(e.session, [e]);
+      }
+    }
+    return unlisted.get(id);
+  };
 
   // place draws the subagents of one list: a card for each call to a
   // subagent tool, at that call, and one for each child no call claims,
@@ -836,7 +919,7 @@ export function buildTimelines(
         call: call?.call ?? "",
         title: label,
         agent: call?.agent ?? "",
-        state: subagentState(conv ? byChild.get(conv.id) : undefined, call, ended),
+        state: subagentState(conv ? (byChild.get(conv.id) ?? []) : unlistedFrames(call?.child ?? ""), call, ended, reported.get(conv?.id ?? call?.child ?? "")),
         calls: plain.filter((e) => e.calls).length,
         summary: runSummary(plain),
         latest: latestAction(plain),

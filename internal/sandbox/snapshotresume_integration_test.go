@@ -266,16 +266,19 @@ func TestIntegrationSSR1SnapshotResume(t *testing.T) {
 			return resp.Status + " " + string(body)
 		}
 		id := createSession(ctx, t, client, creds.URL, creds.Token, password)
-		prompt(ctx, t, client, creds.URL, creds.Token, password, id, "A message written before the exit snapshot.")
-		// The turn may still be writing; read once two reads 3 s apart agree.
+		// A turn that needs no tool, so it ends: an open question sends the
+		// default model exploring the sandbox for minutes.
+		prompt(ctx, t, client, creds.URL, creds.Token, password, id, "Reply with the single word: ready. Use no tools.")
+		// The turn may still be writing; read once it has ended, which is
+		// its newest message being the `idle` one a turn ends with.
 		before := get(creds.URL, creds.Token, password, "/api/session/"+id+"/message")
-		for settle := time.Now().Add(2 * time.Minute); time.Now().Before(settle); {
-			time.Sleep(3 * time.Second)
-			again := get(creds.URL, creds.Token, password, "/api/session/"+id+"/message")
-			if again == before {
+		for settle := time.Now().Add(4 * time.Minute); !turnEnded(before); {
+			if time.Now().After(settle) {
+				t.Errorf("the turn had not ended after four minutes, so the snapshot holds a turn in flight: %s", truncate(before, 600))
 				break
 			}
-			before = again
+			time.Sleep(2 * time.Second)
+			before = get(creds.URL, creds.Token, password, "/api/session/"+id+"/message")
 		}
 		t.Logf("messages before: %d bytes, %d messages: %s", len(before), strings.Count(before, `"id":"msg_`), truncate(before, 400))
 		t.Logf("what OpenCode keeps on disk:\n%s", run(t, ctx, sb, "du -sh /root/.local/share/opencode /root/.local/state/opencode /root/.cache/opencode 2>/dev/null; ls -la /root/.local/share/opencode 2>&1 | head -20"))
@@ -435,25 +438,86 @@ func sameConversation(before, after string) ([]string, error) {
 		if string(was[id]) == string(is[id]) {
 			continue
 		}
-		var m struct {
-			Time struct {
-				Completed *int64 `json:"completed"`
-			} `json:"time"`
-			Error struct {
-				Type string `json:"type"`
-			} `json:"error"`
-		}
-		var old struct {
-			Time struct {
-				Completed *int64 `json:"completed"`
-			} `json:"time"`
-		}
-		_ = json.Unmarshal(was[id], &old)
-		_ = json.Unmarshal(is[id], &m)
-		if old.Time.Completed != nil || m.Error.Type != "aborted" {
-			return nil, fmt.Errorf("message %s changed: %s became %s", id, truncate(string(was[id]), 300), truncate(string(is[id]), 300))
+		if err := closedAsAborted(was[id], is[id]); err != nil {
+			return nil, fmt.Errorf("message %s changed (%v): %s became %s", id, err, truncate(string(was[id]), 300), truncate(string(is[id]), 300))
 		}
 		closed = append(closed, id)
 	}
 	return closed, nil
+}
+
+// spikeMessage is what the S-SR1 comparisons read of a stored message.
+type spikeMessage struct {
+	Type   string `json:"type"`
+	Finish string `json:"finish"`
+	Time   struct {
+		Created   float64  `json:"created"`
+		Completed *float64 `json:"completed"`
+	} `json:"time"`
+	Error struct {
+		Type string `json:"type"`
+	} `json:"error"`
+	Content []json.RawMessage `json:"content"`
+}
+
+// turnEnded reads a message page and says whether its newest message is
+// the `idle` one the pinned build stores at a turn's end, or for a build
+// without one, an assistant message that is completed and did not end on
+// a tool call.
+func turnEnded(read string) bool {
+	_, body, _ := strings.Cut(read, " OK ")
+	var page struct {
+		Data []spikeMessage `json:"data"`
+	}
+	if json.Unmarshal([]byte(body), &page) != nil || len(page.Data) == 0 {
+		return false
+	}
+	newest := page.Data[0]
+	for _, m := range page.Data[1:] {
+		if m.Time.Created > newest.Time.Created {
+			newest = m
+		}
+	}
+	if newest.Type == "idle" {
+		return true
+	}
+	return newest.Type == "assistant" && newest.Time.Completed != nil && newest.Finish != "tool-calls"
+}
+
+// closedAsAborted accepts a message that was in flight before and was
+// closed by the shutdown: incomplete before, completed as aborted after,
+// with every content item it had unchanged but the last, which may only
+// have grown.
+func closedAsAborted(was, is json.RawMessage) error {
+	var old, now spikeMessage
+	if json.Unmarshal(was, &old) != nil || json.Unmarshal(is, &now) != nil {
+		return errors.New("not a message")
+	}
+	if old.Time.Completed != nil {
+		return errors.New("it was complete")
+	}
+	if now.Error.Type != "aborted" || now.Time.Completed == nil {
+		return errors.New("it was not closed as aborted")
+	}
+	if len(now.Content) != len(old.Content) {
+		return fmt.Errorf("it had %d content items and has %d", len(old.Content), len(now.Content))
+	}
+	for i := range old.Content {
+		if string(old.Content[i]) == string(now.Content[i]) {
+			continue
+		}
+		if i != len(old.Content)-1 {
+			return fmt.Errorf("content item %d changed", i)
+		}
+		var a, b struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal(old.Content[i], &a)
+		_ = json.Unmarshal(now.Content[i], &b)
+		if a.Type != b.Type || !strings.HasPrefix(b.Text, a.Text) {
+			return errors.New("its last content item changed rather than grew")
+		}
+	}
+	return nil
 }

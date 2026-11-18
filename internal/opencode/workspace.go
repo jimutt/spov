@@ -193,11 +193,31 @@ func writeRefusalSection(b *strings.Builder) {
 	b.WriteString("whatever does not need it.\n")
 }
 
-// writeScratchSection names the scratchpad. A report job is also told
+// writeSubagentSection tells a job's agent that its subagents report on
+// their own and that the job ends whatever they are doing. An
+// interactive session has no completion tool and gets none.
+//
+// @decision(DL-143)
+func writeSubagentSection(b *strings.Builder, jobKind string) {
+	if jobKind == "" {
+		return
+	}
+	b.WriteString("\n## Subagents\n\n")
+	b.WriteString("A subagent you start runs in the background: the call returns at once, and\n")
+	b.WriteString("its report reaches you as a message of its own when it finishes, which starts\n")
+	b.WriteString("your next turn. You need not poll or sleep for it. The job ends when you call\n")
+	fmt.Fprintf(b, "`%s`, whatever is still running then, and work a subagent has not reported\n", CompletionTool)
+	b.WriteString("by then is lost, so wait for the reports you need before calling it.\n")
+}
+
+// writeScratchSection names the scratchpad, after a job's subagent
+// section. A report job is also told
 // that its deliverable does not go there.
 //
 // @decision(DL-037) @decision(DL-051)
 func writeScratchSection(b *strings.Builder, jobKind string) {
+	// @decision(DL-143)
+	writeSubagentSection(b, jobKind)
 	b.WriteString("\n## Scratchpad\n\n")
 	fmt.Fprintf(b, "`%s` is yours for anything that is not the work itself: temporary\n", ScratchDir)
 	b.WriteString("files, one-off scripts, downloads, notes and intermediate results. Put them\n")

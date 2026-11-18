@@ -96,6 +96,171 @@ const loop = {
   // execution event. A subagent's session is not this one, and its
   // turns must not move the loop's own in-flight flag.
   session: null,
+  // How many turns of the job's session have started, and the timer
+  // that ends a hold for subagents (DL-143).
+  started: 0,
+  subagentTimer: null,
+  // Bumped by every stop, so a withdrawn completion can tell whether
+  // another stop came while its check ran (DL-146).
+  stopGen: 0,
+  // How many frames the subscription has delivered, and the last of
+  // them each tracked child sent (DL-143).
+  frames: 0,
+}
+
+// stopLoop stops the loop for reason, and returns the stop's generation.
+//
+// @decision(DL-146)
+function stopLoop(reason) {
+  loop.stopped = true
+  loop.stopReason = reason
+  loop.stopGen += 1
+  return loop.stopGen
+}
+
+// The job session's direct children, which of them have a turn in
+// flight, and the last frame each sent. A child counts as running from
+// its session.created, which arrives as its first turn starts (spike
+// S-SA3), until a turn of its ends or its report reaches the job. A
+// child's own children are its to report on.
+//
+// @decision(DL-143)
+const subagents = { known: new Set(), running: new Set(), seen: new Map() }
+
+// Each session's parent as OpenCode records it, "" for a root and null
+// when it could not be read: from a session.created frame, or asked of
+// ctx.session.get, which answers Session.Info (spike S-SA3).
+//
+// @decision(DL-143) @decision(DL-054)
+const sessions = { parents: new Map(), lookupFailed: false }
+
+async function parentOf(ctx, id) {
+  if (sessions.parents.has(id)) return sessions.parents.get(id)
+  let parent = null
+  try {
+    const info = await ctx.session.get({ sessionID: id })
+    if (isObject(info) && info.id === id) parent = typeof info.parentID === "string" ? info.parentID : ""
+  } catch (e) {
+    if (!sessions.lookupFailed) record("session.lookup.failed", { error: String(e).slice(0, 300) })
+    sessions.lookupFailed = true
+  }
+  sessions.parents.set(id, parent)
+  return parent
+}
+
+// rootOf follows a session's parents to the root, which in a job's
+// sandbox is the job's session; null when a parent could not be read.
+//
+// @decision(DL-143) @decision(DL-054)
+async function rootOf(ctx, id) {
+  let at = id
+  for (let depth = 0; depth < MAX_PROJECT_DEPTH; depth++) {
+    const parent = await parentOf(ctx, at)
+    if (parent === null) return null
+    if (parent === "") return at
+    at = parent
+  }
+  return null
+}
+
+// Inbox items seen before the job's session is known, per session, and
+// whether a takeover among them was delivered: acted on once that
+// session is known to be the job's (DL-052).
+//
+// @decision(DL-143) @decision(DL-052)
+const early = new Map()
+
+// learnSession takes id as the job's session, and acts on what its inbox
+// did before it was known.
+//
+// @decision(DL-143) @decision(DL-054) @decision(DL-052)
+function learnSession(id, from) {
+  loop.session = id
+  record("session.learned", { from })
+  const box = early.get(id)
+  early.clear()
+  if (!box) return
+  for (const m of box.pending) inbox.pending.add(m)
+  for (const m of box.takeovers) inbox.takeovers.add(m)
+  if (box.held && !loop.paused) {
+    loop.paused = true
+    record("loop.held", { reason: "human-message" })
+  }
+}
+
+// reportedChild is the child a subagent's report to the job names: a
+// synthetic item whose metadata's source is "subagent".
+//
+// @decision(DL-143)
+function reportedChild(ev) {
+  const item = findItem(ev, 0)
+  const metadata = item?.payload?.metadata
+  if (item?.type !== "synthetic" || metadata?.source !== "subagent") return ""
+  return typeof metadata?.childID === "string" ? metadata.childID : ""
+}
+
+// trackSubagent follows a frame of one of the job's subagents, and
+// reports whether the frame was one.
+//
+// @decision(DL-143)
+function trackSubagent(type, ev) {
+  const data = ev?.data ?? ev?.properties ?? {}
+  const id = data?.sessionID
+  if (typeof id !== "string" || id === "") return false
+  if (type === "session.created") {
+    const parent = data?.parentID
+    // Without ctx.session.get: a child is never the job's session, and a
+    // child created while it is unknown names it.
+    if (!loop.session && typeof parent === "string" && parent !== "") learnSession(parent, "subagent")
+    if (!loop.session || parent !== loop.session) return false
+    subagents.known.add(id)
+    subagents.running.add(id)
+    subagents.seen.set(id, loop.frames)
+    record("subagent.created", { session: id, running: subagents.running.size })
+    return true
+  }
+  if (!subagents.known.has(id) || !type.startsWith("session.execution.")) return false
+  if (type === "session.execution.started") subagents.running.add(id)
+  else if (type === "session.execution.succeeded" || type === "session.execution.failed" ||
+    type === "session.execution.interrupted") subagents.running.delete(id)
+  return true
+}
+
+// waitForSubagents holds the continuation of a turn that ended while a
+// subagent of the job runs: the child's report starts the next turn. At
+// CONFIG.subagentWaitMs with no turn of the job's started since, the
+// ordinary continuation goes out, saying how many still run.
+//
+// @decision(DL-143)
+function waitForSubagents(ctx, sessionID) {
+  record("continue.waiting", { running: subagents.running.size })
+  const started = loop.started
+  const since = loop.frames
+  if (loop.subagentTimer !== null) clearTimeout(loop.subagentTimer)
+  loop.subagentTimer = setTimeout(() => {
+    loop.subagentTimer = null
+    if (loop.stopped || loop.paused || loop.inFlight || loop.started !== started) {
+      record("continue.wait.ended", { reason: loop.started !== started ? "turn-started" : "not-running" })
+      return
+    }
+    // A child that sent no frame since the hold began (one created that
+    // never ran, one whose end was missed) holds no later turn.
+    for (const id of [...subagents.running]) {
+      if ((subagents.seen.get(id) ?? 0) <= since) {
+        subagents.running.delete(id)
+        record("subagent.dropped", { session: id })
+      }
+    }
+    const n = subagents.running.size
+    const note = n > 0 ? String(CONFIG.subagentWaitNote ?? "").replace("{n}", n === 1 ? "1 subagent" : n + " subagents") : ""
+    continueRun(ctx, sessionID, note).then(
+      () => record("continue.sent", { continuations: loop.continuations, waited: true, running: n }),
+      (e) => {
+        record("continue.failed", { error: String(e) })
+        return announceStop(ctx, sessionID, "continue-failed")
+      },
+    ).catch((e) => record("continue.wait.failed", { error: String(e) }))
+  }, CONFIG.subagentWaitMs)
 }
 
 // What a pause says, to both audiences that read it: the loop stops,
@@ -120,6 +285,23 @@ const DEFERRED_COMPLETION =
   "Not yet: a message from the person watching this job is waiting and will reach you " +
   "next. Read it and act on it, then call this tool again when the goal is met. " +
   "Nothing from this call was recorded."
+
+// What the completion tool answers when its call was stopped before the
+// job began to end.
+//
+// @decision(DL-146)
+const WITHDRAWN_COMPLETION =
+  "Withdrawn: this call was stopped before the job began to end, so the goal is not " +
+  "declared complete and nothing from this call was recorded. Call this tool again " +
+  "when the goal is met."
+
+// aborted reads a tool call's abort signal. A context without one is
+// never aborted.
+//
+// @decision(DL-146)
+function aborted(signal) {
+  return signal?.aborted === true
+}
 
 // The token the supervisor matches to learn that the run has ended. It
 // is a literal shared with the Go side (opencode.LoopStoppedMarker) and
@@ -193,24 +375,24 @@ const inbox = {
 // delivery of a takeover item.
 //
 // @decision(DL-052) @decision(DL-048)
-function trackInbox(ev) {
+function trackInbox(ev, box = inbox) {
   const type = eventType(ev)
   if (typeof type !== "string" || !type.startsWith("session.inbox.")) return false
   const id = inboxIDOf(ev)
   if (!id) return false
   switch (type) {
     case "session.inbox.enqueued":
-      if (isUserInbox(ev)) inbox.pending.add(id)
-      if (takesOver(ev)) inbox.takeovers.add(id)
+      if (isUserInbox(ev)) box.pending.add(id)
+      if (takesOver(ev)) box.takeovers.add(id)
       return false
     case "session.inbox.delivered": {
-      inbox.pending.delete(id)
-      const held = inbox.takeovers.delete(id)
+      box.pending.delete(id)
+      const held = box.takeovers.delete(id)
       return held
     }
     case "session.inbox.cancelled":
-      inbox.pending.delete(id)
-      inbox.takeovers.delete(id)
+      box.pending.delete(id)
+      box.takeovers.delete(id)
       return false
   }
   return false
@@ -218,8 +400,8 @@ function trackInbox(ev) {
 
 // A continuation goes out as a synthetic, never as a prompt: a prompt
 // arrives indistinguishable from a human's and would move the job to
-// steered on its own first turn.
-async function continueRun(ctx, sessionID) {
+// steered on its own first turn. extra is added to its text.
+async function continueRun(ctx, sessionID, extra) {
   // Counted for the status reply and the evidence log; no count ends a
   // run. A continuation that cannot be sent ends it instead.
   //
@@ -230,7 +412,7 @@ async function continueRun(ctx, sessionID) {
   // @decision(DL-052)
   await ctx.session.synthetic({
     sessionID,
-    text: CONFIG.continueText,
+    text: CONFIG.continueText + (extra ?? ""),
     resume: true,
     delivery: "queue",
   })
@@ -255,7 +437,7 @@ function turnFailed(ctx, ev) {
   const delays = CONFIG.turnRetryDelays ?? []
   if (loop.failures > delays.length) {
     loop.failedError = error
-    loop.stopReason = CONFIG.turnFailedReason
+    stopLoop(CONFIG.turnFailedReason)
     announceStop(ctx, sessionID, CONFIG.turnFailedReason).catch((e) =>
       record("turn.stop.failed", { error: String(e) }))
     return
@@ -322,25 +504,37 @@ async function reply(ctx, sessionID, text) {
 // has, as a synthetic with resume: false so it starts no turn and is
 // never mistaken for a human steering the session (DL-048). Sent at
 // most once, since the event subscription can deliver more turns after
-// the loop has stopped.
-async function announceStop(ctx, sessionID, reason) {
-  if (loop.announced) return
+// the loop has stopped. With opts.signal, a signal raised while the
+// check runs withdraws the announcement: it returns false and sends
+// nothing. opts.before runs once the check is done, before the marker.
+//
+// @decision(DL-048) @decision(DL-146)
+async function announceStop(ctx, sessionID, reason, opts) {
+  if (loop.announced) return true
   loop.announced = true
   // The loop is over whatever brought it here. Without this a
   // continuation that FAILED to send would announce the end and then
   // continue on the next turn anyway — the agent spending on a job the
   // server has already delivered and collected.
-  loop.stopped = true
+  if (!loop.stopped) stopLoop(reason)
   // The check runs before the marker goes out: the supervisor collects
   // evidence in the same visit the marker triggers (DL-048), so a check
   // recorded afterwards is never read.
   //
   // @decision(DL-050)
+  // With opts.noCheck the check is not run: a stop that stands after a
+  // withdrawn declaration keeps the check that was killed (DL-146).
   try {
-    await runCheck()
+    if (!opts?.noCheck) await runCheck(opts?.signal)
   } catch (e) {
     record("check.failed", { error: String(e) })
   }
+  // @decision(DL-146)
+  if (aborted(opts?.signal)) {
+    loop.announced = false
+    return false
+  }
+  opts?.before?.()
   const payload = {
     reason,
     continuations: loop.continuations,
@@ -361,19 +555,25 @@ async function announceStop(ctx, sessionID, reason) {
     line = STOP_MARKER + ' {"reason":"' + String(reason) + '"}'
   }
   await reply(ctx, sessionID, line)
+  return true
 }
 
 // Gate 1 of DL-050: the repo's own check, run once when the loop stops.
 // It runs here, in the sandbox, spawning the command directly rather
 // than asking the agent — and outside the permission hook, since the
-// hook guards the agent and this is not the agent.
-async function runCheck() {
+// hook guards the agent and this is not the agent. A signal raised while
+// it runs kills it as a timeout does and records nothing, so a later
+// stop runs it again.
+//
+// @decision(DL-050) @decision(DL-146)
+async function runCheck(signal) {
   if (!CONFIG.checkCommand) {
     // No check configured. Gate 1 is then unverified rather than
     // failed, which is the server's reading of a missing record.
     return
   }
   if (loop.checked) return
+  if (aborted(signal)) return
   loop.checked = true
 
   let spawn
@@ -415,9 +615,10 @@ async function runCheck() {
         if (settled) return
         settled = true
         if (timer !== null) clearTimeout(timer)
+        try { signal?.removeEventListener?.("abort", onAbort) } catch (e) {}
         resolve(value)
       }
-      timer = setTimeout(() => {
+      const stop = () => {
         // Killed, and recorded as a TIMEOUT rather than as an exit
         // code. DL-050 needs the two distinguishable so a slow suite
         // is not read as a broken one; a killed process reports a
@@ -434,18 +635,34 @@ async function runCheck() {
         try { child.stdout?.destroy() } catch (e) {}
         try { child.stderr?.destroy() } catch (e) {}
         try { child.unref() } catch (e) {}
+      }
+      timer = setTimeout(() => {
+        stop()
         finish({ timeout: true, output: out })
       }, CONFIG.checkTimeoutMs)
+      // @decision(DL-146)
+      const onAbort = () => {
+        stop()
+        finish({ aborted: true, output: out })
+      }
+      try { signal?.addEventListener?.("abort", onAbort) } catch (e) {}
+      if (aborted(signal)) onAbort()
 
       child.on("error", (e) => finish({ infra: true, output: String(e) }))
-      child.on("close", (code, signal) => {
-        if (signal) {
-          finish({ timeout: false, infra: true, output: out + "\nkilled by " + String(signal) })
+      child.on("close", (code, killedBy) => {
+        if (killedBy) {
+          finish({ timeout: false, infra: true, output: out + "\nkilled by " + String(killedBy) })
           return
         }
         finish({ exit: typeof code === "number" ? code : 1, output: out })
       })
     })
+    // @decision(DL-146)
+    if (result.aborted) {
+      loop.checked = false
+      record("check.interrupted", { command: CONFIG.checkCommand, durationMs: Date.now() - started })
+      return
+    }
     record(CONFIG.checkEvent, {
       ...result,
       command: CONFIG.checkCommand,
@@ -580,8 +797,7 @@ function onDecision(ctx, evaluation, want) {
       " times in a row: " + shown + ". " + CONFIG.denialNote)
   }
   if (stopTo && denials.count >= CONFIG.denialStopAt) {
-    loop.stopped = true
-    loop.stopReason = CONFIG.deniedReason
+    stopLoop(CONFIG.deniedReason)
     // Longer than what is shown: the server redacts before it cuts, so
     // a token is never cut below the length its pattern needs.
     loop.deniedCall = key.slice(0, 4000)
@@ -735,7 +951,9 @@ export default {
             "collects the deliverable and shuts the sandbox down, so anything you do afterwards " +
             "is not collected and may be cut off part-way. Finish every file write, commit and " +
             "push BEFORE calling this. It is the only way to end the run, and stating completion " +
-            "in a reply does nothing.",
+            "in a reply does nothing." +
+            // @decision(DL-143)
+            (CONFIG.subagentNote ? " " + CONFIG.subagentNote : ""),
           input: {
             type: "object",
             properties: {
@@ -777,25 +995,47 @@ export default {
               record("completion.deferred", { pending: inbox.pending.size })
               return { content: DEFERRED_COMPLETION }
             }
-            record("completion.declared", {
+            const declare = () => record("completion.declared", {
               summary,
               unfinished,
               sessionID: String(sessionID ?? ""),
             })
-            loop.stopped = true
-            loop.stopReason = "declared"
-            if (sessionID) {
+            // The stop this call made, if the loop was not stopped
+            // already: a withdrawal may undo it and nothing else.
+            //
+            // @decision(DL-146)
+            const mine = loop.stopped ? null : stopLoop("declared")
+            if (!sessionID || loop.announced) {
+              declare()
+              // Without a session there is nothing to announce into;
+              // the event subscription announces on the next turn's
+              // end, which is why loop.stopped is set above regardless.
+              if (!sessionID) record("completion.no.session", { keys: describe(Object.keys(context ?? {}), 200) })
+            } else {
               // Awaited inside the tool call, blocking the agent's turn
               // for as long as the check runs: the supervisor collects
               // evidence in the same visit the marker triggers, so a
               // check still running when the marker goes out is a
-              // check nobody reads.
-              await announceStop(ctx, sessionID, "declared")
-            } else {
-              // Without a session there is nothing to announce into;
-              // the event subscription announces on the next turn's
-              // end, which is why loop.stopped is set above regardless.
-              record("completion.no.session", { keys: describe(Object.keys(context ?? {}), 200) })
+              // check nobody reads. The declaration is recorded once
+              // the check is done, so a call stopped during it leaves
+              // none behind.
+              //
+              // @decision(DL-146)
+              const signal = context?.signal
+              const announced = await announceStop(ctx, sessionID, "declared", { signal, before: declare })
+              if (!announced) {
+                if (mine !== null && loop.stopGen === mine) {
+                  record("completion.interrupted", { sessionID: String(sessionID) })
+                  loop.stopped = false
+                  loop.stopReason = null
+                  return { content: WITHDRAWN_COMPLETION }
+                }
+                // Another stop came while the check ran (the wall
+                // clock's, a person's): it stands under its own reason,
+                // the declaration is kept, and the check that was killed
+                // is not run again.
+                await announceStop(ctx, sessionID, loop.stopReason ?? "stopped", { before: declare, noCheck: true })
+              }
             }
             // The return MUST be an object carrying `content`: a bare
             // string throws in the dispatcher, and the errored part is
@@ -816,8 +1056,7 @@ export default {
       // the job is judged on that.
       //
       // @decision(DL-049) @decision(DL-048)
-      loop.stopped = true
-      loop.stopReason = "no-completion-tool"
+      stopLoop("no-completion-tool")
       try {
         console.log("SPOV_GOAL the completion tool could not be registered: " + String(e) +
           " — the run stops after its first turn")
@@ -867,7 +1106,11 @@ export default {
               required: ["repository", "branch"],
               additionalProperties: false,
             },
-            execute: async (input) => {
+            execute: async (input, context) => {
+              // @decision(DL-146)
+              if (aborted(context?.signal)) {
+                return { content: "Stopped: this call was stopped before it recorded anything, so nothing was recorded." }
+              }
               const repo = matchRepo(String(input?.repository ?? ""))
               // Trimmed of a remote prefix the agent may include out of
               // habit: the forge matches on the string.
@@ -940,7 +1183,7 @@ export default {
                 await nudge(ctx, sessionID)
                 return
               case "stop":
-                loop.stopped = true
+                stopLoop("stopped")
                 record("command.stop", {})
                 await reply(ctx, sessionID, "spov-goal: stopped. The loop will not continue again.")
                 // Announced here rather than waiting for the next turn
@@ -955,8 +1198,7 @@ export default {
               //
               // @decision(DL-049)
               case "bound":
-                loop.stopped = true
-                loop.stopReason = "wall-clock"
+                stopLoop("wall-clock")
                 record("command.bound", {})
                 await reply(ctx, sessionID, "spov-goal: stopped at the job's wall clock. The loop will not continue again.")
                 await announceStop(ctx, sessionID, "wall-clock")
@@ -979,20 +1221,56 @@ export default {
         for await (const ev of ctx.event.subscribe()) {
           const type = ev?.type ?? ev?.event
           if (typeof type !== "string") continue
+          loop.frames += 1
+          const data = ev?.data ?? ev?.properties ?? {}
+          const evSession = typeof data?.sessionID === "string" ? data.sessionID : ""
+          // Which session is the job's, from what OpenCode records of
+          // the session a frame names: a child's parent is never a
+          // guess. A session the job never heard created is its
+          // subagent when OpenCode says the job's session is its parent.
+          //
+          // @decision(DL-143) @decision(DL-054)
+          if (type === "session.created" && evSession) {
+            sessions.parents.set(evSession, typeof data?.parentID === "string" ? data.parentID : "")
+          }
+          if (!loop.session && evSession) {
+            const root = await rootOf(ctx, evSession)
+            if (root) learnSession(root, "info")
+          }
+          if (loop.session && evSession && evSession !== loop.session && !subagents.known.has(evSession) &&
+            (await parentOf(ctx, evSession)) === loop.session) {
+            subagents.known.add(evSession)
+            record("subagent.known", { session: evSession })
+          }
+          if (subagents.known.has(evSession)) subagents.seen.set(evSession, loop.frames)
+          // A child's report to the job ends its part in a hold.
+          //
+          // @decision(DL-143)
+          if (type === "session.inbox.enqueued" && loop.session && evSession === loop.session) {
+            const child = reportedChild(ev)
+            if (child && subagents.running.delete(child)) record("subagent.reported", { session: child })
+          }
           // A person's takeover message holds the loop when it is
           // delivered, which is before its execution's succeeded, so no
           // continuation follows it. It sends nothing: the supervisor's
           // own pause brings the notice, and a resume clears this hold
-          // as it clears that pause.
+          // as it clears that pause. It holds whether or not the loop
+          // has stopped, so a stop later withdrawn leaves it held.
           //
-          // Another session's inbox (a subagent's) is not this job's, once
-          // the job's own session is known.
+          // Another session's inbox (a subagent's) is not this job's.
+          // Before the job's session is known an item is kept with its
+          // own session's, and acted on once that is the job's.
           //
-          // @decision(DL-052)
-          const inboxSession = ev?.data?.sessionID ?? ev?.properties?.sessionID
-          const foreign = loop.session && inboxSession && inboxSession !== loop.session
+          // @decision(DL-052) @decision(DL-143) @decision(DL-146)
+          if (!loop.session && evSession && type.startsWith("session.inbox.")) {
+            let box = early.get(evSession)
+            if (!box) early.set(evSession, (box = { pending: new Set(), takeovers: new Set(), held: false }))
+            if (trackInbox(ev, box)) box.held = true
+            continue
+          }
+          const foreign = loop.session && evSession && evSession !== loop.session
           if (!foreign && trackInbox(ev)) {
-            if (!loop.paused && !loop.stopped) {
+            if (!loop.paused) {
               loop.paused = true
               record("loop.held", { reason: "human-message" })
             }
@@ -1008,13 +1286,21 @@ export default {
           // it belongs to.
           //
           // @decision(DL-054)
+          // A subagent of the job's: whether it is still working decides
+          // whether the job's own turn end continues.
+          //
+          // @decision(DL-143)
+          if (trackSubagent(type, ev)) continue
           const execSession = ev?.data?.sessionID ?? ev?.properties?.sessionID
           if (type.startsWith("session.execution.")) {
-            if (!loop.session && execSession) loop.session = execSession
+            // Without ctx.session.get, the first execution event of a
+            // session not known to have a parent.
+            if (!loop.session && execSession && !sessions.parents.get(execSession)) learnSession(execSession, "execution")
             if (loop.session && execSession && execSession !== loop.session) continue
           }
           if (type === "session.execution.started") {
             loop.inFlight = true
+            loop.started += 1
             continue
           }
           // A turn ends three ways and only one continues the loop, but
@@ -1033,7 +1319,7 @@ export default {
             //
             // @decision(DL-053)
             const reason = ev?.data?.reason ?? ev?.properties?.reason
-            if (type === "session.execution.interrupted" && reason === "user" && !loop.paused && !loop.stopped) {
+            if (type === "session.execution.interrupted" && reason === "user" && !loop.paused) {
               loop.paused = true
               record("loop.held", { reason: "interrupted" })
             }
@@ -1067,6 +1353,11 @@ export default {
             if (loop.stopped) {
               await announceStop(ctx, sessionID, reason)
             }
+            continue
+          }
+          // @decision(DL-143)
+          if (subagents.running.size > 0) {
+            waitForSubagents(ctx, sessionID)
             continue
           }
           try {

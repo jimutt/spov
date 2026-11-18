@@ -1813,3 +1813,20 @@ func TestAProposedCheckStopsDecidingOnceAPersonWrote(t *testing.T) {
 		t.Errorf("the caller's own check, a person wrote: state %s, want failed", v.State)
 	}
 }
+
+// A subagent's report is a synthetic item in the job's own inbox: never
+// a person writing, and never a takeover (S-SA3's 2.3.0 shape).
+//
+// @decision(DL-144) @decision(DL-050) @decision(DL-052)
+func TestASubagentsReportIsNotAPersonWriting(t *testing.T) {
+	report := store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued,
+		Raw: []byte(`{"type":"session.inbox.enqueued","data":{"sessionID":"ses_p","inboxID":"msg_r","item":{"type":"synthetic",` +
+			`"payload":{"text":"<subagent sessionID=\"ses_c\" state=\"completed\">final</subagent>","description":"probe child",` +
+			`"metadata":{"source":"subagent","childID":"ses_c","agent":"General","state":"completed"}},"delivery":"steer"}}}`)}
+	if personWrote([]store.Event{report}) {
+		t.Error("a subagent's report counted as a person writing")
+	}
+	if takesOver(report) {
+		t.Error("a subagent's report took the job over")
+	}
+}

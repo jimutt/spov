@@ -51,6 +51,8 @@
     stopNote,
     timeDividers,
     trimBlankLines,
+    withLoggedChildren,
+    recordingStopped,
   } from '../lib/timeline';
   import type { Conversation } from '../lib/timeline';
   import { Tail, atBottom } from '../lib/tail';
@@ -101,7 +103,7 @@
     watchesForAResume,
   } from '../lib/resume';
   import { currentModel } from '../lib/modelpick';
-  import { stateMark, stateWord as subagentWord } from '../lib/subagent';
+  import { stateMark, stateWord as subagentWord, subagentsWord, subagentsWorking } from '../lib/subagent';
   import {
     agentOf,
     askingSessions,
@@ -149,12 +151,16 @@
   // proxy over a long conversation makes every read of it a trap.
   //
   // @decision(DL-070)
-  let conversations = $state.raw<Conversation[]>([]);
+  let read = $state.raw<Conversation[]>([]);
   let warnings = $state<string[]>([]);
   let transcriptError = $state<unknown>(undefined);
   let readTranscript = $state(false);
   // @decision(DL-058) @decision(DL-070)
   let activity = $state.raw<LogEvent[]>([]);
+  // The conversations read, and any subagent the log has named since.
+  //
+  // @decision(DL-144)
+  const conversations = $derived(withLoggedChildren(read, activity));
   let connected = $state(true);
   // @decision(DL-018)
   let tailEnded = $state(false);
@@ -226,7 +232,7 @@
         await api.GET('/api/v1/sessions/{ref}/messages', { params: { path: { ref } }, signal }),
       );
       if (signal.aborted || mine !== reading) return;
-      conversations = (body?.conversations ?? []) as Conversation[];
+      read = (body?.conversations ?? []) as Conversation[];
       warnings = body?.warnings ?? [];
       transcriptError = undefined;
       readTranscript = true;
@@ -388,6 +394,12 @@
   // @decision(DL-111)
   const inFlight = $derived(turnInFlight(activity, children));
   const turnsSeenEnded = $derived(turnsEnded(activity, children));
+  // Subagents still working, from the cards already drawn, said while
+  // the agent's own turn is over.
+  //
+  // @decision(DL-144)
+  const working = $derived(subagentsWorking(timelines, recordingStopped(activity)));
+  const subagentsShown = $derived(!inFlight && working > 0 ? ` · ${subagentsWord(working)}` : '');
   const openWarnings = $derived(shownWarnings(warnings, blocks.length));
 
   // Runs the reader opened, by the run's stable key. Expanding reads
@@ -1243,6 +1255,7 @@
         <Composer
           {ref}
           {inFlight}
+          {working}
           turnsEnded={turnsSeenEnded}
           {asking}
           {model}
@@ -1420,7 +1433,10 @@
         <section>
           <h2 class="m-0 mb-2 flex flex-wrap items-baseline justify-between gap-x-2 text-base font-semibold">
             <span>{kindName(job.kind)} job</span>
-            <StateMark class="text-md font-normal" mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial, job.sync?.held)} />
+            <!-- @decision(DL-144) -->
+            <span data-testid="job-state"
+              ><StateMark class="text-md font-normal" mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial, job.sync?.held) + subagentsShown} /></span
+            >
           </h2>
           <!-- @decision(DL-049) -->
           {#if jobClock?.endsAt}

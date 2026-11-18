@@ -12,6 +12,7 @@ import {
   taskOf,
   messageStatuses,
   timeDividers,
+  withLoggedChildren,
   runSummary,
   seamText,
   shown,
@@ -28,17 +29,22 @@ import {
 import {
   BackgroundChild,
   BackgroundRoot,
+  Call,
   Child,
   ChildPrompt,
+  ForegroundChild,
   Root,
   backgroundConversations,
   backgroundLog,
+  foregroundConversations,
+  foregroundLog,
   subagentConversations,
   subagentLog,
 } from './subagent.fixture';
 import { callFrames, childEnd, childStart, frame, toolFrames } from './subagent.frames';
 import { pendingAskIds, latestAction } from './timeline';
 import { windowOf } from './transcriptwindow';
+import { unseen } from './steer';
 
 /** ev builds one frame of the log, at the position the store gave it. */
 function ev(pos: number, name: string, at = '', text?: string): Activity {
@@ -1108,7 +1114,7 @@ describe('a subagent', () => {
     const at = main.indexOf(row);
     expect(main.slice(at + 1).some((e) => e.kind === 'message' && e.role === 'assistant')).toBe(true);
     expect(main.filter((e) => e.kind === 'event' && e.call && e.key.startsWith('e')).map((e) => e.key)).toEqual([]);
-    expect(row.kind === 'subagent' && row.call).toBe('call_1794165467525768415');
+    expect(row.kind === 'subagent' && row.call).toBe(Call);
     // And none of its work is anywhere else in the main list.
     expect(main.filter((e) => e.kind === 'event' && e.key === 'e17')).toHaveLength(0);
   });
@@ -1168,8 +1174,10 @@ describe('a subagent', () => {
     expect(wordsOf(buildTimeline(subagentConversations, [...subagentLog, ...stray]))).toContain('hello from nowhere');
     // Nor does a log with no parentage at all change: every frame is a
     // root's, and the call that started a subagent is a card with no
-    // child behind it.
-    const lone = buildTimeline(asRoots, subagentLog).filter((e) => e.kind === 'subagent');
+    // child behind it. Such a log was recorded before parentage (DL-110),
+    // so at 2.2.5.
+    const legacyRoots = foregroundConversations.map(({ parent: _parent, ...c }) => c);
+    const lone = buildTimeline(legacyRoots, foregroundLog).filter((e) => e.kind === 'subagent');
     expect(lone.map((e) => e.kind === 'subagent' && [e.id, e.state, e.title])).toEqual([['', 'done', 'Review the retry change']]);
   });
 
@@ -1207,6 +1215,38 @@ describe('a subagent', () => {
   });
 });
 
+// The 2.3.0 conversations as read before the child reported to its parent.
+const beforeTheReport = subagentConversations.map((c) => ({ ...c, messages: (c.messages ?? []).filter((m) => !m.report) }));
+
+describe('a subagent the log names', () => {
+  // The server puts each event's conversation's parent on the log, so a
+  // child started after the conversations were read is one at once.
+  //
+  // @decision(DL-144) @decision(DL-111)
+  const roots = subagentConversations.filter((c) => !c.parent);
+  const only = (t: Entry[]) => {
+    const cards = t.filter((e) => e.kind === 'subagent');
+    expect(cards).toHaveLength(1);
+    return cards[0];
+  };
+  const wordsOf = (t: Entry[]) => t.flatMap((e) => (e.kind === 'message' ? [e.text] : []));
+
+  test('is a conversation the page knows, with no read of the conversations', () => {
+    const known = withLoggedChildren(roots, subagentLog);
+    expect(known.map((c) => [c.id, c.parent])).toEqual([
+      [Root, undefined],
+      [Child, Root],
+    ]);
+    expect(only(buildTimeline(known, subagentLog.filter((e) => e.pos <= 30)))).toMatchObject({ id: Child, state: 'running' });
+    expect(wordsOf(buildTimeline(known, subagentLog)).join('\n')).not.toContain('You are a subagent spawned');
+  });
+
+  test('changes nothing the conversations already say, nor a log without parents', () => {
+    expect(withLoggedChildren(subagentConversations, subagentLog)).toBe(subagentConversations);
+    expect(withLoggedChildren(foregroundConversations, foregroundLog)).toBe(foregroundConversations);
+  });
+});
+
 describe('a subagent card', () => {
   // The card stands where the call that started it stood. These run over
   // the measured frames of the foreground pair and the background pair,
@@ -1224,7 +1264,7 @@ describe('a subagent card', () => {
   test('says what the child is, how it went and what it concluded', () => {
     const card = only(buildTimeline(subagentConversations, subagentLog));
     expect(card).toMatchObject({
-      key: 'sub:call_1794165467525768415',
+      key: `sub:${Call}`,
       id: Child,
       title: 'Review the retry change',
       agent: 'general',
@@ -1247,13 +1287,97 @@ describe('a subagent card', () => {
   });
 
   test('while the call runs it is paired with the child begun inside its span, and shows its latest action', () => {
-    // The result that names the child has not arrived: the child began
-    // at position 11, inside the call's span from 7.
-    const live = upTo(subagentLog, 18);
+    // Recorded at 2.2.5, whose call waited for its child: the result
+    // that names the child has not arrived, and the child began at
+    // position 11, inside the call's span from 7.
+    const live = upTo(foregroundLog, 18);
     expect(live.some((e) => e.child)).toBe(false);
-    const card = only(buildTimeline(subagentConversations, live));
-    expect(card).toMatchObject({ id: Child, state: 'running', calls: 1 });
+    const card = only(buildTimeline(foregroundConversations, live));
+    expect(card).toMatchObject({ id: ForegroundChild, state: 'running', calls: 1 });
     expect(card.latest).toBe('glob internal/client/*.go');
+  });
+
+  test('a session recorded at 2.2.5, whose call waited for its child, still draws its card', () => {
+    // @decision(DL-144)
+    const card = only(buildTimeline(foregroundConversations, foregroundLog));
+    expect(card).toMatchObject({
+      key: 'sub:call_1794165467525768415',
+      id: ForegroundChild,
+      title: 'Review the retry change',
+      state: 'done',
+      calls: 1,
+    });
+    expect(card.final).toMatch(/^The retry change is safe to merge\./);
+  });
+
+  describe("a subagent's report", () => {
+    // At 2.3.0 a child's report reaches its parent as a synthetic inbox
+    // item, which the server names as a report on the log and the
+    // transcript alike.
+    //
+    // @decision(DL-144)
+    const reportText = (t: Entry[]) => t.filter((e) => e.kind === 'message' && e.text.includes('<subagent'));
+    const strip = <T extends { report?: unknown }>(x: T): T => {
+      const { report: _report, ...rest } = x;
+      return rest as T;
+    };
+
+    test('is not drawn as a message: the card already shows what the child concluded', () => {
+      const main = buildTimeline(subagentConversations, subagentLog);
+      expect(reportText(main)).toEqual([]);
+      expect(main.filter((e) => e.kind === 'message' && e.role === 'synthetic')).toEqual([]);
+      expect(only(main).final).toMatch(/^The retry change is safe to merge\./);
+      expect(reportText(buildTimelines(subagentConversations, subagentLog).children.get(Child) ?? [])).toEqual([]);
+    });
+
+    test("never counts as a person's message", () => {
+      const reports = subagentLog.filter((e) => e.report);
+      expect(reports).toHaveLength(1);
+      const ids = reports.map((e) => e.message ?? '');
+      expect([...messageStatuses(subagentLog, false).keys()].some((id) => ids.includes(id))).toBe(false);
+      // It does not clear the reader's echo either.
+      const echo = { key: 'msg_mine', id: 'msg_mine', text: 'and the docs?', at: 1, sending: false };
+      expect(unseen([echo], subagentConversations, subagentLog)).toHaveLength(1);
+      const bubbles = buildTimeline(subagentConversations, subagentLog).filter((e) => e.kind === 'message' && e.role === 'user');
+      expect(bubbles).toHaveLength(1);
+    });
+
+    test("says how the child ended when the child's own frames are not read", () => {
+      const rootOnly = subagentLog.filter((e) => e.session !== Child);
+      expect(only(buildTimeline(subagentConversations, rootOnly)).state).toBe('done');
+      const cancelled = rootOnly.map((e) => (e.report ? { ...e, report: { ...e.report, state: 'cancelled' } } : e));
+      expect(only(buildTimeline(subagentConversations, cancelled)).state).toBe('stopped');
+      // Without the report the card waits on the child, as before.
+      const convs = subagentConversations.map((c) => ({ ...c, messages: (c.messages ?? []).map(strip) }));
+      expect(only(buildTimeline(convs, rootOnly.map(strip))).state).toBe('starting');
+    });
+
+    test('of a session recorded before the field draws as before', () => {
+      const convs = subagentConversations.map((c) => ({ ...c, messages: (c.messages ?? []).map(strip) }));
+      const main = buildTimeline(convs, subagentLog.map(strip));
+      expect(reportText(main)).toHaveLength(1);
+    });
+  });
+
+  test("at 2.3.0 the call returns at once and the card follows the child's own frames", () => {
+    // @decision(DL-144)
+    // The conversations as read before the child reported.
+    const subagentConversations = beforeTheReport;
+    const success = subagentLog.find((e) => e.name === 'session.tool.success' && e.session === Root)!;
+    expect(success.child).toBe(Child);
+    // Before the child's first frame the card is starting; its call's
+    // success says nothing, the child's own frames do.
+    expect(only(buildTimeline(subagentConversations, upTo(subagentLog, 10))).state).toBe('starting');
+    expect(only(buildTimeline(subagentConversations, upTo(subagentLog, success.pos))).state).toBe('running');
+    // The parent's turn has ended (23) and the child is still working.
+    const working = only(buildTimeline(subagentConversations, upTo(subagentLog, 30)));
+    expect(working).toMatchObject({ id: Child, state: 'running', latest: 'glob internal/client/*.go' });
+    expect(only(buildTimeline(subagentConversations, upTo(subagentLog, 36))).state).toBe('done');
+    // Before the conversations are read again the child is not listed as
+    // one, and its own frames still say how it is going.
+    const roots = subagentConversations.filter((c) => !c.parent);
+    expect(only(buildTimeline(roots, upTo(subagentLog, 30))).state).toBe('running');
+    expect(only(buildTimeline(roots, subagentLog)).state).toBe('done');
   });
 
   test('is a card in a delegating state before there is a child', () => {
@@ -1263,12 +1387,18 @@ describe('a subagent card', () => {
   });
 
   test('is the same card from the first frame of its call to the last, so it keeps its place and its open state', () => {
-    const keys = new Set<string>();
-    for (const pos of [7, 8, 9, 11, 18, 26, 32]) {
-      const convs = pos < 11 ? subagentConversations.filter((c) => !c.parent) : subagentConversations;
-      keys.add(only(buildTimeline(convs, upTo(subagentLog, pos))).key);
+    const cases = [
+      { convs: subagentConversations, log: subagentLog, at: [8, 9, 10, 12, 13, 23, 30, 36, 45], childFrom: 12, key: `sub:${Call}` },
+      { convs: foregroundConversations, log: foregroundLog, at: [7, 8, 9, 11, 18, 26, 32], childFrom: 11, key: 'sub:call_1794165467525768415' },
+    ];
+    for (const c of cases) {
+      const keys = new Set<string>();
+      for (const pos of c.at) {
+        const convs = pos < c.childFrom ? c.convs.filter((v) => !v.parent) : c.convs;
+        keys.add(only(buildTimeline(convs, upTo(c.log, pos))).key);
+      }
+      expect([...keys]).toEqual([c.key]);
     }
-    expect([...keys]).toEqual(['sub:call_1794165467525768415']);
   });
 
   test('a background child is named by the call that returned at once, and runs on after it', () => {

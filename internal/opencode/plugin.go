@@ -105,6 +105,12 @@ type pluginConfig struct {
 	// TurnRetryDelays are in milliseconds.
 	TurnRetryDelays  []int64 `json:"turnRetryDelays"`
 	TurnFailedReason string  `json:"turnFailedReason"`
+	// SubagentWaitMS is SubagentWait in milliseconds, and
+	// SubagentWaitNote the sentence a continuation sent at it adds.
+	SubagentWaitMS   int64  `json:"subagentWaitMs"`
+	SubagentWaitNote string `json:"subagentWaitNote"`
+	// SubagentNote is added to the completion tool's description.
+	SubagentNote string `json:"subagentNote"`
 }
 
 // pluginRepo is one selected repository as the pull request tool
@@ -441,15 +447,40 @@ const (
 	DeliverableEvent = "deliverable.recorded"
 )
 
+// SubagentWait bounds how long the loop holds its continuation while a
+// subagent of the job's session has a turn in flight, from the turn end
+// that began the hold.
+//
+// @decision(DL-143)
+const SubagentWait = 10 * time.Minute
+
+// SubagentNote tells the agent how its subagents end and what calling
+// the completion tool does to them: in the tool's description, every
+// continuation and the generated AGENTS.md.
+//
+// @decision(DL-143)
+const SubagentNote = "Subagents run in the background and report back to you on their own when they finish. " +
+	"Work a subagent has not reported when you call the " + CompletionTool + " tool is lost, " +
+	"so wait for the reports you need before calling it."
+
+// subagentWaitNote is what a continuation sent at SubagentWait adds; the
+// plugin puts the count of subagents still running in place of {n}.
+//
+// @decision(DL-143)
+var subagentWaitNote = fmt.Sprintf(" Still running without a report %d minutes after your last turn ended: {n}. "+
+	"Carry on with work that does not need them, or end your response to wait for their reports.",
+	int(SubagentWait/time.Minute))
+
 // continueText is what a continuation says. It carries no goal of its
 // own: the goal arrives through the context hook on the same request.
 // It names the completion tool and must not invite the agent to
 // announce completion in prose instead of calling it.
 //
-// @decision(DL-048)
+// @decision(DL-048) @decision(DL-143)
 const continueText = "Continue working towards your standing goal. " +
 	"If it is already complete, call the " + CompletionTool + " tool to end this job. " +
-	"Saying that you are finished has no effect — only the tool call ends the run."
+	"Saying that you are finished has no effect — only the tool call ends the run. " +
+	SubagentNote
 
 // Source renders the plugin's JavaScript with this job's config baked
 // in.
@@ -486,6 +517,10 @@ func (p Plugin) Source() (string, error) {
 		// @decision(DL-048)
 		TurnRetryDelays:  retryDelaysMs(),
 		TurnFailedReason: TurnFailedReason,
+		// @decision(DL-143)
+		SubagentWaitMS:   SubagentWait.Milliseconds(),
+		SubagentWaitNote: subagentWaitNote,
+		SubagentNote:     SubagentNote,
 	}
 	// json.Marshal is enough to make this a safe JavaScript literal, and
 	// that is not obvious: it escapes U+2028 and U+2029 — which JS reads

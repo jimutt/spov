@@ -37,7 +37,7 @@ import {
 } from "./steer";
 import { childIds, type Activity, type Conversation } from "./timeline";
 import { currentModel } from "./modelpick";
-import { Child, subagentConversations, subagentLog } from "./subagent.fixture";
+import { Child, foregroundConversations, foregroundLog, subagentConversations, subagentLog } from "./subagent.fixture";
 
 /**
  * The composer's rules. Everything a reader is told about what a
@@ -436,29 +436,42 @@ describe("pressing send again", () => {
 });
 
 describe("a subagent's turns", () => {
-  // A subagent runs turns of its own on the root's log, and its end
-  // arrives before the root's. The log is the measured one.
+  // A subagent runs turns of its own on the root's log. In the session
+  // recorded at 2.2.5 its end arrives before the root's; the log is the
+  // measured one.
   //
   // @decision(DL-111) @decision(DL-059)
   const children = childIds(subagentConversations);
-  const midTurn = subagentLog.filter((e) => e.pos < 26);
+  const foreground = childIds(foregroundConversations);
+  const midTurn = foregroundLog.filter((e) => e.pos < 26);
 
   it("does not end the root's turn", () => {
     // The child's execution.succeeded (pos 25) is the last execution frame.
     expect(turnInFlight(midTurn)).toBe(false);
-    expect(turnInFlight(midTurn, children)).toBe(true);
-    expect(turnInFlight(subagentLog, children)).toBe(false);
+    expect(turnInFlight(midTurn, foreground)).toBe(true);
+    expect(turnInFlight(foregroundLog, foreground)).toBe(false);
   });
 
   it("is not counted as a turn that ended", () => {
     expect(turnsEnded(midTurn)).toBe(1);
-    expect(turnsEnded(midTurn, children)).toBe(0);
-    expect(turnsEnded(subagentLog, children)).toBe(1);
+    expect(turnsEnded(midTurn, foreground)).toBe(0);
+    expect(turnsEnded(foregroundLog, foreground)).toBe(1);
   });
 
   it("counts a session no conversation names as a root's", () => {
     expect(turnInFlight(midTurn, childIds([]))).toBe(false);
     expect(turnsEnded(midTurn, childIds([]))).toBe(1);
+  });
+
+  // @decision(DL-144)
+  it("at 2.3.0 runs on after the root's turn ended, which stays ended", () => {
+    // The root's first turn ends at 23; the child works from 15 to 36.
+    const childWorking = subagentLog.filter((e) => e.pos <= 30);
+    expect(turnInFlight(childWorking, children)).toBe(false);
+    expect(turnsEnded(childWorking, children)).toBe(1);
+    // Its report starts the root's next turn, which ends too.
+    expect(turnsEnded(subagentLog, children)).toBe(2);
+    expect(turnInFlight(subagentLog.filter((e) => e.pos <= 40), children)).toBe(true);
   });
 
   it("does not clear the reader's echo, nor does a model it selected become the session's", () => {
@@ -760,5 +773,23 @@ describe("the status bar above the box", () => {
     const both = controlsNote("steered", true, true);
     expect(both.map((l) => l.control)).toEqual(["Interrupt", "Resume job"]);
     expect(both[1].does).toBe(resumeNote("steered"));
+  });
+
+  // @decision(DL-144)
+  it("says when only subagents are working, and that a message waits for the agent's next turn", () => {
+    expect(composerStatus("running", false, false, 1)).toEqual({ mark: "run", word: "1 subagent working" });
+    expect(composerStatus(undefined, false, false, 2)).toEqual({ mark: "run", word: "2 subagents working" });
+    expect(composerStatus("steered", false, false, 2)?.word).toBe("2 subagents working · paused for you");
+    // The agent's own turn and the reader's ask still come first.
+    expect(composerStatus("running", true, false, 2)?.word).toBe("Working on a step");
+    expect(composerStatus("running", false, true, 2)?.word).toBe("Waiting on your answer");
+    expect(composerStatus("blocked", false, false, 2)?.word).toBe("Waiting on a question");
+
+    const note = controlsNote("running", false, false, 2);
+    expect(note.map((l) => l.control)).toEqual(["Subagents"]);
+    expect(note[0].does).toContain("read when the agent's next turn starts");
+    // Interrupt is not offered for them, and its line is not changed.
+    expect(controlsNote("running", true, false, 0).map((l) => l.control)).toEqual(["Interrupt"]);
+    expect(controlsNote("running", false, false, 0)).toEqual([]);
   });
 });
