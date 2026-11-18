@@ -14,8 +14,15 @@ import (
 	"github.com/jimutt/spov/internal/store"
 )
 
-// frame wraps one payload as an SSE data frame.
-func frame(data string) string { return "data: " + data + "\n\n" }
+// frame wraps one event frame as an SSE data frame, after checking it
+// against the pinned build's document.
+//
+// @decision(DL-145)
+func frame(t testing.TB, raw string) string {
+	t.Helper()
+	contract.CheckEventFrame(t, []byte(raw))
+	return "data: " + raw + "\n\n"
+}
 
 // durableFrame is a durable frame in the pinned build's shape.
 const durableFrame = `{"id":"evt_h","created":1788265407960,"type":"session.text.ended",` +
@@ -268,6 +275,19 @@ func TestProjectionFiltersAndShapes(t *testing.T) {
 	}
 }
 
+// An envelope metadata after the data names neither the session nor the
+// text: the data's own fields are read first.
+//
+// @decision(DL-018) @decision(DL-145)
+func TestAnEnvelopeMetadataDoesNotNameTheFrame(t *testing.T) {
+	got, ok := projectString(t, `{"id":"evt_1","created":1794958241235,"type":"session.text.ended",`+
+		`"data":{"sessionID":"ses_1","assistantMessageID":"msg_1","ordinal":0,"text":"final"},`+
+		`"durable":{"aggregateID":"ses_1","seq":19,"version":1},"metadata":{"sessionID":"ses_other","text":"not this"}}`)
+	if !ok || got.Session != "ses_1" || got.Text != "final" {
+		t.Errorf("projected %+v, %v; want ses_1 and the data's text", got, ok)
+	}
+}
+
 // A top-level field beats one nested in the payload, so an envelope that
 // names the session at both levels cannot be read as the wrong one.
 //
@@ -283,20 +303,16 @@ func TestTheOuterEnvelopeWinsOverThePayload(t *testing.T) {
 	}
 }
 
-// TestProjectionAgainstRealSandboxFrames uses frames captured from a
-// running sandbox (opencode2 0.0.0-beta-18743), with the fields the
-// pinned build's document adds since, and pins that the durable marker
-// is a `durable` object.
+// TestProjectionAgainstRealSandboxFrames uses frames captured verbatim
+// from running sandboxes (the step from 2.3.0, the rest from earlier
+// builds whose shapes 2.3.0 keeps), and pins that the durable marker is
+// a `durable` object.
 //
 // @decision(DL-018) @decision(DL-145)
 func TestProjectionAgainstRealSandboxFrames(t *testing.T) {
 	const (
-		stepStarted = `{"id":"evt_000000000003SyntheticId003","created":1788265407953,` +
-			`"type":"session.step.started","location":{"directory":"/workspace/spov"},` +
-			`"data":{"sessionID":"ses_000000000020SyntheticId020","agent":"build",` +
-			`"model":{"id":"ling-3.0-flash-fin-free","providerID":"opencode","variant":"default"},` +
-			`"assistantMessageID":"msg_000000000001SyntheticId001","snapshot":"0badc0de","started":1788265407950},` +
-			`"durable":{"aggregateID":"ses_000000000020SyntheticId020","seq":46,"version":1}}`
+		// OpenCode 2.3.0's, from capture_test.go.
+		stepStarted = capturedRootStepStarted
 
 		retryScheduled = `{"id":"evt_000000000004SyntheticId004","created":1788265407955,` +
 			`"type":"session.retry.scheduled","location":{"directory":"/workspace/spov"},` +
@@ -317,7 +333,7 @@ func TestProjectionAgainstRealSandboxFrames(t *testing.T) {
 	if got.Name != "session.step.started" {
 		t.Errorf("name = %q", got.Name)
 	}
-	if got.Session != "ses_000000000020SyntheticId020" {
+	if got.Session != capturedRoot {
 		t.Errorf("session = %q, want the id from data.sessionID", got.Session)
 	}
 

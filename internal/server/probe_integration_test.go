@@ -351,6 +351,9 @@ func newFrameAudit(t *testing.T, what string, check func([]byte) error) *frameAu
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		t.Logf("checked %d %s frames against the document", a.checked, what)
+		if a.checked == 0 {
+			t.Errorf("contract: no %s frame reached the audit", what)
+		}
 		for _, r := range a.refused {
 			t.Errorf("contract: the pinned build %s a frame its document refuses: %s", what, r)
 		}

@@ -10,16 +10,11 @@ import (
 	"github.com/jimutt/spov/internal/store"
 )
 
-// A subagent's frames at the pin (spike S-SA1): its prompt is a `user`
-// item in its own inbox, delivered, and its turn ends as a root's does.
+// A subagent's frames (capture_test.go).
 const (
-	subagentPrompt = `{"id":"evt_1bc9869b2002A4fvDfIO05z6BN","created":1794165467570,"type":"session.inbox.enqueued","data":{"inboxID":"msg_1bc9869b20018Wf1Z1H8kMNdk7",` +
-		`"sessionID":"ses_child","item":{"type":"user","payload":{"text":"You are a subagent spawned by another session.\nrun one glob"},"delivery":"steer"}},` +
-		`"durable":{"aggregateID":"ses_child","seq":1,"version":1}}`
-	subagentDelivered = `{"id":"evt_1bc9869b4001wQ0cTgk0AFx2pN","created":1794165467572,"type":"session.inbox.delivered","data":{"sessionID":"ses_child","inboxID":"msg_1bc9869b20018Wf1Z1H8kMNdk7"},` +
-		`"durable":{"aggregateID":"ses_child","seq":3,"version":1}}`
-	subagentSucceeded = `{"id":"evt_1bc986a1c001Sm2pD8nGXdLq0R","created":1794165467600,"type":"session.execution.succeeded","data":{"sessionID":"ses_child"},` +
-		`"durable":{"aggregateID":"ses_child","seq":17,"version":1}}`
+	subagentPrompt    = capturedChildEnqueued
+	subagentDelivered = capturedChildDelivered
+	subagentSucceeded = capturedChildSucceeded
 )
 
 // child records a subagent of the fixture's own conversation, created
@@ -28,7 +23,7 @@ func (f *followFixture) child(t *testing.T) string {
 	t.Helper()
 	conv, err := f.st.Conversations().UpsertConversation(context.Background(), store.Conversation{
 		ID: store.NewID(time.Now()), OrgID: f.job.OrgID, SessionID: f.job.SessionID,
-		OpenCodeID: "ses_child", ParentOpenCodeID: "ses_job", CreatedAt: time.Now().Add(time.Minute),
+		OpenCodeID: capturedChild, ParentOpenCodeID: capturedRoot, CreatedAt: time.Now().Add(time.Minute),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +59,7 @@ func TestASubagentNeitherTakesTheJobOverNorEndsItsTurn(t *testing.T) {
 		t.Errorf("after a subagent's prompt and turn: %v with %d turns ended, want running with none", res.State, res.TurnsEnded)
 	}
 
-	f.put(t, "session.execution.succeeded", contract.Event(t, "session.execution.succeeded", 5, `{"sessionID":"ses_job"}`))
+	f.put(t, "session.execution.succeeded", contract.Event(t, "session.execution.succeeded", 5, `{"sessionID":"`+capturedRoot+`"}`))
 	f.putHuman(t)
 	res, err = f.sup.follow(context.Background(), f.job, res.Cursor)
 	if err != nil {

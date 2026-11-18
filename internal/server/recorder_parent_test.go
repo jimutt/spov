@@ -8,25 +8,13 @@ import (
 	"github.com/jimutt/spov/internal/store"
 )
 
-// Frames in the shape spike S-SA1 measured, with the data.location the
-// 2.3.0 document requires of session.created: a subagent's names its
-// parent, and a root's names none.
+// A subagent's session.created names its parent, and a root's names
+// none (capture_test.go holds the frames).
 const (
-	rootCreated = `{"id":"evt_1bc9866100013xf4x4q6LthqVA","created":1794165466640,"type":"session.created",` +
-		`"location":{"directory":"/workspace"},"data":{"sessionID":"ses_root0000000000000000000","slug":"crisp-forest","location":{"directory":"/workspace"},` +
-		`"version":"2.2.5","projectID":"7eb7","subpath":""},` +
-		`"durable":{"aggregateID":"ses_root0000000000000000000","seq":0,"version":1}}`
-	childCreated = `{"id":"evt_1bc9869af001rQ6eLthN0avb1q","created":1794165467567,"type":"session.created",` +
-		`"location":{"directory":"/workspace"},"data":{"sessionID":"ses_child000000000000000000","slug":"lucky-orchid","location":{"directory":"/workspace"},` +
-		`"version":"2.2.5","projectID":"7eb7","parentID":"ses_root0000000000000000000","subpath":"",` +
-		`"title":"probe child fg","agent":"general","model":{"id":"m","providerID":"probe","variant":"default"}},` +
-		`"durable":{"aggregateID":"ses_child000000000000000000","seq":0,"version":1}}`
-	childEnqueued = `{"id":"evt_1bc9869b2002A4fvDfIO05z6BN","created":1794165467570,"type":"session.inbox.enqueued",` +
-		`"location":{"directory":"/workspace"},"data":{"inboxID":"msg_1bc9869b20018Wf1Z1H8kMNdk7",` +
-		`"sessionID":"ses_child000000000000000000","item":{"type":"user","payload":{"text":"You are a subagent spawned by another session.\nrun one glob"},"delivery":"steer"}},` +
-		`"durable":{"aggregateID":"ses_child000000000000000000","seq":1,"version":1}}`
-	childStarted = `{"id":"evt_1bc9869b5001qQlF3MX3LnC8lK","created":1794165467573,"type":"session.execution.started",` +
-		`"data":{"sessionID":"ses_child000000000000000000"},"durable":{"aggregateID":"ses_child000000000000000000","seq":2,"version":1}}`
+	rootCreated   = capturedRootCreated
+	childCreated  = capturedChildCreated
+	childEnqueued = capturedChildEnqueued
+	childStarted  = capturedChildStarted
 )
 
 func (f *recorderFixture) conversationOf(t *testing.T, opencodeID string) (store.Conversation, bool) {
@@ -66,14 +54,14 @@ func TestASubagentsCreatedFrameRecordsItsParent(t *testing.T) {
 	f.sb.send(childEnqueued)
 	f.sb.send(childStarted)
 	waitFor(t, "the child's frames", func() bool { return len(f.openCodeEvents()) == 2 })
-	child, ok := f.conversationOf(t, "ses_child000000000000000000")
-	if !ok || child.ParentOpenCodeID != "ses_root0000000000000000000" {
+	child, ok := f.conversationOf(t, capturedChild)
+	if !ok || child.ParentOpenCodeID != capturedRoot {
 		t.Errorf("the child's row is %+v, want its parent", child)
 	}
-	if root, ok := f.conversationOf(t, "ses_root0000000000000000000"); !ok || !root.IsRoot() {
+	if root, ok := f.conversationOf(t, capturedRoot); !ok || !root.IsRoot() {
 		t.Errorf("the root's row is %+v, %v", root, ok)
 	}
-	for _, id := range []string{"ses_root0000000000000000000", "ses_child000000000000000000"} {
+	for _, id := range []string{capturedRoot, capturedChild} {
 		if n := f.sb.infoReads(id); n != 0 {
 			t.Errorf("%s was read %d times; its created frame said enough", id, n)
 		}
@@ -87,7 +75,7 @@ func TestASubagentsCreatedFrameRecordsItsParent(t *testing.T) {
 // @decision(DL-110)
 func TestAConversationFirstSeenMidLogIsReadOnceForItsParent(t *testing.T) {
 	f := newRecorderFixture(t)
-	f.sb.infos["ses_child000000000000000000"] = `{"id":"ses_child000000000000000000","title":"probe child fg","parentID":"ses_root0000000000000000000"}`
+	f.sb.infos[capturedChild] = `{"id":"` + capturedChild + `","title":"probe child fg","parentID":"` + capturedRoot + `"}`
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := f.rec.Sync(ctx); err != nil {
@@ -97,11 +85,11 @@ func TestAConversationFirstSeenMidLogIsReadOnceForItsParent(t *testing.T) {
 	f.sb.send(childEnqueued)
 	f.sb.send(childStarted)
 	waitFor(t, "the child's frames", func() bool { return len(f.openCodeEvents()) == 2 })
-	child, _ := f.conversationOf(t, "ses_child000000000000000000")
-	if child.ParentOpenCodeID != "ses_root0000000000000000000" || child.Title != "probe child fg" || len(child.Info) == 0 {
+	child, _ := f.conversationOf(t, capturedChild)
+	if child.ParentOpenCodeID != capturedRoot || child.Title != "probe child fg" || len(child.Info) == 0 {
 		t.Errorf("the child's row is %+v, want the info its read gave", child)
 	}
-	if n := f.sb.infoReads("ses_child000000000000000000"); n != 1 {
+	if n := f.sb.infoReads(capturedChild); n != 1 {
 		t.Errorf("the child was read %d times, want once", n)
 	}
 }
@@ -121,18 +109,18 @@ func TestAFailedReadLeavesARootThatTheNextCatchUpCorrects(t *testing.T) {
 	waitFor(t, "attach", func() bool { _, _, s, _ := f.sb.counts(); return s == 1 })
 	f.sb.send(childEnqueued)
 	waitFor(t, "the child's frame", func() bool { return len(f.openCodeEvents()) == 1 })
-	if child, _ := f.conversationOf(t, "ses_child000000000000000000"); !child.IsRoot() {
+	if child, _ := f.conversationOf(t, capturedChild); !child.IsRoot() {
 		t.Fatalf("with no read the child is %+v, want a root", child)
 	}
 
 	f.sb.mu.Lock()
-	f.sb.listing = `{"data":[{"id":"ses_root0000000000000000000"},` +
-		`{"id":"ses_child000000000000000000","parentID":"ses_root0000000000000000000"}]}`
+	f.sb.listing = `{"data":[{"id":"` + capturedRoot + `"},` +
+		`{"id":"` + capturedChild + `","parentID":"` + capturedRoot + `"}]}`
 	f.sb.mu.Unlock()
 	f.sb.breakStream()
 	waitFor(t, "a catch-up", func() bool { _, _, s, _ := f.sb.counts(); return s >= 2 })
 	waitFor(t, "the parent", func() bool {
-		child, _ := f.conversationOf(t, "ses_child000000000000000000")
-		return child.ParentOpenCodeID == "ses_root0000000000000000000"
+		child, _ := f.conversationOf(t, capturedChild)
+		return child.ParentOpenCodeID == capturedRoot
 	})
 }

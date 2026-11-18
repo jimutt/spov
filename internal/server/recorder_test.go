@@ -813,12 +813,7 @@ func TestRealFramesBecomeRows(t *testing.T) {
 	waitFor(t, "attach", func() bool { _, _, s, _ := f.sb.counts(); return s == 1 })
 
 	const (
-		stepStarted = `{"id":"evt_000000000003SyntheticId003","created":1788265407953,` +
-			`"type":"session.step.started","location":{"directory":"/workspace/spov"},` +
-			`"data":{"sessionID":"ses_000000000020SyntheticId020","agent":"build",` +
-			`"model":{"id":"ling-3.0-flash-fin-free","providerID":"opencode","variant":"default"},` +
-			`"assistantMessageID":"msg_000000000001SyntheticId001","snapshot":"0badc0de","started":1788265407953},` +
-			`"durable":{"aggregateID":"ses_000000000020SyntheticId020","seq":46,"version":1}}`
+		stepStarted   = capturedRootStepStarted
 		inboxEnqueued = `{"id":"evt_000000000006SyntheticId006","created":1788267414303,` +
 			`"type":"session.inbox.enqueued","location":{"directory":"/workspace/spov"},` +
 			`"data":{"inboxID":"msg_000000000005SyntheticId005","sessionID":"ses_000000000019SyntheticId019",` +
@@ -831,7 +826,7 @@ func TestRealFramesBecomeRows(t *testing.T) {
 	f.sb.send(inboxEnqueued)
 	waitFor(t, "two rows", func() bool { return len(f.openCodeEvents()) == 2 })
 	evs := f.openCodeEvents()
-	if evs[0].Seq != 46 || evs[0].Name != "session.step.started" || !evs[0].At.Equal(time.UnixMilli(1788265407953).UTC()) {
+	if evs[0].Seq != 6 || evs[0].Name != "session.step.started" || !evs[0].At.Equal(time.UnixMilli(1794958241155).UTC()) {
 		t.Errorf("step = %+v", evs[0])
 	}
 	if evs[1].Seq != 30 || evs[1].Text != "reply with ok" {
@@ -1255,8 +1250,8 @@ func TestAnEphemeralFrameDoesNotSpendTheGapCheck(t *testing.T) {
 	if err := f.rec.attach(context.Background(), c); err != nil {
 		t.Fatal(err)
 	}
-	ephemeral := `{"type":"permission.asked","data":{"sessionID":"ses_oc1"}}`
-	if err := f.rec.frame(context.Background(), c, ephemeral); err != nil {
+	ephemeral := contract.Event(t, eventPermissionAsked, 0, `{"id":"per_1","sessionID":"ses_oc1","action":"read","resources":[]}`)
+	if err := f.rec.frame(context.Background(), c, string(ephemeral)); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.rec.frame(context.Background(), c,

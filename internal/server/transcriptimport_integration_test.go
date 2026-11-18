@@ -76,9 +76,10 @@ func TestIntegrationSTR1TranscriptImport(t *testing.T) {
 		t.Fatalf("reading the first server's log: %v", err)
 	}
 	logAudit := auditLog(t)
-	for _, frame := range logFrames(logged) {
-		raw, _ := json.Marshal(frame)
-		logAudit.frame(string(raw))
+	for _, line := range strings.Split(string(logged), "\n") {
+		if raw, ok := strings.CutPrefix(line, "data:"); ok {
+			logAudit.frame(strings.TrimSpace(raw))
+		}
 	}
 
 	// The second server, a fresh home: the conversation is imported from
@@ -195,12 +196,12 @@ func TestIntegrationSTR1TranscriptImport(t *testing.T) {
 // highest durable seq seen on conversation id.
 func watchSeqs(ctx context.Context, t *testing.T, conn Connection, id string) func() (int64, int64) {
 	t.Helper()
+	audit := auditEvents(t)
 	body, err := openSandboxEvents(ctx, conn)
 	if err != nil {
 		t.Fatalf("event stream: %v", err)
 	}
 	t.Cleanup(func() { _ = body.Close() })
-	audit := auditEvents(t)
 	var mu sync.Mutex
 	var lo, hi int64
 	go func() {

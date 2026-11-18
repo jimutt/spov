@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync/atomic"
@@ -52,13 +53,21 @@ func seedMessage(t *testing.T, f *apiFixture, conv store.Conversation, opencodeI
 }
 
 // seedEvent stores one event row. An OpenCode row's raw frame must be in
-// a shape the pinned build's document gives its type.
+// a shape the pinned build's document gives its type, and of the type
+// the row is named. A row with no raw frame is a name alone and is not
+// checked.
 //
 // @decision(DL-145)
 func seedEvent(t *testing.T, f *apiFixture, ev store.Event) store.Event {
 	t.Helper()
 	if ev.Source != store.SourceSpov && len(ev.Raw) > 0 {
 		contract.CheckEventFrame(t, ev.Raw)
+		var frame struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(ev.Raw, &frame) == nil && frame.Type != ev.Name {
+			t.Errorf("a row named %s holds a %s frame", ev.Name, frame.Type)
+		}
 	}
 	if ev.ID == "" {
 		ev.ID = store.NewID(seedTime())

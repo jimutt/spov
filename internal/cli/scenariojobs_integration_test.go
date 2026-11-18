@@ -332,29 +332,27 @@ func (s *scenarioServer) conversationOf(j store.Job) store.Conversation {
 
 // frame stores one of the sandbox's frames in the job's conversation, as
 // the recorder would, from source opencode or ephemeral: an event of
-// type typ around data, given the conversation's sessionID when data has
-// none, in the shape the pinned build's document gives that type.
+// type typ around data, created at the scenario's clock, in the shape the
+// pinned build's document gives that type. sessionID is the one data
+// field it fills, with the conversation's, when data has none.
 //
 // @decision(DL-145)
 func (s *scenarioServer) frame(j store.Job, source store.EventSource, typ, data string) {
 	s.t.Helper()
 	conv := s.conversationOf(j)
 	now := s.clock.Now()
-	var fields map[string]any
+	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(data), &fields); err != nil {
 		s.t.Fatalf("a frame's data is not an object: %v", err)
 	}
+	full := data
 	if _, ok := fields["sessionID"]; !ok {
-		fields["sessionID"] = conv.OpenCodeID
-	}
-	full, err := json.Marshal(fields)
-	if err != nil {
-		s.t.Fatal(err)
+		full = `{"sessionID":"` + conv.OpenCodeID + `",` + strings.TrimPrefix(strings.TrimSpace(data), "{")
 	}
 	seq := frameSeq.Add(1)
 	ev := store.Event{
 		ID: store.NewID(now), OrgID: j.OrgID, SessionID: j.SessionID, ConversationID: conv.ID,
-		Source: source, Name: typ, At: now, Raw: contract.Event(s.t, typ, seq, string(full)),
+		Source: source, Name: typ, At: now, Raw: contract.EventAt(s.t, typ, seq, now, full),
 	}
 	// Only the sandbox's durable frames carry a sequence.
 	if source == store.SourceOpenCode {

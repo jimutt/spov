@@ -51,6 +51,7 @@ func (f *followFixture) put(t *testing.T, name string, raw []byte) {
 	t.Helper()
 	if len(raw) > 0 {
 		contract.CheckEventFrame(t, raw)
+		checkFrameNamed(t, name, raw)
 	}
 	f.pos++
 	ev := store.Event{
@@ -63,16 +64,46 @@ func (f *followFixture) put(t *testing.T, name string, raw []byte) {
 	}
 }
 
-// putEphemeral appends a permission frame, which has no seq.
+// putEphemeral appends a permission frame of a request of its own, which
+// has no seq.
 func (f *followFixture) putEphemeral(t *testing.T, name string) {
 	t.Helper()
 	ev := store.Event{
 		ID: store.NewID(time.Now()), OrgID: f.job.OrgID, SessionID: f.job.SessionID,
 		ConversationID: f.conv, Source: store.SourceEphemeral,
 		Name: name, At: time.Now(),
+		Raw: contract.Event(t, name, 0, `{"id":"per_`+store.NewID(time.Now())+`","sessionID":"ses_1","action":"read","resources":[]}`),
 	}
 	if _, err := f.st.Conversations().PutEvents(context.Background(), []store.Event{ev}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// turnFrame is a frame of one of the run's own events, in the pinned
+// build's shape.
+func turnFrame(t *testing.T, name string) []byte {
+	t.Helper()
+	data := `{"sessionID":"ses_1"}`
+	switch name {
+	case "session.execution.interrupted":
+		data = `{"sessionID":"ses_1","reason":"user"}`
+	case "session.compaction.started":
+		data = `{"sessionID":"ses_1","reason":"auto"}`
+	}
+	return contract.Event(t, name, 1, data)
+}
+
+// checkFrameNamed fails a row whose frame is of another type than its
+// name says.
+//
+// @decision(DL-145)
+func checkFrameNamed(t *testing.T, name string, raw []byte) {
+	t.Helper()
+	var frame struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &frame) == nil && frame.Type != "" && frame.Type != name {
+		t.Errorf("a row named %s holds a %s frame", name, frame.Type)
 	}
 }
 
@@ -131,7 +162,7 @@ func (f *followFixture) putHuman(t *testing.T) {
 
 func TestFollowParksOnAPermission(t *testing.T) {
 	f := newFollowFixture(t, store.JobRunning)
-	f.put(t, "session.execution.succeeded", nil)
+	f.put(t, "session.execution.succeeded", turnFrame(t, "session.execution.succeeded"))
 	f.putEphemeral(t, "permission.asked")
 
 	res, err := f.sup.follow(context.Background(), f.job, 0)
@@ -255,7 +286,7 @@ func TestEventsAfterAGapAreStillRead(t *testing.T) {
 func TestTheCursorAdvancesOverUninterestingEvents(t *testing.T) {
 	f := newFollowFixture(t, store.JobRunning)
 	for i := 0; i < 5; i++ {
-		f.put(t, "session.compaction.started", nil)
+		f.put(t, "session.compaction.started", turnFrame(t, "session.compaction.started"))
 	}
 
 	res, err := f.sup.follow(context.Background(), f.job, 0)
@@ -302,7 +333,7 @@ func TestFollowLeavesATerminalJobAlone(t *testing.T) {
 func TestFollowReadsBeyondOneBatch(t *testing.T) {
 	f := newFollowFixture(t, store.JobRunning)
 	for i := 0; i < FollowBatch+10; i++ {
-		f.put(t, "session.execution.succeeded", nil)
+		f.put(t, "session.execution.succeeded", turnFrame(t, "session.execution.succeeded"))
 	}
 
 	res, err := f.sup.follow(context.Background(), f.job, 0)
@@ -389,7 +420,7 @@ func TestApplyFollowWritesNothingWhenNothingMoved(t *testing.T) {
 // The pieces above are each tested; this is the wiring between them.
 func TestRunFollowsAndWritesTheState(t *testing.T) {
 	f := newFollowFixture(t, store.JobRunning)
-	f.put(t, "session.execution.succeeded", nil)
+	f.put(t, "session.execution.succeeded", turnFrame(t, "session.execution.succeeded"))
 	f.putEphemeral(t, "permission.asked")
 
 	err := f.sup.Run(context.Background(),
@@ -497,7 +528,7 @@ func TestThePassPersistsItsCursorWithoutMovingTheState(t *testing.T) {
 	ctx := context.Background()
 	f := newFollowFixture(t, store.JobRunning)
 	for i := 0; i < 3; i++ {
-		f.put(t, "session.compaction.started", nil)
+		f.put(t, "session.compaction.started", turnFrame(t, "session.compaction.started"))
 	}
 	args := JobArgs{JobID: f.job.ID, OrgID: f.job.OrgID}
 	if err := f.sup.Run(ctx, args, 1); err != nil {
@@ -649,7 +680,7 @@ func TestTheResumeBoundaryReachesAcrossABatch(t *testing.T) {
 	// Fill the rest of the batch and one more, so the marker lands in
 	// a later read than the item it answers.
 	for i := 0; i < FollowBatch; i++ {
-		f.put(t, "session.compaction.started", nil)
+		f.put(t, "session.compaction.started", turnFrame(t, "session.compaction.started"))
 	}
 	f.putResumed(t)
 

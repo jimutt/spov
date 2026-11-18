@@ -153,7 +153,7 @@ func TestAReleaseClearsTheSuspensionsNote(t *testing.T) {
 func TestARequestWhoseTurnEndedIsNotUnanswered(t *testing.T) {
 	f := newFollowFixture(t, store.JobBlocked)
 	f.putAsk(t, eventPermissionAsked, "per_old")
-	f.put(t, "session.execution.interrupted", nil)
+	f.put(t, "session.execution.interrupted", turnFrame(t, "session.execution.interrupted"))
 	f.putAsk(t, eventPermissionAsked, "per_new")
 	f.putAnswered(t, "per_new")
 	res, err := f.sup.follow(context.Background(), f.job, 0)

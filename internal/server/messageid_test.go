@@ -77,12 +77,7 @@ func TestOnlyAnInboxEventNamesAMessage(t *testing.T) {
 		}
 	}
 
-	const stepStarted = `{"id":"evt_000000000003SyntheticId003","created":1788265407953,` +
-		`"type":"session.step.started","location":{"directory":"/workspace/spov"},` +
-		`"data":{"sessionID":"ses_000000000020SyntheticId020","agent":"build",` +
-		`"assistantMessageID":"msg_000000000001SyntheticId001","snapshot":"0badc0de","started":1788265407953,` +
-		`"model":{"id":"m","providerID":"opencode"}},` +
-		`"durable":{"aggregateID":"ses_000000000020SyntheticId020","seq":46,"version":1}}`
+	const stepStarted = capturedRootStepStarted
 	if got := storedMessage(store.Event{Name: "session.step.started", Raw: contract.Frame(t, stepStarted)}); got != "" {
 		t.Errorf("storedMessage named a message on a step event: %q", got)
 	}

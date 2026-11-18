@@ -65,7 +65,7 @@ func TestSilenceIsNotCompletion(t *testing.T) {
 	f := newFollowFixture(t, store.JobRunning)
 	// A turn ended, then nothing at all for many passes: exactly what a
 	// long-running turn looks like from the store.
-	f.put(t, "session.execution.succeeded", nil)
+	f.put(t, "session.execution.succeeded", turnFrame(t, "session.execution.succeeded"))
 
 	for i := 0; i < 20; i++ {
 		if err := f.sup.followOnce(context.Background(), f.job); err != nil {
@@ -986,13 +986,9 @@ func TestTheStopMarkerIsFoundInARealFrameShape(t *testing.T) {
 			" the marker was not found at data.item.payload.text, which is where a real frame carries it", got)
 	}
 
-	// And a real human's frame, unchanged from the capture, must still
-	// read as steering rather than as a stop.
-	human := `{"id":"evt_1","created":1788267414303,` +
-		`"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_h",` +
-		`"item":{"type":"user","payload":{"text":"reply with ok"},"delivery":"steer"}},` +
-		`"durable":{"aggregateID":"ses_1","seq":31,"version":1}}`
-	ev = store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued, Raw: contract.Frame(t, human)}
+	// And a captured user item, unchanged, must still read as steering
+	// rather than as a stop.
+	ev = store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued, Raw: contract.Frame(t, capturedChildEnqueued)}
 	if got := signalFor(ev); got != signalNone || !takesOver(ev) {
 		t.Errorf("signal = %v, takesOver = %v; want no signal of its own and a takeover on delivery", got, takesOver(ev))
 	}
@@ -1216,7 +1212,7 @@ func TestTheBackstopReadsTheRowThePassLeft(t *testing.T) {
 		{
 			name: "blocked",
 			suspend: func(f *followFixture) {
-				f.put(t, "session.execution.succeeded", nil)
+				f.put(t, "session.execution.succeeded", turnFrame(t, "session.execution.succeeded"))
 				f.putEphemeral(t, "permission.asked")
 			},
 			want: store.JobDelivering,
