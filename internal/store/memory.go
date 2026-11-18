@@ -1604,9 +1604,9 @@ func (s memConversations) RecentMessages(_ context.Context, orgID, sessionID, co
 }
 
 // LastMessages implements ConversationStore, over root conversations
-// only.
+// only and over messages that say something.
 //
-// @decision(DL-017) @decision(DL-115)
+// @decision(DL-017) @decision(DL-115) @decision(DL-148)
 func (s memConversations) LastMessages(_ context.Context, orgID string, sessionIDs []string) (map[string]Message, error) {
 	defer s.m.lock()()
 	want := map[string]bool{}
@@ -1616,7 +1616,7 @@ func (s memConversations) LastMessages(_ context.Context, orgID string, sessionI
 	out := map[string]Message{}
 	for id := range want {
 		for _, m := range s.m.sessionMessages(orgID, id) {
-			if !s.m.conversations[m.ConversationID].IsRoot() {
+			if !s.m.conversations[m.ConversationID].IsRoot() || strings.TrimSpace(m.Text) == "" {
 				continue
 			}
 			if cur, ok := out[m.SessionID]; !ok || compareMessages(m, cur) > 0 {

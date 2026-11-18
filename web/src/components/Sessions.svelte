@@ -7,7 +7,7 @@
   import { ApiError, api, probe, loginURL, unwrap } from '../lib/api/client';
   // Aliased: `Problem` is also the error component imported below.
   import type { Problem as ProblemBody } from '../lib/api/client';
-  import { sessionsStream } from '../lib/api/live';
+  import { sessionsStream, steadyConnection } from '../lib/api/live';
   import { resource } from '../lib/resource.svelte';
   import type { Session } from '../lib/format';
   import { byLiveThenRecent } from '../lib/format';
@@ -81,7 +81,7 @@
     void (async () => {
       for await (const ev of sessionsStream({
         signal: ctl.signal,
-        onConnected: (c) => (connected = c),
+        onConnected: steadyConnection((c) => (connected = c), ctl.signal),
       })) {
         sessions = ev.sessions ?? [];
         seen = true;

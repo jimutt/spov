@@ -3,16 +3,16 @@
   // running for. The last thing said is the session cell's caption,
   // answered from the store in one query for the whole page.
   //
-  // The meta line carries the kind and the repositories; requested
-  // resources and the sandbox id are on the session page.
+  // The repository leads the session cell at every width, and the meta
+  // line carries the kind and the session's name; requested resources
+  // and the sandbox id are on the session page.
   //
   // Below `md` the row is five short lines (repository and time; state;
   // kind and name; the last words; running time) instead of the table's
-  // columns, and the lifetime bar is left for the page. The repository
-  // leads, because a session's name says little.
+  // columns, and the lifetime bar is left for the page.
   //
   // @decision(DL-058) @decision(DL-055) @decision(DL-060) @decision(DL-106)
-  // @decision(DL-116)
+  // @decision(DL-116) @decision(DL-147)
   import { age, duration, kindName, lifetime, listState, live, repoHeadline, repoNames, speaker, when } from '../lib/format';
   import type { Session } from '../lib/format';
   import { resumableLine } from '../lib/resume';
@@ -52,18 +52,14 @@
     <a
       class="text-base font-semibold text-ink no-underline after:absolute after:inset-0 focus-visible:outline-none max-md:col-start-1 max-md:row-start-1 max-md:block max-md:min-w-0 max-md:truncate"
       href={`/session/?id=${encodeURIComponent(session.id)}`}
-      >{#if headline}<span class="md:hidden"
-          ><span class="font-normal text-soft">{headline.owner}</span>{headline.name}{#if headline.more > 0}<span
-              class="ml-1.5 text-sm font-normal text-soft">+{headline.more}</span
-            >{/if}</span
-        ><span class="max-md:hidden">{session.name || session.id}</span>{:else}{session.name || session.id}{/if}</a
+      title={headline && headline.more > 0 ? repos.join(', ') : undefined}
+      >{#if headline}<span class="font-normal text-soft">{headline.owner}</span>{headline.name}{#if headline.more > 0}<span
+            class="ml-1.5 text-sm font-normal text-soft">+{headline.more}</span
+          >{/if}{:else}{session.name || session.id}{/if}</a
     >
-    <div class="mt-0.5 flex flex-wrap gap-x-3.5 gap-y-0.5 text-md text-soft max-md:col-span-2 max-md:row-start-3 max-md:mt-0 max-md:flex-nowrap max-md:gap-x-2.5 max-md:overflow-hidden max-md:text-sm max-md:whitespace-nowrap">
+    <div class="mt-0.5 flex flex-wrap gap-x-2.5 gap-y-0.5 text-md text-soft max-md:col-span-2 max-md:row-start-3 max-md:mt-0 max-md:flex-nowrap max-md:overflow-hidden max-md:text-sm max-md:whitespace-nowrap">
       <span>{job ? `${kindName(job.kind)} job` : 'Interactive'}</span>
-      {#if headline}<span class="min-w-0 truncate before:mr-2.5 before:content-['·'] md:hidden">{session.name || session.id}</span>{/if}
-      {#each repos as repo (repo)}
-        <span class="font-mono text-ink max-md:hidden">{repo}</span>
-      {/each}
+      {#if headline}<span class="min-w-0 truncate before:mr-2.5 before:content-['·']">{session.name || session.id}</span>{/if}
     </div>
     {#if session.error}
       <p class="m-0 mt-1.5 line-clamp-2 max-w-[64ch] text-md text-rust max-md:col-span-2 max-md:row-start-4 max-md:mt-0.5">{session.error}</p>

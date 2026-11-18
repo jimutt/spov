@@ -2366,6 +2366,34 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("a session with only a subagent's messages has the preview %q", m.Text)
 		}
 	},
+	// A session's preview is something said: a newer message with no
+	// text (a turn's idle marker, a model switch) never takes its place.
+	// @decision(DL-148)
+	"conversations: the last message is the newest that says something": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sess := runningSession(t, s, "org", "u1", "alpha")
+		conv := conversation(t, s, sess, "ses_1")
+		silent := runningSession(t, s, "org", "u1", "beta")
+		quiet := conversation(t, s, silent, "ses_2")
+		if _, err := s.Conversations().PutMessages(ctx, []store.Message{
+			{ID: store.NewID(t0), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m1", Role: "assistant", Text: "the answer", At: t0},
+			{ID: store.NewID(t0.Add(time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m2", Role: "idle", At: t0.Add(time.Hour)},
+			{ID: store.NewID(t0.Add(2 * time.Second)), OrgID: "org", SessionID: sess.ID, ConversationID: conv.ID, OpenCodeID: "m3", Role: "assistant", Text: " \n\t", At: t0.Add(2 * time.Hour)},
+			{ID: store.NewID(t0.Add(3 * time.Second)), OrgID: "org", SessionID: silent.ID, ConversationID: quiet.ID, OpenCodeID: "m4", Role: "idle", At: t0},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Conversations().LastMessages(ctx, "org", []string{sess.ID, silent.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[sess.ID].Text != "the answer" {
+			t.Errorf("the preview is %q (%s), want the newest message with text", got[sess.ID].Text, got[sess.ID].Role)
+		}
+		if m, ok := got[silent.ID]; ok {
+			t.Errorf("a session where nothing was said has the preview %+v", m)
+		}
+	},
 	"conversations: a duplicate frame is one row and pos only grows": func(t *testing.T, s store.Store) {
 		ctx := context.Background()
 		sess := runningSession(t, s, "org", "u1", "alpha")

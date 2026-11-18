@@ -6,7 +6,7 @@
   import { tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { api, unwrap } from '../lib/api/client';
-  import { logStream, type LogEvent } from '../lib/api/live';
+  import { logStream, steadyConnection, type LogEvent } from '../lib/api/live';
   import { resource } from '../lib/resource.svelte';
   import {
     GoalLimit,
@@ -276,7 +276,7 @@
       for await (const ev of logStream(ref, {
         signal: ctl.signal,
         after,
-        onConnected: (c) => (connected = c),
+        onConnected: steadyConnection((c) => (connected = c), ctl.signal),
         onGap: () => {
           // @decision(DL-058)
           void loadTranscript(ctl.signal);
