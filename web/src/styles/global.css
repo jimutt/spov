@@ -25,14 +25,14 @@
    themes, which theme.test.ts checks. --gold is for marks and fills,
    and --gold-t is the same hue for words.
 
-   @decision(DL-055) @decision(DL-056) */
+   @decision(DL-055) @decision(DL-056) @decision(DL-153) */
 :root {
   color-scheme: light;
-  --paper: #ebeae6;
-  --raised: #f6f5f2;
-  --sunk: #e1e0db;
-  --rule: #d4d3cd;
-  --rule-2: #bebcb4;
+  --paper: #f9f9f7;
+  --raised: #ffffff;
+  --sunk: #f0f0ec;
+  --rule: #e3e2de;
+  --rule-2: #cbc9c2;
   --ink: #23211d;
   --soft: #59564e;
   --faint: #67635a;

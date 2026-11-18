@@ -162,7 +162,7 @@
       class="cursor-pointer rounded-ctl border px-3 py-1 text-md whitespace-nowrap max-md:shrink-0 focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 {show ===
       f.show
         ? 'border-olive bg-raised font-medium text-ink'
-        : 'border-rule-2 text-soft hover:bg-raised hover:text-ink'}"
+        : 'border-rule-2 text-soft hover:bg-sunk hover:text-ink'}"
       onclick={() => choose(f.show)}
     >
       {f.label}{#if f.show === 'needs-you' && needsYou > 0}<span
@@ -199,7 +199,7 @@
       {#each rows as job (job.id)}
         {@const outcome = outcomeOf(job)}
         <div
-          class="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-rule px-2 pt-3.5 pb-4 max-md:py-3 hover:bg-raised has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-olive md:grid-cols-[124px_minmax(0,1fr)_96px] md:gap-x-5 md:gap-y-0"
+          class="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-rule px-2 pt-3.5 pb-4 max-md:py-3 hover:bg-sunk has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-olive md:grid-cols-[124px_minmax(0,1fr)_96px] md:gap-x-5 md:gap-y-0"
           role="row"
           data-testid="jobs-row"
         >

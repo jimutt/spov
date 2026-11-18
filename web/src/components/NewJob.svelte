@@ -141,7 +141,7 @@
             class="flex cursor-pointer gap-2.5 rounded-ctl border px-3.5 py-3 has-focus-visible:outline-2 has-focus-visible:outline-olive {draft.kind ===
             kind
               ? 'border-olive bg-raised shadow-[inset_0_0_0_1px_var(--olive)]'
-              : 'border-rule-2 bg-paper hover:bg-raised'}"
+              : 'border-rule-2 bg-paper hover:bg-sunk'}"
           >
             <input type="radio" class="mt-1 accent-olive-b" name="kind" value={kind} bind:group={draft.kind} />
             <span>

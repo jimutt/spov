@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-153 | The light theme is a bright warm paper with white raised surfaces, and a hover darkens | accepted | web | web, theme, palette |
 | DL-151 | The session list and the session page lead with the title when there is one | accepted | web | session-titles, web, layout, sessions |
 | DL-150 | The prep pass gives a job its title | accepted | jobs | session-titles, jobs, prep |
 | DL-149 | A session has a title: OpenCode's for its main conversation, else its job's | accepted | server | session-titles, sessions, jobs, api |

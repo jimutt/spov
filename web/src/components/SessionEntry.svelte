@@ -41,7 +41,7 @@
 </script>
 
 <div
-  class="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-rule px-2 pt-3.5 pb-4 max-md:py-3 hover:bg-raised has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-olive md:grid-cols-[124px_minmax(0,1fr)_120px_132px] md:gap-x-5 md:gap-y-0"
+  class="relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 border-b border-rule px-2 pt-3.5 pb-4 max-md:py-3 hover:bg-sunk has-[a:focus-visible]:outline-2 has-[a:focus-visible]:-outline-offset-2 has-[a:focus-visible]:outline-olive md:grid-cols-[124px_minmax(0,1fr)_120px_132px] md:gap-x-5 md:gap-y-0"
   role="row"
 >
   <span class="pt-0.5 text-md max-md:col-start-1 max-md:row-start-2 max-md:pt-0" role="cell">
