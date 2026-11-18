@@ -210,7 +210,7 @@
           </span>
           <div class="min-w-0 max-md:contents" role="cell">
             <a
-              class="text-base font-semibold text-ink no-underline after:absolute after:inset-0 focus-visible:outline-none max-md:col-span-2 max-md:row-start-1 max-md:line-clamp-2"
+              class="text-base font-semibold text-ink no-underline after:absolute after:inset-0 focus-visible:outline-none line-clamp-2 max-md:col-span-2 max-md:row-start-1"
               href={`/session/?id=${encodeURIComponent(job.session_id)}`}>{jobHeadline(job)}</a
             >
             <p class="m-0 mt-0.5 text-md text-soft max-md:hidden">{kindName(job.kind)} job</p>

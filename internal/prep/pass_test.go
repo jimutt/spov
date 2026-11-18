@@ -344,9 +344,13 @@ func TestAnAnswerCarriesATitle(t *testing.T) {
 	if a := run(t, `{"summary": "S", "check": ""}`); a.Title != "" || a.Summary != "S" {
 		t.Errorf("an answer with no title = %+v", a)
 	}
-	// A title that is not a string is a field of the wrong type.
-	if _, err := Pass(context.Background(), &fake{reply: `{"summary": "S", "check": "", "title": 7}`}, "g"); err == nil {
-		t.Error("a title that is not a string was accepted")
+	// A title that is not a string is no title, and costs the summary
+	// and the check nothing.
+	for _, bad := range []string{`7`, `null`, `["Fix it"]`, `{"text": "Fix it"}`} {
+		a, err := Pass(context.Background(), &fake{reply: `{"summary": "S", "check": "go test ./...", "title": ` + bad + `}`}, "g")
+		if err != nil || a.Title != "" || a.Summary != "S" || a.Check != "go test ./..." {
+			t.Errorf("title %s: %+v, %v; want the summary and the check and no title", bad, a, err)
+		}
 	}
 }
 

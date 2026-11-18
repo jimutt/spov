@@ -64,7 +64,7 @@
     >
     <div class="mt-0.5 flex flex-wrap gap-x-2.5 gap-y-0.5 text-md text-soft max-md:col-span-2 max-md:row-start-3 max-md:mt-0 max-md:flex-nowrap max-md:overflow-hidden max-md:text-sm max-md:whitespace-nowrap">
       <span>{job ? `${kindName(job.kind)} job` : 'Interactive'}</span>
-      {#if titled && repos.length > 0}<span class="whitespace-nowrap before:mr-2.5 before:content-['·']">{repoLine(session)}</span>{/if}
+      {#if titled && repos.length > 0}<span class="min-w-0 truncate before:mr-2.5 before:content-['·']">{repoLine(session)}</span>{/if}
       {#if lead.kind !== 'name'}<span class="min-w-0 truncate before:mr-2.5 before:content-['·']">{session.name || session.id}</span>{/if}
     </div>
     {#if session.error}

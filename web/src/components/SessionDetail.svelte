@@ -49,6 +49,7 @@
     pendingAskIds,
     seamText,
     childIds,
+    renamesMain,
     shownWarnings,
     stopNote,
     timeDividers,
@@ -261,8 +262,12 @@
     if (flush) return;
     flush = setTimeout(() => {
       flush = 0;
+      // A rename of the main conversation re-reads the session once per
+      // batch, for its title. @decision(DL-151)
+      const renamed = renamesMain(pending);
       activity = [...activity, ...pending];
       pending = [];
+      if (renamed) void session.refresh();
     }, 0) as unknown as number;
   }
 
@@ -970,12 +975,15 @@
                 >{lead.repo.name}{#if lead.repo.more > 0}<span class="ml-1.5 text-sm font-normal text-soft">+{lead.repo.more}</span
                   >{/if}{:else}{lead.name}{/if}
             </p>
-            <p class="m-0 flex min-w-0 items-center gap-x-2 text-sm whitespace-nowrap text-soft">
+            <!-- Under a title the repository stands in for the name, which
+                 is in the details, and gives way before the reason does.
+                 @decision(DL-151) -->
+            <p class="m-0 flex min-w-0 items-center gap-x-2 overflow-hidden text-sm whitespace-nowrap text-soft">
               <StateMark mark={st.mark} word={st.word} />
-              {#if st.why}<span class="truncate">{st.why}</span>
+              {#if st.why}<span class="min-w-0 truncate">{st.why}</span>
               {:else}<span class="tabular-nums">{duration(age(s, now))}</span>{/if}
-              {#if lead.kind === 'title' && repoLine(s)}<span class="shrink-0">{repoLine(s)}</span>{/if}
-              {#if lead.kind !== 'name'}<span class="min-w-0 truncate">{s.name || s.id}</span>{/if}
+              {#if lead.kind === 'title'}{#if repoLine(s)}<span class="min-w-0 shrink-[1000] truncate">{repoLine(s)}</span>{/if}
+              {:else if lead.kind === 'repo'}<span class="min-w-0 truncate">{s.name || s.id}</span>{/if}
             </p>
           </div>
           <button

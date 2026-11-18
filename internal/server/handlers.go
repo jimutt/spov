@@ -556,6 +556,16 @@ func (s *Server) sessionJob(ctx context.Context, sess store.Session) (*SessionJo
 	return sessionJobView(j, sess), j.Title
 }
 
+// withJobAndTitle decorates one session's view with its job and its
+// title, as the listing decorates a row.
+//
+// @decision(DL-060) @decision(DL-149)
+func (s *Server) withJobAndTitle(ctx context.Context, p auth.Principal, sess store.Session, view *SessionView) {
+	var jobTitle string
+	view.Job, jobTitle = s.sessionJob(ctx, sess)
+	view.Title = titleOf(s.titles(ctx, p, []string{sess.ID})[sess.ID], jobTitle)
+}
+
 // decorationStamp reports what the page's decorated columns hold, as
 // the feed's fingerprint. A read that fails is a constant rather than
 // an empty stamp, so a store that is failing does not read as a list
@@ -1025,10 +1035,7 @@ func (s *Server) registerSessions() {
 		views := []SessionView{viewOf(sess, now)}
 		s.withRuns(ctx, principal(ctx), []store.Session{sess}, views, now)
 		view := views[0]
-		var jobTitle string
-		view.Job, jobTitle = s.sessionJob(ctx, sess)
-		// @decision(DL-149)
-		view.Title = titleOf(s.titles(ctx, principal(ctx), []string{sess.ID})[sess.ID], jobTitle)
+		s.withJobAndTitle(ctx, principal(ctx), sess, &view)
 		return &sessionOutput{Body: view}, nil
 	})
 

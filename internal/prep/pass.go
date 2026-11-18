@@ -154,9 +154,21 @@ func parseAssessment(raw string) (Assessment, error) {
 	if start < 0 || end < start {
 		return Assessment{}, fmt.Errorf("prep: the model's answer was not JSON")
 	}
-	var a Assessment
-	if err := json.Unmarshal([]byte(body[start:end+1]), &a); err != nil {
+	// The title is decoded on its own: one that is not a string is no
+	// title, and leaves the summary and the check as they are.
+	//
+	// @decision(DL-150)
+	var answer struct {
+		Summary string          `json:"summary"`
+		Check   string          `json:"check"`
+		Title   json.RawMessage `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(body[start:end+1]), &answer); err != nil {
 		return Assessment{}, fmt.Errorf("prep: decoding the assessment: %w", err)
+	}
+	a := Assessment{Summary: answer.Summary, Check: answer.Check}
+	if json.Unmarshal(answer.Title, &a.Title) != nil {
+		a.Title = ""
 	}
 	a.Summary = clamp(oneParagraph(a.Summary), MaxAssessmentBytes)
 	// @decision(DL-150)

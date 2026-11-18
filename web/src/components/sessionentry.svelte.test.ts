@@ -72,6 +72,9 @@ describe("a session list row", () => {
     expect(link.className).toContain("truncate");
     expect(link.getAttribute("href")).toBe("/session/?id=01SESSION");
     expect(meta).toBe("Report job acme/app +1 job-01m7nwex");
+    const repo = Array.from(link.nextElementSibling!.querySelectorAll("span")).find((e) => e.textContent === "acme/app +1")!;
+    expect(repo.className).toContain("min-w-0");
+    expect(repo.className).toContain("truncate");
     expect(document.querySelectorAll("a")).toHaveLength(1);
   });
 

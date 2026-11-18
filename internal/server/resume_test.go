@@ -333,3 +333,21 @@ func TestTheEntrypointsResumeModes(t *testing.T) {
 		t.Errorf("transcript mode:\n%s", script)
 	}
 }
+
+// The resume's answer carries the session's title, as a read of the
+// session does.
+//
+// @decision(DL-149)
+func TestAResumesAnswerCarriesTheTitle(t *testing.T) {
+	f := resumable(t)
+	if _, err := f.store.Conversations().UpsertConversation(context.Background(), store.Conversation{
+		ID: store.NewID(time.Now()), OrgID: auth.LocalID, SessionID: f.id, OpenCodeID: "ses_main", Title: "Fix the flaky login test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	code, view, body := f.resume(map[string]any{})
+	if code != http.StatusAccepted || view.Title != "Fix the flaky login test" {
+		t.Errorf("resume: %d %s", code, body)
+	}
+	f.waitRunning()
+}

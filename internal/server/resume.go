@@ -502,6 +502,8 @@ func (s *Server) registerResume() {
 		}
 		views := []SessionView{viewOf(sess, s.deps.Now())}
 		s.withRuns(ctx, p, []store.Session{sess}, views, s.deps.Now())
+		// @decision(DL-149)
+		s.withJobAndTitle(ctx, p, sess, &views[0])
 		return &resumeOutput{Body: views[0]}, nil
 	})
 }

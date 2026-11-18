@@ -138,6 +138,8 @@ describe("the jobs page", () => {
       .rows()[0]
       .querySelector('a[href^="/session/"]') as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("/session/?id=ses_a");
+    // Two lines of it at every width. @decision(DL-151)
+    expect(link.className.split(/\s+/)).toContain("line-clamp-2");
     page.done();
   });
 

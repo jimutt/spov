@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,5 +131,67 @@ func TestTheListStampMovesWhenATitleArrives(t *testing.T) {
 	seedConversation(t, f, sess, "ses_main", "Fix the flaky login test")
 	if after := f.srv.decorationStamp(ctx, p, sessions); after == before {
 		t.Error("the stamp did not move when the session got a title; the row would keep its old headline")
+	}
+}
+
+// A job's title arriving moves the stamp too, for a session whose
+// conversation has none.
+//
+// @decision(DL-149) @decision(DL-150)
+func TestTheListStampMovesWhenAJobsTitleArrives(t *testing.T) {
+	f := newAPIFixture(t)
+	ctx := context.Background()
+	sess := seedSession(t, f, store.NewID(recordedAt), "job-a", store.StateRunning)
+	seedConversation(t, f, sess, "ses_job", "")
+	job := store.Job{
+		ID: store.NewID(recordedAt.Add(time.Second)), OrgID: sess.OrgID, OwnerID: sess.OwnerID, SessionID: sess.ID,
+		Kind: store.JobKindReport, State: store.JobRunning, Goal: "g",
+	}
+	if err := f.store.Jobs().Create(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := f.store.Sessions().List(ctx, auth.LocalID, store.SessionFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := auth.Principal{OrgID: auth.LocalID, UserID: auth.LocalID}
+	before := f.srv.decorationStamp(ctx, p, sessions)
+	job.Title = "Survey the slow queries"
+	if err := f.store.Jobs().Update(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	if after := f.srv.decorationStamp(ctx, p, sessions); after == before {
+		t.Error("the stamp did not move when the job got a title; the row would keep its old headline")
+	}
+}
+
+// A title already in the store in a raw form is served cleaned, and one
+// with nothing visible in it is no title, so the job's stands in or the
+// row falls back to its repository.
+//
+// @decision(DL-149)
+func TestAStoredTitleIsCleanedWhenTheViewIsBuilt(t *testing.T) {
+	f, _ := jobFixture(t)
+	ctx := context.Background()
+	raw := seedSession(t, f, store.NewID(recordedAt), "fly-raw", store.StateRunning)
+	seedConversation(t, f, raw, "ses_raw", "Fix\nthe\u202e login\u200b test\x1b")
+	blank := seedSession(t, f, store.NewID(recordedAt.Add(time.Second)), "fly-blank", store.StateRunning)
+	seedConversation(t, f, blank, "ses_blank", "\u200b")
+	job := seedSession(t, f, store.NewID(recordedAt.Add(2*time.Second)), "job-blank", store.StateRunning)
+	seedConversation(t, f, job, "ses_job", "\u200b \u2060")
+	if err := f.store.Jobs().Create(ctx, store.Job{
+		ID: store.NewID(recordedAt.Add(3 * time.Second)), OrgID: job.OrgID, OwnerID: job.OwnerID, SessionID: job.ID,
+		Kind: store.JobKindReport, State: store.JobRunning, Goal: "g", Title: "Survey\tthe queries\u200b",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	byName := listByName(t, f)
+	for name, want := range map[string]string{"fly-raw": "Fix the login test", "fly-blank": "", "job-blank": "Survey the queries"} {
+		if got := byName[name].Title; got != want {
+			t.Errorf("%s has the title %q, want %q", name, got, want)
+		}
+	}
+	if raw := listRaw(t, f); strings.Contains(raw, `"title":""`) {
+		t.Error("an empty title was served; it is no title")
 	}
 }
