@@ -19,15 +19,23 @@ import (
 //
 // @decision(DL-124)
 
-// say writes a line of a step's conversation.
+// say writes a line of a step's conversation, wrapped under the step's
+// title.
 func (r *initRun) say(format string, a ...any) {
-	_, _ = fmt.Fprintf(r.env.Out, "     "+format+"\n", a...)
+	r.out(r.st.prose(indentStep, roleText, fmt.Sprintf(format, a...))...)
 }
 
-// ask puts a yes-or-no question. Ctrl-C answers no and ends init.
-func (r *initRun) ask(ctx context.Context, question string) bool {
+// code writes a line to copy: a command or a line of a file.
+func (r *initRun) code(line string) {
+	r.out(r.st.codeLine(indentCode, line))
+}
+
+// confirm puts a yes-or-no question. Ctrl-C answers no and ends init.
+//
+// @decision(DL-152)
+func (r *initRun) confirm(ctx context.Context, question string) bool {
 	ok, err := answerOrInterrupt(ctx, false, func() (bool, error) {
-		return r.env.confirm("     " + question + " [y/N] ")
+		return r.env.confirm(r.ask.question(indentStep, question, "[y/N]") + " ")
 	})
 	return err == nil && ok
 }
@@ -64,14 +72,15 @@ func fixModal(ctx context.Context, r *initRun) error {
 	}
 	if setup == nil {
 		r.say("Sign in to Modal with its own tool, then run `spov init` again:")
-		r.say("  uvx modal setup        # or: pipx run modal setup, or pip install modal && python3 -m modal setup")
+		r.code("uvx modal setup")
+		r.say("Or `pipx run modal setup`, or `pip install modal && python3 -m modal setup`.")
 		r.say("MODAL_TOKEN_ID and MODAL_TOKEN_SECRET in the environment work too.")
 		return nil
 	}
 	cmd := strings.Join(setup, " ")
 	r.say("`%s` signs you in through your browser and writes ~/.modal.toml.", cmd)
 	r.say("Where no browser opens (WSL, ssh), open the address it prints by hand.")
-	if !r.ask(ctx, "Run `"+cmd+"` now?") {
+	if !r.confirm(ctx, "Run `"+cmd+"` now?") {
 		return nil
 	}
 	if err := env.runInteractive(ctx, setup[0], setup[1:]...); err != nil {
@@ -100,7 +109,7 @@ func fixGitHub(ctx context.Context, r *initRun) error {
 		return nil
 	case errors.Is(err, errGhSignedOut):
 		r.say("The GitHub CLI is installed but not signed in to %s.", host)
-		if !r.ask(ctx, "Run `gh auth login` now?") {
+		if !r.confirm(ctx, "Run `gh auth login` now?") {
 			return nil
 		}
 		if err := env.runInteractive(ctx, "gh", "auth", "login", "--hostname", host, "--git-protocol", "https"); err != nil {
@@ -134,19 +143,19 @@ func fixGitHub(ctx context.Context, r *initRun) error {
 	//
 	// @decision(DL-034)
 	if env.proxyBinary() != nil {
-		r.say("spov can use %s. The token stays outside the sandbox, is read from gh at each launch,", who)
-		r.say("and is used only for a session's own repositories. (`gh auth switch` changes the account; a GitHub App narrows further.)")
-		if !r.ask(ctx, "Use gh's login for GitHub?") {
+		r.say("spov can use %s. The token stays outside the sandbox, is read from gh at each launch,"+
+			" and is used only for a session's own repositories. (`gh auth switch` changes the account; a GitHub App narrows further.)", who)
+		if !r.confirm(ctx, "Use gh's login for GitHub?") {
 			return nil
 		}
 	} else {
 		r.say("spov can use %s, read from gh at each launch.", who)
-		if !r.ask(ctx, "Use gh's login for GitHub?") {
+		if !r.confirm(ctx, "Use gh's login for GitHub?") {
 			return nil
 		}
 		r.say("This build has no credential proxy, so the token would be put INSIDE every sandbox, where the agent can read it.")
 		r.say("gh's token usually reaches every repository you can.")
-		if !r.ask(ctx, "Put gh's token inside the sandboxes?") {
+		if !r.confirm(ctx, "Put gh's token inside the sandboxes?") {
 			return nil
 		}
 	}
@@ -158,7 +167,7 @@ func fixGitHub(ctx context.Context, r *initRun) error {
 	// byHand prints what to add to a file init will not or cannot edit.
 	byHand := func(lines []string) {
 		for _, line := range lines {
-			r.say("  %s", line)
+			r.code(line)
 		}
 	}
 	snippet := strings.Split(strings.TrimRight(config.PlatformSnippet(platform, "\n"), "\n"), "\n")
@@ -224,7 +233,7 @@ func fixModel(ctx context.Context, r *initRun) error {
 		r.say("(Signing in to OpenCode Go or Zen is offered once Modal is connected: it goes through spov's local server.)")
 	}
 	options = append(options, "Skip for now")
-	choice, err := env.choose(ctx, "     How should the agent reach a model?", options)
+	choice, err := env.choose(ctx, r.ask, "How should the agent reach a model?", options)
 	if err != nil || choice < 0 || options[choice] == "Skip for now" {
 		r.say("Skipped. The agent cannot reach a model until you add one.")
 		return nil
@@ -247,7 +256,7 @@ func fixModel(ctx context.Context, r *initRun) error {
 	for i := range names {
 		rows[i] = fmt.Sprintf("%s (%s)", names[i], vars[i])
 	}
-	which, err := env.choose(ctx, "     Which provider is the key for?", rows)
+	which, err := env.choose(ctx, r.ask, "Which provider is the key for?", rows)
 	if err != nil || which < 0 {
 		r.say("Skipped. The agent cannot reach a model until you add one.")
 		return nil
@@ -291,7 +300,7 @@ func fixImage(ctx context.Context, r *initRun) error {
 	if err != nil {
 		return err
 	}
-	if !r.ask(ctx, "Build it now? It takes a few minutes.") {
+	if !r.confirm(ctx, "Build it now? It takes a few minutes.") {
 		return nil
 	}
 	spec := sandbox.ImageSpec{OpenCodeVersion: r.cfg.OpenCode.Version}
@@ -329,12 +338,14 @@ func (r *initRun) settleLocalServer(ctx context.Context) {
 	}
 	page, err := c.ListSessions(ctx, client.Page{States: liveStates(), Limit: 1})
 	if err != nil || len(page.Sessions) > 0 {
-		_, _ = fmt.Fprintln(env.Out, "\nA spov server is already running on this machine and was left alone. It reads its configuration"+
-			" when it starts, so what you just set up applies once it has exited, which it does a minute after its last session ends.")
+		r.out("")
+		r.out(r.st.prose(0, roleText, "A spov server is already running on this machine and was left alone. It reads its configuration"+
+			" when it starts, so what you just set up applies once it has exited, which it does a minute after its last session ends.")...)
 		return
 	}
 	env.stopProcess(st.PID)
-	_, _ = fmt.Fprintln(env.Out, "\nStopped the idle spov server on this machine, so the next command starts one that sees what you just set up.")
+	r.out("")
+	r.out(r.st.prose(0, roleText, "Stopped the idle spov server on this machine, so the next command starts one that sees what you just set up.")...)
 }
 
 // liveLocalReadOnly is the local server the state file names, if it is

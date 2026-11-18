@@ -36,6 +36,9 @@ missing, as a run without a terminal does. `--json` prints the same as one
 document: `{ready, steps: [{name, state, required, detail, fix}]}`, with the
 step names `modal`, `git`, `model`, `client` and `image`.
 
+On a terminal the list is in colour, with the commands to run set apart.
+`NO_COLOR`, `TERM=dumb` or a pipe gets the same lines as plain text.
+
 Init sets up GitHub on github.com only. For Forgejo, Gitea, GitLab, GitHub
 Enterprise or a GitHub App use `spov credentials add`
 ([Credentials](credentials.md)); init then reports the platform as ready.

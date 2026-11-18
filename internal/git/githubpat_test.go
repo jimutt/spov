@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -368,5 +369,64 @@ func TestGitHubPATWideTokenIsTheToken(t *testing.T) {
 	tok, err := p.IssueWideToken(context.Background(), time.Hour)
 	if err != nil || tok.Secret != "github_pat_secret" || tok.Username != GitHubPATUser || tok.Revoke != nil {
 		t.Errorf("wide token %+v, %v", tok, err)
+	}
+}
+
+// A GitHub token says whose it is, which `spov init` needs before it
+// stores gh's login. @decision(DL-124)
+func TestAGitHubTokenDescribesItself(t *testing.T) {
+	status, body := http.StatusOK, `{"login":"alice"}`
+	var header map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/user" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		for k, v := range header {
+			w.Header().Set(k, v)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	p, _ := NewGitHubPAT(GitHubPATConfig{Name: "gh", APIURL: srv.URL, Token: "gho_x"})
+
+	info, err := Inspect(context.Background(), p)
+	if err != nil || info.User != "alice" {
+		t.Fatalf("Inspect = %+v, %v; want the token's user", info, err)
+	}
+	body = `{}`
+	if info, err := Inspect(context.Background(), p); err != nil || info.User != "" {
+		t.Errorf("a 200 with no login: %+v, %v; want no user and no error", info, err)
+	}
+	body = `{"message":"x"}`
+	for code, want := range map[int]error{
+		http.StatusUnauthorized: ErrBadToken, http.StatusForbidden: ErrMissingPermission, http.StatusNotFound: ErrUnsupportedServer,
+	} {
+		status = code
+		if _, err := Inspect(context.Background(), p); !errors.Is(err, want) {
+			t.Errorf("a %d: %v, want %v", code, err, want)
+		}
+	}
+	status = http.StatusBadGateway
+	if _, err := Inspect(context.Background(), p); err == nil || errors.Is(err, ErrBadToken) ||
+		errors.Is(err, ErrMissingPermission) || errors.Is(err, ErrUnsupportedServer) {
+		t.Errorf("a 502: %v, want a plain error", err)
+	}
+
+	// GitHub answers a rate limit with a 403 too, by its message or by
+	// its remaining count.
+	status = http.StatusForbidden
+	for name, tc := range map[string]struct {
+		body   string
+		header map[string]string
+	}{
+		"by message": {`{"message":"API rate limit exceeded for user ID 1."}`, nil},
+		"by header":  {`{"message":"Forbidden"}`, map[string]string{"X-RateLimit-Remaining": "0"}},
+	} {
+		body, header = tc.body, tc.header
+		_, err := Inspect(context.Background(), p)
+		if err == nil || errors.Is(err, ErrMissingPermission) {
+			t.Errorf("a rate limit %s: %v, want a plain error and not a missing permission", name, err)
+		}
 	}
 }

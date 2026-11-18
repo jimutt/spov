@@ -89,6 +89,20 @@ type initRun struct {
 	// changed says a fix wrote the platform or stored a key, which a
 	// local server that is already running has not seen.
 	changed bool
+	// st draws the lines on stdout and ask the questions on stderr.
+	st, ask initStyle
+}
+
+func newInitRun(env *Env, cfg config.Config) *initRun {
+	st := env.initStyleFor()
+	return &initRun{env: env, cfg: cfg, results: map[string]stepResult{}, st: st, ask: env.initPromptStyle(st)}
+}
+
+// out writes lines to stdout.
+func (r *initRun) out(lines ...string) {
+	for _, l := range lines {
+		_, _ = fmt.Fprintln(r.env.Out, l)
+	}
 }
 
 // initSteps is what "ready" means for a local setup, in the order each
@@ -153,10 +167,10 @@ func runInit(ctx context.Context, env *Env, checkOnly, asJSON bool) error {
 		_, _ = fmt.Fprintln(env.Err, "spov: no terminal to ask on, so this only checks (as --check does)")
 		checkOnly = true
 	}
-	r := &initRun{env: env, cfg: res.Config, results: map[string]stepResult{}}
+	r := newInitRun(env, res.Config)
 	steps := initSteps()
 	if !asJSON {
-		_, _ = fmt.Fprintln(env.Out, "Checking what a first `spov fly` needs on this machine.")
+		r.out(r.st.prose(0, roleDim, "Checking what a first `spov fly` needs on this machine.")...)
 	}
 	for i, step := range steps {
 		// Ctrl-C ends init, at a question as anywhere else.
@@ -172,14 +186,14 @@ func runInit(ctx context.Context, env *Env, checkOnly, asJSON bool) error {
 			continue
 		}
 		if res.why != "" {
-			_, _ = fmt.Fprintln(env.Out, "     "+res.why)
+			r.out(r.st.prose(indentStep, roleText, res.why)...)
 		}
 		err := step.fix(ctx, r)
 		if ctx.Err() != nil {
 			return &ExitError{Code: 130}
 		}
 		if err != nil {
-			_, _ = fmt.Fprintf(env.Out, "     %v\n", err)
+			r.out(r.st.labelled(indentStep, "error:", roleErrLabel, roleErrText, err.Error())...)
 		}
 		if again := r.run(ctx, step); again.state != res.state || again.detail != res.detail {
 			r.print(i+1, step, again)
@@ -219,16 +233,27 @@ func titleOf(name string) string {
 	return name
 }
 
-// print writes a step's line: a mark, and always the word beside it.
+// print writes a step's heading, a mark and always the word beside it,
+// then its detail under the title.
+//
+// @decision(DL-123) @decision(DL-152)
 func (r *initRun) print(n int, step initStep, res stepResult) {
-	mark := map[string]string{stepOK: "✓", stepMissing: "✗", stepWaiting: "–"}[res.state]
+	st := r.st
+	mark, style := "–", roleFaintMark
 	word := res.state
-	if res.state == stepMissing && !step.required {
-		word = "not found"
+	switch res.state {
+	case stepOK:
+		mark, style = "✓", roleOKMark
+	case stepMissing:
+		mark, style = "✗", roleBadMark
+		if !step.required {
+			style, word = roleWarnMark, "not found"
+		}
 	}
-	_, _ = fmt.Fprintf(r.env.Out, "\n%d. %s  %s %s\n", n, step.title, mark, word)
+	r.out("", st.render(seg{mark, style}, seg{" ", roleText}, seg{strconv.Itoa(n) + ".", roleDim}, seg{" ", roleText},
+		seg{step.title, roleTitle}, seg{"  ", roleText}, seg{word, roleDim}))
 	if res.detail != "" {
-		_, _ = fmt.Fprintln(r.env.Out, "     "+res.detail)
+		r.out(st.prose(indentStep, roleDim, res.detail)...)
 	}
 }
 
@@ -245,35 +270,43 @@ func (r *initRun) view(steps []initStep) InitView {
 }
 
 // conclude says what to run next, or what is still missing.
+//
+// @decision(DL-123) @decision(DL-152)
 func (r *initRun) conclude(ctx context.Context, steps []initStep, ready bool) {
-	out := r.env.Out
+	st := r.st
 	if !ready {
-		_, _ = fmt.Fprintln(out, "\nNot ready yet. Still missing:")
+		r.out("", st.render(seg{"Not ready yet.", roleNotReady}, seg{" ", roleText}, seg{"Still missing:", roleText}))
 		for _, s := range steps {
 			if res := r.results[s.name]; s.required && res.state != stepOK {
-				line := "  - " + s.title
+				title := s.title
 				if res.fix != "" {
-					line += ": " + res.fix
+					title += ":"
 				}
-				_, _ = fmt.Fprintln(out, line)
+				words := []word{{{"-", roleDim}}, {{title, roleTitle}}}
+				if res.fix != "" {
+					words = append(words, st.fixWords(res.fix, roleText)...)
+				}
+				r.out(st.wrap(2, 4, words)...)
 			}
 		}
-		_, _ = fmt.Fprintln(out, "Run `spov init` again when you have them.")
+		r.out(st.prose(0, roleDim, "Run `spov init` again when you have them.")...)
 		return
 	}
-	_, _ = fmt.Fprintln(out, "\nReady.")
+	r.out("", st.render(seg{"Ready.", roleReady}))
 	fly := "spov fly"
 	// Without a local client the TUI cannot join the sandbox a launch
 	// would pay for.
 	if client := r.results[stepClient]; client.state != stepOK {
 		fly = "spov fly --web"
-		_, _ = fmt.Fprintln(out, "The OpenCode client is not installed, so use the web UI until it is:")
+		r.out(st.prose(2, roleText, "The OpenCode client is not installed, so use the web UI until it is:")...)
 		if client.fix != "" {
-			_, _ = fmt.Fprintln(out, "  "+client.fix)
+			r.out(st.codeLine(4, client.fix))
 		}
 	}
-	_, _ = fmt.Fprintf(out, "  cd your-repo && %s        # from a checkout: its branch, synced back when you quit\n", fly)
-	_, _ = fmt.Fprintf(out, "  %s --repo owner/name      # from anywhere: the repository's default branch\n", fly)
+	r.out(st.prose(2, roleDim, "From a checkout: its branch, synced back when you quit")...)
+	r.out(st.codeLine(4, "cd your-repo && "+fly))
+	r.out(st.prose(2, roleDim, "From anywhere: the repository's default branch")...)
+	r.out(st.codeLine(4, fly+" --repo owner/name"))
 }
 
 // initInteractive reports whether init may ask: a terminal on both ends,
@@ -481,14 +514,18 @@ func initHosted(ctx context.Context, env *Env, cfg config.Config, asJSON bool) e
 			return err
 		}
 	} else {
-		r := &initRun{env: env}
-		_, _ = fmt.Fprintf(env.Out, "This CLI uses the spov server at %s, which holds Modal, the sandbox image and the credentials.\n", url)
+		r := newInitRun(env, cfg)
+		st := r.st
+		r.out(st.prose(0, roleDim, fmt.Sprintf("This CLI uses the spov server at %s, which holds Modal, the sandbox image and the credentials.", url))...)
 		r.print(1, initStep{title: "Server", required: true}, signIn)
 		r.print(2, initStep{title: "OpenCode client"}, client)
+		r.out("")
 		if signIn.state == stepOK {
-			_, _ = fmt.Fprintln(env.Out, "\nReady. Store your own tokens and keys with `spov credentials add`.")
+			r.out(st.wrap(0, 0, append([]word{{{"Ready.", roleReady}}}, st.words("Store your own tokens and keys with `spov credentials add`.", roleText)...))...)
 		} else {
-			_, _ = fmt.Fprintln(env.Out, "\nNot ready: "+signIn.fix+".")
+			words := append([]word{{{"Not ready:", roleNotReady}}}, st.fixWords(signIn.fix, roleText)...)
+			words[len(words)-1] = append(words[len(words)-1], seg{".", roleText})
+			r.out(st.wrap(0, 0, words)...)
 		}
 	}
 	if !view.Ready {
@@ -501,28 +538,31 @@ func initHosted(ctx context.Context, env *Env, cfg config.Config, asJSON bool) e
 // none.
 //
 // @decision(DL-123)
-func (e *Env) choose(ctx context.Context, prompt string, options []string) (int, error) {
+func (e *Env) choose(ctx context.Context, st initStyle, prompt string, options []string) (int, error) {
 	if e.Choose != nil {
 		return e.Choose(prompt, options)
 	}
-	return answerOrInterrupt(ctx, -1, func() (int, error) { return e.readChoice(prompt, options) })
+	return answerOrInterrupt(ctx, -1, func() (int, error) { return e.readChoice(st, prompt, options) })
 }
 
-func (e *Env) readChoice(prompt string, options []string) (int, error) {
+func (e *Env) readChoice(st initStyle, prompt string, options []string) (int, error) {
 	if e.Stdin == nil || !term.IsTerminal(int(e.Stdin.Fd())) {
 		return -1, fmt.Errorf("no terminal to ask on")
 	}
-	return chooseFrom(e.Stdin, e.Err, prompt, options), nil
+	return chooseFrom(e.Stdin, e.Err, st, prompt, options), nil
 }
 
-// chooseFrom lists the options and reads a number; anything else is no
-// choice.
-func chooseFrom(in io.Reader, out io.Writer, prompt string, options []string) int {
-	_, _ = fmt.Fprintln(out, prompt)
+// chooseFrom asks the question, lists the options under it and reads a
+// number; anything else is no choice.
+//
+// @decision(DL-152)
+func chooseFrom(in io.Reader, out io.Writer, st initStyle, prompt string, options []string) int {
+	_, _ = fmt.Fprintln(out, st.question(indentStep, prompt, ""))
 	for i, o := range options {
-		_, _ = fmt.Fprintf(out, "  %d) %s\n", i+1, o)
+		_, _ = fmt.Fprintln(out, st.render(seg{strings.Repeat(" ", indentCode), roleText},
+			seg{strconv.Itoa(i+1) + ")", roleChoiceNumber}, seg{" " + o, roleText}))
 	}
-	_, _ = fmt.Fprintf(out, "Choose 1-%d: ", len(options))
+	_, _ = fmt.Fprint(out, st.render(seg{strings.Repeat(" ", indentCode), roleText}, seg{fmt.Sprintf("Choose 1-%d:", len(options)), roleDim}, seg{" ", roleText}))
 	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && line == "" {
 		return -1
