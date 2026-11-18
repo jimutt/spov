@@ -35,6 +35,7 @@ func TestCheckUserEnv(t *testing.T) {
 		{"a forge token", map[string]string{"GITHUB_TOKEN": "x"}, "routed credential"},
 		{"the Console key", map[string]string{"OPENCODE_API_KEY": "x"}, "routed credential"},
 		{"OpenCode's config", map[string]string{"OPENCODE_CONFIG_CONTENT": "{}"}, "keeps for itself"},
+		{"OpenCode's feature flags", map[string]string{"OPENCODE_FLAGS": "all"}, "keeps for itself"},
 		{"OpenCode's plumbing", map[string]string{"OPENCODE_PTY_SOCKET_DIR": "/x"}, "starts with OPENCODE_PTY_"},
 		{"not a name", map[string]string{"1ABC": "x"}, "not a variable name"},
 		{"a dash", map[string]string{"MY-VAR": "x"}, "not a variable name"},

@@ -818,6 +818,7 @@ describe('condense', () => {
       ev(4, 'session.something.new', '', 'news'),
       ev(5, 'session.step.ended'),
       ev(6, 'session.agent.selected'),
+      ev(7, 'session.step.first-token'),
     ]));
     expect(t.map((e) => (e.kind === 'event' ? e.name : ''))).toEqual(['session.something.new']);
   });

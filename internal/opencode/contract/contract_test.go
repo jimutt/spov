@@ -76,7 +76,7 @@ func TestTheValidatorKnowsEveryKeywordTheDocumentUses(t *testing.T) {
 				unknown[k] = true
 			}
 			switch k {
-			case "properties":
+			case "properties", "patternProperties":
 				for _, p := range v.(map[string]any) {
 					walk(p.(map[string]any))
 				}
@@ -186,7 +186,11 @@ func TestTheValidatorsRules(t *testing.T) {
 	      "re": {"type": "string", "pattern": "("},
 	      "name": {"type": "string", "minLength": 2},
 	      "notnull": {"not": {"type": "null"}},
-	      "both": {"allOf": [{"type": "object", "additionalProperties": {"type": "string"}}], "type": "object", "properties": {"n": {"type": "integer"}}}
+	      "both": {"allOf": [{"type": "object", "additionalProperties": {"type": "string"}}], "type": "object", "properties": {"n": {"type": "integer"}}},
+	      "byname": {"type": "object", "additionalProperties": false, "properties": {"ses_fixed": {"type": "string"}},
+	        "patternProperties": {"^ses_": {"type": "string", "minLength": 2}, "^id_": {"type": "integer"}}},
+	      "badname": {"type": "object", "patternProperties": {"(": {}}},
+	      "encoded": {"type": "string", "contentMediaType": "application/json", "contentSchema": {"type": "object"}}
 	    }},
 	    "Loop": {"$ref": "#/components/schemas/Loop"}
 	  }}
@@ -216,6 +220,13 @@ func TestTheValidatorsRules(t *testing.T) {
 		{"/a/1", `{"notnull":null}`, "must not"},
 		{"/a/1", `{"both":{"s":"x"}}`, ""},
 		{"/a/1", `{"both":{"s":1}}`, "both.s"},
+		{"/a/1", `{"byname":{"ses_a":"xy","id_1":3}}`, ""},
+		{"/a/1", `{"byname":{"id_1":"x"}}`, "byname.id_1: string is not of type integer"},
+		{"/a/1", `{"byname":{"other":1}}`, `unknown field "other"`},
+		{"/a/1", `{"byname":{"ses_fixed":"x"}}`, "shorter than 2"},
+		{"/a/1", `{"byname":{"ses_fixed":1}}`, "byname.ses_fixed: integer is not of type string"},
+		{"/a/1", `{"badname":{"k":1}}`, "pattern"},
+		{"/a/1", `{"encoded":"not json"}`, ""},
 		{"/a/1", `[1]`, "not of type object"},
 		{"/a/1", `{`, "not JSON"},
 		{"/a/1", `{} {}`, "after its JSON value"},

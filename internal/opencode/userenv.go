@@ -65,6 +65,7 @@ var RefusedOpenCodeEnv = []string{
 	"OPENCODE_CONFIG_PROJECT_DISABLE", "OPENCODE_DISABLE_PROJECT_CONFIG",
 	"OPENCODE_MODELS_URL", "OPENCODE_MODELS_PATH",
 	"OPENCODE_CLIENT", "OPENCODE_ROUTE", "OPENCODE_SESSION_ID",
+	"OPENCODE_FLAGS",
 }
 
 // SpovEnvNames are the variables spov sets in a session's main container

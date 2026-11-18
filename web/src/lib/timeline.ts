@@ -1016,6 +1016,8 @@ export function shown(events: EventEntry[], expanded: boolean): EventEntry[] {
 export const Plumbing = new Set<string>([
   "session.step.started",
   "session.step.streamed",
+  // The step's first token from the model, which carries no words.
+  "session.step.first-token",
   "session.step.ended",
   "session.reasoning.started",
   "session.text.started",

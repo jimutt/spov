@@ -91,7 +91,7 @@ sandbox:
 
 # --- OpenCode ------------------------------------------------------------------
 opencode:
-  version: 2.2.5                    # the pin: the sandbox must match it, the local client is graded against it
+  version: 2.3.0                    # the pin: the sandbox must match it, the local client is graded against it
   port: 4096
 
 # --- Modal -----------------------------------------------------------------------
@@ -290,8 +290,9 @@ refusal names the variable and the rule:
   `OPENCODE_CLI_CONFIG_CONTENT`, `OPENCODE_CONFIG_PROJECT_DISABLE`,
   `OPENCODE_DISABLE_PROJECT_CONFIG`, `OPENCODE_MODELS_URL`,
   `OPENCODE_MODELS_PATH`, `OPENCODE_CLIENT`, `OPENCODE_ROUTE`,
-  `OPENCODE_SESSION_ID`, and anything starting with `OPENCODE_PTY_` or
-  `OPENCODE_SSH_ASKPASS_`. Every other `OPENCODE_*` is allowed.
+  `OPENCODE_SESSION_ID`, `OPENCODE_FLAGS`, and anything starting with
+  `OPENCODE_PTY_` or `OPENCODE_SSH_ASKPASS_`. Every other `OPENCODE_*` is
+  allowed.
 
 Names are compared without regard to case. A name is letters, digits and `_`,
 not starting with a digit, at most 128 bytes; a value is at most 4 KiB. A

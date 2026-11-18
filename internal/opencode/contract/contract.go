@@ -332,9 +332,9 @@ func (d *Document) checkBody(op operation, body []byte) error {
 // ones it reads past. A document using any other keyword fails
 // TestTheValidatorKnowsEveryKeywordTheDocumentUses.
 var (
-	Keywords = []string{"$ref", "type", "enum", "pattern", "properties", "required", "additionalProperties",
+	Keywords = []string{"$ref", "type", "enum", "pattern", "properties", "patternProperties", "required", "additionalProperties",
 		"items", "prefixItems", "minItems", "anyOf", "allOf", "not", "minimum", "maximum", "exclusiveMinimum", "minLength"}
-	Ignored = []string{"description", "format", "contentEncoding", "contentMediaType", "title", "default", "examples"}
+	Ignored = []string{"description", "format", "contentEncoding", "contentMediaType", "contentSchema", "title", "default", "examples"}
 )
 
 var (
@@ -442,11 +442,19 @@ func (d *Document) validateObject(v map[string]any, schema map[string]any, at st
 			return fmt.Errorf("%s: missing required field %q", at, r)
 		}
 	}
+	patterned, _ := schema["patternProperties"].(map[string]any)
 	for _, k := range sortedKeys(v) {
-		if ps, ok := props[k].(map[string]any); ok {
+		ps, named := props[k].(map[string]any)
+		if named {
 			if err := d.validate(v[k], ps, at+"."+k); err != nil {
 				return err
 			}
+		}
+		matched, err := d.validatePatterned(k, v[k], patterned, at)
+		if err != nil {
+			return err
+		}
+		if named || matched {
 			continue
 		}
 		switch extra := schema["additionalProperties"].(type) {
@@ -461,6 +469,30 @@ func (d *Document) validateObject(v map[string]any, schema map[string]any, at st
 		}
 	}
 	return nil
+}
+
+// validatePatterned checks a field against every patternProperties
+// schema whose pattern matches its name, and reports whether any did.
+// A field one matches is not an additional property.
+//
+// @decision(DL-035) @decision(DL-145)
+func (d *Document) validatePatterned(name string, v any, patterned map[string]any, at string) (bool, error) {
+	matched := false
+	for _, p := range sortedKeys(patterned) {
+		re, err := compiled(p)
+		if err != nil {
+			return false, fmt.Errorf("%s: %w", at, err)
+		}
+		if !re.MatchString(name) {
+			continue
+		}
+		matched = true
+		ps, _ := patterned[p].(map[string]any)
+		if err := d.validate(v, ps, at+"."+name); err != nil {
+			return false, err
+		}
+	}
+	return matched, nil
 }
 
 func (d *Document) validateArray(v []any, schema map[string]any, at string) error {
