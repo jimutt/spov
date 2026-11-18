@@ -486,6 +486,20 @@
   ],
   "openai": [
    {
+    "id": "gpt-6.2-astra",
+    "name": "GPT-6.2 Astra",
+    "released": "2026-11-17",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
+    "id": "gpt-6.2-sol",
+    "name": "GPT-6.2 Sol",
+    "released": "2026-11-17",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
     "id": "gpt-6.1-terra",
     "name": "GPT-6.1 Terra",
     "released": "2026-10-26",
@@ -733,6 +747,20 @@
   ],
   "opencode": [
    {
+    "id": "gpt-6.2-astra",
+    "name": "GPT-6.2 Astra",
+    "released": "2026-11-17",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
+    "id": "gpt-6.2-sol",
+    "name": "GPT-6.2 Sol",
+    "released": "2026-11-17",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
     "id": "hy4-flash-free",
     "name": "Hy4 flash Free",
     "released": "2026-11-16",
@@ -934,13 +962,6 @@
     "released": "2026-08-26",
     "context": 1000000,
     "output": 131072
-   },
-   {
-    "id": "glm-5.3-flash-free",
-    "name": "GLM-5.3-Flash Free",
-    "released": "2026-08-26",
-    "context": 200000,
-    "output": 32000
    },
    {
     "id": "qwen3.8-flash",
@@ -1591,6 +1612,34 @@
   ],
   "openrouter": [
    {
+    "id": "openai/gpt-6.2-astra",
+    "name": "GPT-6.2 Astra",
+    "released": "2026-11-17",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
+    "id": "openai/gpt-6.2-astra-pro",
+    "name": "GPT-6.2 Astra Pro",
+    "released": "2026-11-17",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
+    "id": "openai/gpt-6.2-sol",
+    "name": "GPT-6.2 Sol",
+    "released": "2026-11-17",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
+    "id": "openai/gpt-6.2-sol-pro",
+    "name": "GPT-6.2 Sol Pro",
+    "released": "2026-11-17",
+    "context": 1050000,
+    "output": 128000
+   },
+   {
     "id": "qwen/qwen4-max",
     "name": "Qwen4 Max",
     "released": "2026-11-16",
@@ -2120,7 +2169,7 @@
     "name": "DeepSeek V4.1 Flash",
     "released": "2026-09-10",
     "context": 1048576,
-    "output": 943718
+    "output": 393216
    },
    {
     "id": "inclusionai/ling-3.0-flash-vl",
@@ -2211,7 +2260,7 @@
     "name": "GLM-5.3-Flash",
     "released": "2026-08-26",
     "context": 1048576,
-    "output": 131072
+    "output": 943717
    },
    {
     "id": "ibm-granite/granite-4.2-8b",
@@ -2932,7 +2981,7 @@
     "name": "Qwen3.5 27B",
     "released": "2026-02-23",
     "context": 262144,
-    "output": 81920
+    "output": 65536
    },
    {
     "id": "qwen/qwen3.5-35b-a3b",
@@ -3296,7 +3345,7 @@
     "name": "Qwen3-Next 80B-A3B Instruct",
     "released": "2025-09",
     "context": 262144,
-    "output": 16384
+    "output": 235929
    },
    {
     "id": "openai/gpt-audio",
@@ -3443,7 +3492,7 @@
     "name": "Mistral Small 3.2 24B",
     "released": "2025-06-20",
     "context": 256000,
-    "output": 26214
+    "output": 16384
    },
    {
     "id": "openai/o3-pro",
@@ -3464,7 +3513,7 @@
     "name": "DeepSeek R1 0528",
     "released": "2025-05-28",
     "context": 163840,
-    "output": 32768
+    "output": 32000
    },
    {
     "id": "mistralai/mistral-medium-3",
@@ -3869,6 +3918,7 @@
    "glm-4.7",
    "glm-4.7-free",
    "glm-5-free",
+   "glm-5.3-flash-free",
    "grok-code",
    "hy3-free",
    "hy3-preview-free",
@@ -3929,5 +3979,5 @@
    "z-ai/glm-4.5"
   ]
  },
- "as_of": "2026-11-17T00:00:00Z"
+ "as_of": "2026-11-18T00:00:00Z"
 }
