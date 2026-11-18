@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-148 | A session's preview is the newest message that says something | accepted | server | web, sessions, store |
 | DL-147 | The session list leads with the repository at every width | accepted | web | web, layout, sessions |
 | DL-146 | The job plugin's tools stop when OpenCode aborts their call, and an aborted completion is withdrawn | accepted | opencode | opencode-2-3, opencode, plugin, completion |
 | DL-145 | Event frames in tests and probes are checked against the schemas the pinned OpenCode publishes | accepted | opencode | opencode-2-3, opencode, contract |

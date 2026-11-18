@@ -1778,6 +1778,7 @@ select distinct on (m.session_id) m.id, m.org_id, m.session_id, m.conversation_i
 join conversations c on c.id = m.conversation_id
 where m.org_id = $1 and m.session_id = any($2::text[])
   and c.parent_opencode_id is null
+  and btrim(m.text, E' \t\n\r') <> ''
 order by m.session_id, m.at desc nulls last, m.id desc
 `
 
@@ -1787,7 +1788,7 @@ type LastMessagesParams struct {
 }
 
 // Root conversations only: a subagent's message is never a session's
-// preview.
+// preview. Nor is a message with no words. @decision(DL-148)
 func (q *Queries) LastMessages(ctx context.Context, arg LastMessagesParams) ([]Message, error) {
 	rows, err := q.db.Query(ctx, lastMessages, arg.OrgID, arg.SessionIds)
 	if err != nil {
