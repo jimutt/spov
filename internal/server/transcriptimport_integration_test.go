@@ -67,6 +67,20 @@ func TestIntegrationSTR1TranscriptImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("the first server holds %d messages: %s", len(stored), probeRoles(stored))
+	// Every item of the first server's durable log is in the shape its
+	// document gives a log item.
+	//
+	// @decision(DL-145)
+	logged, err := sandboxGet(ctx, a.URL+"/api/experimental/session/"+url.PathEscape(id)+"/log?after=0&follow=false", a.Token, a.User, a.Password)
+	if err != nil {
+		t.Fatalf("reading the first server's log: %v", err)
+	}
+	logAudit := auditLog(t)
+	for _, line := range strings.Split(string(logged), "\n") {
+		if raw, ok := strings.CutPrefix(line, "data:"); ok {
+			logAudit.frame(strings.TrimSpace(raw))
+		}
+	}
 
 	// The second server, a fresh home: the conversation is imported from
 	// the stored messages alone, as the store keeps them.
@@ -182,6 +196,7 @@ func TestIntegrationSTR1TranscriptImport(t *testing.T) {
 // highest durable seq seen on conversation id.
 func watchSeqs(ctx context.Context, t *testing.T, conn Connection, id string) func() (int64, int64) {
 	t.Helper()
+	audit := auditEvents(t)
 	body, err := openSandboxEvents(ctx, conn)
 	if err != nil {
 		t.Fatalf("event stream: %v", err)
@@ -194,7 +209,11 @@ func watchSeqs(ctx context.Context, t *testing.T, conn Connection, id string) fu
 		sc.Buffer(make([]byte, 1<<20), 16<<20)
 		for sc.Scan() {
 			line, ok := strings.CutPrefix(sc.Text(), "data: ")
-			if !ok || !strings.Contains(line, id) {
+			if !ok {
+				continue
+			}
+			audit.frame(line)
+			if !strings.Contains(line, id) {
 				continue
 			}
 			var frame map[string]any

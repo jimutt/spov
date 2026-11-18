@@ -10,18 +10,43 @@ import (
 
 	"github.com/jimutt/spov/internal/jobs"
 	"github.com/jimutt/spov/internal/opencode"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
-// frame wraps one payload as an SSE data frame.
-func frame(data string) string { return "data: " + data + "\n\n" }
+// frame wraps one event frame as an SSE data frame, after checking it
+// against the pinned build's document.
+//
+// @decision(DL-145)
+func frame(t testing.TB, raw string) string {
+	t.Helper()
+	contract.CheckEventFrame(t, []byte(raw))
+	return "data: " + raw + "\n\n"
+}
 
-const durableFrame = `{"event":"session.text.ended","durability":"durable","sessionID":"ses_1","data":{"text":"hello"}}`
+// durableFrame is a durable frame in the pinned build's shape.
+const durableFrame = `{"id":"evt_h","created":1788265407960,"type":"session.text.ended",` +
+	`"data":{"sessionID":"ses_1","assistantMessageID":"msg_1","ordinal":0,"text":"hello"},` +
+	`"durable":{"aggregateID":"ses_1","seq":2,"version":1}}`
 
-// projectString decodes a frame and projects it, which is what the
-// recorder does for every frame that arrives.
+// projectString checks a frame against the pinned build's document,
+// then decodes and projects it, which is what the recorder does for
+// every frame that arrives.
+//
+// @decision(DL-145)
 func projectString(t *testing.T, raw string) (LogEvent, bool) {
 	t.Helper()
+	contract.CheckEventFrame(t, []byte(raw))
+	return project(raw)
+}
+
+// projectUnchecked projects a frame no pinned build sends, for a test of
+// the projection's tolerance; why says what the frame is.
+func projectUnchecked(raw, why string) (LogEvent, bool) {
+	return project(string(contract.Unchecked(raw, why)))
+}
+
+func project(raw string) (LogEvent, bool) {
 	var decoded map[string]any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
 		return LogEvent{}, false
@@ -230,7 +255,7 @@ func TestProjectionFiltersAndShapes(t *testing.T) {
 		{name: "no name", raw: `{"durability":"durable","sessionID":"ses_1"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := projectString(t, tc.raw)
+			got, ok := projectUnchecked(tc.raw, "an earlier build's flattened envelope, which the by-name lookup still reads")
 			if tc.want == nil {
 				if ok {
 					t.Fatalf("relayed %+v, want it filtered out", got)
@@ -250,12 +275,26 @@ func TestProjectionFiltersAndShapes(t *testing.T) {
 	}
 }
 
+// An envelope metadata after the data names neither the session nor the
+// text: the data's own fields are read first.
+//
+// @decision(DL-018) @decision(DL-145)
+func TestAnEnvelopeMetadataDoesNotNameTheFrame(t *testing.T) {
+	got, ok := projectString(t, `{"id":"evt_1","created":1794958241235,"type":"session.text.ended",`+
+		`"data":{"sessionID":"ses_1","assistantMessageID":"msg_1","ordinal":0,"text":"final"},`+
+		`"durable":{"aggregateID":"ses_1","seq":19,"version":1},"metadata":{"sessionID":"ses_other","text":"not this"}}`)
+	if !ok || got.Session != "ses_1" || got.Text != "final" {
+		t.Errorf("projected %+v, %v; want ses_1 and the data's text", got, ok)
+	}
+}
+
 // A top-level field beats one nested in the payload, so an envelope that
 // names the session at both levels cannot be read as the wrong one.
 //
 // @decision(DL-018)
 func TestTheOuterEnvelopeWinsOverThePayload(t *testing.T) {
-	got, ok := projectString(t, `{"event":"session.text.ended","durability":"durable","sessionID":"outer","data":{"sessionID":"inner"}}`)
+	got, ok := projectUnchecked(`{"event":"session.text.ended","durability":"durable","sessionID":"outer","data":{"sessionID":"inner"}}`,
+		"an envelope naming a session at both levels, which no build sends")
 	if !ok {
 		t.Fatal("filtered out")
 	}
@@ -265,18 +304,15 @@ func TestTheOuterEnvelopeWinsOverThePayload(t *testing.T) {
 }
 
 // TestProjectionAgainstRealSandboxFrames uses frames captured verbatim
-// from a running sandbox (opencode2 0.0.0-beta-18743), and pins that the
-// durable marker is a `durable` object. Keep the frames verbatim.
+// from running sandboxes (the step from 2.3.0, the rest from earlier
+// builds whose shapes 2.3.0 keeps), and pins that the durable marker is
+// a `durable` object.
 //
-// @decision(DL-018)
+// @decision(DL-018) @decision(DL-145)
 func TestProjectionAgainstRealSandboxFrames(t *testing.T) {
 	const (
-		stepStarted = `{"id":"evt_000000000003SyntheticId003","created":1788265407953,` +
-			`"type":"session.step.started","location":{"directory":"/workspace/spov"},` +
-			`"data":{"sessionID":"ses_000000000020SyntheticId020","agent":"build",` +
-			`"model":{"id":"ling-3.0-flash-fin-free","providerID":"opencode","variant":"default"},` +
-			`"assistantMessageID":"msg_000000000001SyntheticId001","snapshot":"0badc0de"},` +
-			`"durable":{"aggregateID":"ses_000000000020SyntheticId020","seq":46,"version":1}}`
+		// OpenCode 2.3.0's, from capture_test.go.
+		stepStarted = capturedRootStepStarted
 
 		retryScheduled = `{"id":"evt_000000000004SyntheticId004","created":1788265407955,` +
 			`"type":"session.retry.scheduled","location":{"directory":"/workspace/spov"},` +
@@ -297,7 +333,7 @@ func TestProjectionAgainstRealSandboxFrames(t *testing.T) {
 	if got.Name != "session.step.started" {
 		t.Errorf("name = %q", got.Name)
 	}
-	if got.Session != "ses_000000000020SyntheticId020" {
+	if got.Session != capturedRoot {
 		t.Errorf("session = %q, want the id from data.sessionID", got.Session)
 	}
 
@@ -402,7 +438,8 @@ func TestProjectionAgainstRealSandboxFrames(t *testing.T) {
 	// And the frames spov does not keep are still dropped: storing
 	// every non-durable frame would put deltas and status into the
 	// busiest table spov has, which is what DL-017 exists to prevent.
-	const messageDelta = `{"id":"evt_1","type":"message.part.delta","data":{"sessionID":"ses_x","text":"pa"}}`
+	const messageDelta = `{"id":"evt_1","created":1788265407960,"type":"session.text.delta",` +
+		`"data":{"sessionID":"ses_x","assistantMessageID":"msg_1","ordinal":0,"delta":"pa"}}`
 	if _, ok := projectString(t, messageDelta); ok {
 		t.Error("an ephemeral delta was kept: only the named permission frames are")
 	}
@@ -512,11 +549,11 @@ func TestTheTurnStartedFrameReachesTheStore(t *testing.T) {
 
 	// The page clears in-flight on all three enders. `.succeeded` is
 	// covered by the supervisor's tests; these two are not.
-	for _, name := range []string{"session.execution.interrupted", "session.execution.failed"} {
-		raw := `{"id":"evt_1","created":1788265407953,"type":"` + name + `",` +
-			`"data":{"sessionID":"ses_1","reason":"user"},` +
-			`"durable":{"aggregateID":"ses_1","seq":46,"version":1}}`
-		ended, ok := projectString(t, raw)
+	for name, data := range map[string]string{
+		"session.execution.interrupted": `{"sessionID":"ses_1","reason":"user"}`,
+		"session.execution.failed":      `{"sessionID":"ses_1","error":{"type":"provider.internal","message":"down"}}`,
+	} {
+		ended, ok := projectString(t, string(contract.Event(t, name, 46, data)))
 		if !ok {
 			t.Errorf("%s was dropped: the page never learns the turn ended and Stop stays"+
 				" on screen with nothing to stop", name)

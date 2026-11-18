@@ -9,6 +9,7 @@ import (
 
 	"github.com/jimutt/spov/internal/jobs/jobstest"
 	"github.com/jimutt/spov/internal/opencode"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -267,53 +268,53 @@ func TestGateThreePairsPermissionsByRequestID(t *testing.T) {
 	// @decision(DL-050) @decision(DL-020)
 	ask := func(id string) store.Event {
 		return store.Event{Source: store.SourceEphemeral, Name: eventPermissionAsked,
-			Raw: []byte(`{"type":"permission.asked","data":{"id":"` + id + `","sessionID":"ses_1","action":"read"}}`)}
+			Raw: contract.Event(t, eventPermissionAsked, 0, `{"id":"`+id+`","sessionID":"ses_1","action":"read","resources":["a.txt"]}`)}
 	}
 	reply := func(id string) store.Event {
 		return store.Event{Source: store.SourceEphemeral, Name: eventPermissionReplied,
-			Raw: []byte(`{"type":"permission.replied","data":{"sessionID":"ses_1","requestID":"` + id + `","reply":"once"}}`)}
+			Raw: contract.Event(t, eventPermissionReplied, 0, `{"sessionID":"ses_1","requestID":"`+id+`","reply":"once"}`)}
 	}
 
 	t.Run("an answered permission leaves nothing outstanding", func(t *testing.T) {
-		if n := unansweredPermissions([]store.Event{ask("p1"), reply("p1")}); n != 0 {
+		if n := unansweredPermissions([]store.Event{ask("per_1"), reply("per_1")}); n != 0 {
 			t.Errorf("outstanding = %d, want 0", n)
 		}
 	})
 	t.Run("an answer through spov settles its request", func(t *testing.T) {
 		answered := store.Event{Source: store.SourceSpov, Name: MarkerAnswered,
-			Raw: []byte(`{"requestID":"p1"}`)}
-		if n := unansweredPermissions([]store.Event{ask("p1"), answered}); n != 0 {
+			Raw: []byte(`{"requestID":"per_1"}`)}
+		if n := unansweredPermissions([]store.Event{ask("per_1"), answered}); n != 0 {
 			t.Errorf("outstanding = %d, want 0: a person answered it through spov", n)
 		}
-		if n := unansweredPermissions([]store.Event{ask("p1"), answered, ask("p2")}); n != 1 {
-			t.Errorf("outstanding = %d, want 1 (p2)", n)
+		if n := unansweredPermissions([]store.Event{ask("per_1"), answered, ask("per_2")}); n != 1 {
+			t.Errorf("outstanding = %d, want 1 (per_2)", n)
 		}
 	})
 	t.Run("an older requestID-shaped ask still pairs", func(t *testing.T) {
 		old := store.Event{Source: store.SourceEphemeral, Name: eventPermissionAsked,
-			Raw: []byte(`{"data":{"requestID":"p1"}}`)}
-		if n := unansweredPermissions([]store.Event{old, reply("p1")}); n != 0 {
+			Raw: contract.Unchecked(`{"data":{"requestID":"per_1"}}`, "an earlier build's ask, named at requestID")}
+		if n := unansweredPermissions([]store.Event{old, reply("per_1")}); n != 0 {
 			t.Errorf("outstanding = %d, want 0", n)
 		}
 	})
 	t.Run("a turn ending does not settle a request", func(t *testing.T) {
 		ended := store.Event{Source: store.SourceOpenCode, Name: "session.execution.interrupted",
-			Raw: []byte(`{"data":{"reason":"shutdown"}}`)}
-		if n := unansweredPermissions([]store.Event{ask("p1"), ended}); n != 1 {
+			Raw: contract.Event(t, "session.execution.interrupted", 5, `{"sessionID":"ses_1","reason":"shutdown"}`)}
+		if n := unansweredPermissions([]store.Event{ask("per_1"), ended}); n != 1 {
 			t.Errorf("outstanding = %d, want 1: delivery's interrupt must not hide a park", n)
 		}
 	})
 	t.Run("an unanswered one is outstanding", func(t *testing.T) {
-		if n := unansweredPermissions([]store.Event{ask("p1"), reply("p2"), ask("p3")}); n != 2 {
-			t.Errorf("outstanding = %d, want 2 (p1 and p3)", n)
+		if n := unansweredPermissions([]store.Event{ask("per_1"), reply("per_2"), ask("per_3")}); n != 2 {
+			t.Errorf("outstanding = %d, want 2 (per_1 and per_3)", n)
 		}
 	})
 	t.Run("a reply nobody can pair clears nothing", func(t *testing.T) {
 		// The unpaired reply must not be allowed to clear an arbitrary
 		// question: one unreadable frame would then hide a real park.
 		unpaired := store.Event{Source: store.SourceEphemeral, Name: eventPermissionReplied,
-			Raw: []byte(`{"type":"permission.replied","data":{"sessionID":"ses_1"}}`)}
-		if n := unansweredPermissions([]store.Event{ask("p1"), unpaired}); n != 1 {
+			Raw: contract.Unchecked(`{"type":"permission.replied","data":{"sessionID":"ses_1"}}`, "a reply naming no request")}
+		if n := unansweredPermissions([]store.Event{ask("per_1"), unpaired}); n != 1 {
 			t.Errorf("outstanding = %d, want 1: an unpairable reply cleared a real question", n)
 		}
 	})
@@ -364,7 +365,7 @@ func TestAJobThatDidTheWorkSucceeds(t *testing.T) {
 func TestASandboxShutdownIsARetryNotAVerdict(t *testing.T) {
 	events := []store.Event{{
 		Source: store.SourceOpenCode, Name: "session.execution.interrupted",
-		Raw: []byte(`{"type":"session.execution.interrupted","data":{"sessionID":"ses_1","reason":"shutdown"}}`),
+		Raw: contract.Event(t, "session.execution.interrupted", 5, `{"sessionID":"ses_1","reason":"shutdown"}`),
 	}}
 	got := judge(store.Job{ID: "j", OrgID: "o", Kind: store.JobKindPR}, events, nil, nil)
 	if !got.Retry {
@@ -382,7 +383,7 @@ func TestASandboxShutdownIsARetryNotAVerdict(t *testing.T) {
 	// An interruption for any other reason is not a retry.
 	other := []store.Event{{
 		Source: store.SourceOpenCode, Name: "session.execution.interrupted",
-		Raw: []byte(`{"type":"session.execution.interrupted","data":{"sessionID":"ses_1","reason":"aborted"}}`),
+		Raw: contract.Event(t, "session.execution.interrupted", 5, `{"sessionID":"ses_1","reason":"superseded"}`),
 	}}
 	if judge(store.Job{ID: "j", OrgID: "o", Kind: store.JobKindPR}, other, nil, nil).Retry {
 		t.Error("an ordinary interruption was marked a retry")
@@ -718,7 +719,7 @@ func TestGateThreeWordsItsFindings(t *testing.T) {
 	})
 	t.Run("one unanswered permission reads as one", func(t *testing.T) {
 		ask := store.Event{Source: store.SourceEphemeral, Name: eventPermissionAsked,
-			Raw: []byte(`{"data":{"requestID":"p1"}}`)}
+			Raw: contract.Event(t, eventPermissionAsked, 0, `{"id":"per_1","sessionID":"ses_1","action":"read","resources":[]}`)}
 		got := judgeConduct([]store.Event{ask}, []store.Message{toolMessage(partRan)}, nil)
 		if !strings.Contains(got.Detail, "1 permission request") {
 			t.Errorf("detail = %q, want it to count one request without pluralising", got.Detail)
@@ -726,8 +727,10 @@ func TestGateThreeWordsItsFindings(t *testing.T) {
 	})
 	t.Run("several read as several", func(t *testing.T) {
 		asks := []store.Event{
-			{Source: store.SourceEphemeral, Name: eventPermissionAsked, Raw: []byte(`{"data":{"requestID":"p1"}}`)},
-			{Source: store.SourceEphemeral, Name: eventPermissionAsked, Raw: []byte(`{"data":{"requestID":"p2"}}`)},
+			{Source: store.SourceEphemeral, Name: eventPermissionAsked,
+				Raw: contract.Event(t, eventPermissionAsked, 0, `{"id":"per_1","sessionID":"ses_1","action":"read","resources":[]}`)},
+			{Source: store.SourceEphemeral, Name: eventPermissionAsked,
+				Raw: contract.Event(t, eventPermissionAsked, 0, `{"id":"per_2","sessionID":"ses_1","action":"read","resources":[]}`)},
 		}
 		got := judgeConduct(asks, []store.Message{toolMessage(partRan)}, nil)
 		if !strings.Contains(got.Detail, "2 permission requests") {
@@ -744,9 +747,9 @@ func TestGateThreeWordsItsFindings(t *testing.T) {
 func TestAnUnreadablePermissionFrameCountsAsParked(t *testing.T) {
 	for name, raw := range map[string][]byte{
 		"no raw at all":  nil,
-		"not json":       []byte("<html>"),
-		"no data object": []byte(`{"type":"permission.asked"}`),
-		"no request id":  []byte(`{"data":{"sessionID":"ses_1"}}`),
+		"not json":       contract.Unchecked("<html>", "not JSON"),
+		"no data object": contract.Unchecked(`{"type":"permission.asked"}`, "an ask with no data"),
+		"no request id":  contract.Unchecked(`{"data":{"sessionID":"ses_1"}}`, "an ask naming no request"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			ask := store.Event{Source: store.SourceEphemeral, Name: eventPermissionAsked, Raw: raw}
@@ -758,7 +761,7 @@ func TestAnUnreadablePermissionFrameCountsAsParked(t *testing.T) {
 
 	// A spov marker is not a permission frame, whatever it is named.
 	spoof := store.Event{Source: store.SourceSpov, Name: eventPermissionAsked,
-		Raw: []byte(`{"data":{"requestID":"p1"}}`)}
+		Raw: contract.Unchecked(`{"data":{"requestID":"per_1"}}`, "spov's own row under an OpenCode name")}
 	if n := unansweredPermissions([]store.Event{spoof}); n != 0 {
 		t.Errorf("outstanding = %d, want 0: a spov marker was read as the session's own frame", n)
 	}
@@ -770,13 +773,14 @@ func TestAnUnreadablePermissionFrameCountsAsParked(t *testing.T) {
 // @decision(DL-050)
 func TestTheRequestIDIsReadUnderItsSpellings(t *testing.T) {
 	for _, key := range []string{"requestID", "requestId", "request_id"} {
-		if got := permissionRequestID([]byte(`{"data":{"` + key + `":"p1"}}`)); got != "p1" {
+		raw := contract.Unchecked(`{"data":{"`+key+`":"p1"}}`, "a request id under a spelling no build sends")
+		if got := permissionRequestID(raw); got != "p1" {
 			t.Errorf("%s: got %q, want p1", key, got)
 		}
 	}
 	// The frame's own top-level id is the EVENT's, not the request's,
 	// and must not be mistaken for it.
-	if got := permissionRequestID([]byte(`{"id":"evt_1","data":{"sessionID":"s"}}`)); got != "" {
+	if got := permissionRequestID(contract.Unchecked(`{"id":"evt_1","data":{"sessionID":"s"}}`, "a frame naming no request")); got != "" {
 		t.Errorf("got %q from a frame with no request id; the event's own id was read instead", got)
 	}
 }
@@ -785,27 +789,30 @@ func TestTheRequestIDIsReadUnderItsSpellings(t *testing.T) {
 //
 // @decision(DL-050)
 func TestOnlyAShutdownFromTheSandboxIsARetry(t *testing.T) {
-	interrupted := func(source store.EventSource, raw string) []store.Event {
-		return []store.Event{{Source: source, Name: "session.execution.interrupted", Raw: []byte(raw)}}
+	interrupted := func(source store.EventSource, raw []byte) []store.Event {
+		return []store.Event{{Source: source, Name: "session.execution.interrupted", Raw: raw}}
+	}
+	reason := func(r string) []byte {
+		return contract.Event(t, "session.execution.interrupted", 5, `{"sessionID":"ses_1","reason":"`+r+`"}`)
 	}
 	cases := map[string]struct {
 		events []store.Event
 		want   bool
 	}{
 		"a shutdown": {
-			interrupted(store.SourceOpenCode, `{"data":{"reason":"shutdown"}}`), true,
+			interrupted(store.SourceOpenCode, reason("shutdown")), true,
 		},
 		"another reason": {
-			interrupted(store.SourceOpenCode, `{"data":{"reason":"aborted"}}`), false,
+			interrupted(store.SourceOpenCode, reason("superseded")), false,
 		},
 		"no reason": {
-			interrupted(store.SourceOpenCode, `{"data":{}}`), false,
+			interrupted(store.SourceOpenCode, contract.Unchecked(`{"data":{}}`, "an interrupt with no reason")), false,
 		},
 		"an unreadable frame": {
-			interrupted(store.SourceOpenCode, `<html>`), false,
+			interrupted(store.SourceOpenCode, contract.Unchecked(`<html>`, "not JSON")), false,
 		},
 		"a spov marker claiming a shutdown": {
-			interrupted(store.SourceSpov, `{"data":{"reason":"shutdown"}}`), false,
+			interrupted(store.SourceSpov, reason("shutdown")), false,
 		},
 	}
 	for name, tc := range cases {
@@ -1230,12 +1237,13 @@ func TestTheVerdictHoldsABoundedSizeOfARun(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Far fewer events than the count bound, each a kilobyte.
-	pad := []byte(`{"pad":"` + strings.Repeat("x", 1000) + `"}`)
+	pad := contract.Event(t, "session.text.ended", 1,
+		`{"sessionID":"ses_fat","assistantMessageID":"msg_1","ordinal":0,"text":"`+strings.Repeat("x", 1000)+`"}`)
 	for i := range 40 {
 		if _, err := st.Conversations().PutEvents(ctx, []store.Event{{
 			ID: store.NewID(time.Now()), OrgID: job.OrgID, SessionID: job.SessionID,
 			ConversationID: conv.ID, Source: store.SourceOpenCode,
-			Seq: int64(i + 1), Name: "session.next.tool", At: time.Now(), Raw: pad,
+			Seq: int64(i + 1), Name: "session.text.ended", At: time.Now(), Raw: pad,
 		}}); err != nil {
 			t.Fatal(err)
 		}
@@ -1715,7 +1723,7 @@ func TestAnUnansweredPermissionStillParksTheJob(t *testing.T) {
 	job := store.Job{ID: "j", OrgID: "o", Kind: store.JobKindReport}
 	events := []store.Event{
 		{Source: store.SourceOpenCode, Name: eventPermissionAsked,
-			Raw: []byte(`{"data":{"requestID":"req_1"}}`)},
+			Raw: contract.Event(t, eventPermissionAsked, 0, `{"id":"per_1","sessionID":"ses_1","action":"read","resources":[]}`)},
 	}
 	messages := []store.Message{toolMessage(partRan, partRan)}
 
@@ -1787,10 +1795,10 @@ func TestAgentTextCannotAddAGate(t *testing.T) {
 func TestAProposedCheckStopsDecidingOnceAPersonWrote(t *testing.T) {
 	failed := evidenceEvent(checkLine(map[string]any{"exit": 1, "output": "4 lines expected"}))
 	person := store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued,
-		Raw: []byte(`{"type":"session.inbox.enqueued","data":{"item":{"type":"user","payload":{"text":"add the date",` +
-			`"metadata":{"spov":{"after":"continue"}}},"delivery":"steer"}}}`)}
+		Raw: contract.Event(t, EventInboxEnqueued, 3, `{"sessionID":"ses_1","inboxID":"msg_p","item":{"type":"user","payload":{"text":"add the date",`+
+			`"metadata":{"spov":{"after":"continue"}}},"delivery":"steer"}}`)}
 	loop := store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued,
-		Raw: []byte(`{"type":"session.inbox.enqueued","data":{"item":{"type":"synthetic","payload":{"text":"continue"},"delivery":"queue"}}}`)}
+		Raw: contract.Event(t, EventInboxEnqueued, 4, `{"sessionID":"ses_1","inboxID":"msg_l","item":{"type":"synthetic","payload":{"text":"continue"},"delivery":"queue"}}`)}
 	ran := []store.Message{toolMessage(partRan)}
 
 	proposed := checkedJob()
@@ -1820,9 +1828,9 @@ func TestAProposedCheckStopsDecidingOnceAPersonWrote(t *testing.T) {
 // @decision(DL-144) @decision(DL-050) @decision(DL-052)
 func TestASubagentsReportIsNotAPersonWriting(t *testing.T) {
 	report := store.Event{Source: store.SourceOpenCode, Name: EventInboxEnqueued,
-		Raw: []byte(`{"type":"session.inbox.enqueued","data":{"sessionID":"ses_p","inboxID":"msg_r","item":{"type":"synthetic",` +
-			`"payload":{"text":"<subagent sessionID=\"ses_c\" state=\"completed\">final</subagent>","description":"probe child",` +
-			`"metadata":{"source":"subagent","childID":"ses_c","agent":"General","state":"completed"}},"delivery":"steer"}}}`)}
+		Raw: contract.Event(t, EventInboxEnqueued, 6, `{"sessionID":"ses_p","inboxID":"msg_r","item":{"type":"synthetic",`+
+			`"payload":{"text":"<subagent sessionID=\"ses_c\" state=\"completed\">final</subagent>","description":"probe child",`+
+			`"metadata":{"source":"subagent","childID":"ses_c","agent":"General","state":"completed"}},"delivery":"steer"}}`)}
 	if personWrote([]store.Event{report}) {
 		t.Error("a subagent's report counted as a person writing")
 	}

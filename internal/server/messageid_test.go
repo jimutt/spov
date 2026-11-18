@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/jobs"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -70,22 +71,19 @@ func TestTheLogCarriesTheEnqueuedMessageId(t *testing.T) {
 // @decision(DL-019)
 func TestOnlyAnInboxEventNamesAMessage(t *testing.T) {
 	for _, raw := range []string{"", "not json at all", `{"data":{}}`, `{"id":"evt_1","data":{}}`} {
-		if got := storedMessage(store.Event{Name: jobs.EventInboxEnqueued, Raw: []byte(raw)}); got != "" {
+		ev := store.Event{Name: jobs.EventInboxEnqueued, Raw: contract.Unchecked(raw, "an enqueue with no inboxID to read")}
+		if got := storedMessage(ev); got != "" {
 			t.Errorf("storedMessage(%q) = %q, want empty", raw, got)
 		}
 	}
 
-	const stepStarted = `{"id":"evt_000000000003SyntheticId003","created":1788265407953,` +
-		`"type":"session.step.started","location":{"directory":"/workspace/spov"},` +
-		`"data":{"sessionID":"ses_000000000020SyntheticId020","agent":"build",` +
-		`"assistantMessageID":"msg_000000000001SyntheticId001","snapshot":"0badc0de"},` +
-		`"durable":{"aggregateID":"ses_000000000020SyntheticId020","seq":46,"version":1}}`
-	if got := storedMessage(store.Event{Name: "session.step.started", Raw: []byte(stepStarted)}); got != "" {
+	const stepStarted = capturedRootStepStarted
+	if got := storedMessage(store.Event{Name: "session.step.started", Raw: contract.Frame(t, stepStarted)}); got != "" {
 		t.Errorf("storedMessage named a message on a step event: %q", got)
 	}
 	// And the guard is the NAME, not the absence of the field: a frame
 	// carrying an inboxID under another name is still not read.
-	if got := storedMessage(store.Event{Name: "session.text.ended", Raw: []byte(realInboxFrame)}); got != "" {
+	if got := storedMessage(store.Event{Name: "session.text.ended", Raw: contract.Frame(t, realInboxFrame)}); got != "" {
 		t.Errorf("storedMessage parsed a non-inbox event: %q", got)
 	}
 }
@@ -107,7 +105,8 @@ func TestTheMessageIdIsReadFromInboxIDAndNothingElse(t *testing.T) {
 			`"source":{"type":"tool","messageID":"msg_toolcall","id":"call_1"}}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := storedMessage(store.Event{Name: jobs.EventInboxEnqueued, Raw: []byte(tc.raw)}); got != "" {
+			raw := contract.Unchecked(tc.raw, "an enqueue whose message id is under another field's name, which no build sends")
+			if got := storedMessage(store.Event{Name: jobs.EventInboxEnqueued, Raw: raw}); got != "" {
 				t.Errorf("message = %q, want empty: that id names another message entirely,"+
 					" so a client reconciling on it merges the reader's own message into"+
 					" one they never sent", got)

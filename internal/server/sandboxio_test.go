@@ -88,7 +88,7 @@ func TestDialingTheSandboxEventStream(t *testing.T) {
 			t.Errorf("Accept = %q", r.Header.Get("Accept"))
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, frame(durableFrame))
+		fmt.Fprint(w, frame(t, durableFrame))
 	})))
 	defer srv.Close()
 
@@ -170,10 +170,11 @@ func TestDialingGivesUpOnASandboxThatNeverAnswers(t *testing.T) {
 // @decision(DL-018) @decision(DL-017)
 func TestTheFrameReaderParsesARealisticStream(t *testing.T) {
 	stream := ":keepalive\n\n" +
-		"event: message\ndata: {\"event\":\"session.text.ended\",\n" +
-		"data: \"durability\":\"durable\",\"sessionID\":\"ses_1\",\"text\":\"multi\"}\n\n" +
-		frame(`{"event":"session.status","durability":"ephemeral","sessionID":"ses_1"}`) +
-		frame(durableFrame)
+		"event: message\ndata: {\"id\":\"evt_m\",\"created\":1788265407950,\"type\":\"session.text.ended\",\n" +
+		"data: \"data\":{\"sessionID\":\"ses_1\",\"assistantMessageID\":\"msg_1\",\"ordinal\":0,\"text\":\"multi\"}," +
+		"\"durable\":{\"aggregateID\":\"ses_1\",\"seq\":1,\"version\":1}}\n\n" +
+		frame(t, `{"id":"evt_s","created":1788265407955,"type":"session.status","data":{"sessionID":"ses_1","status":{"type":"busy"}}}`) +
+		frame(t, durableFrame)
 
 	var texts []string
 	err := readSSEFrames(context.Background(), strings.NewReader(stream), func(raw string) bool {
@@ -195,7 +196,7 @@ func TestTheFrameReaderParsesARealisticStream(t *testing.T) {
 //
 // @decision(DL-018)
 func TestTheFrameReaderStopsAndIsBounded(t *testing.T) {
-	stream := frame(`{"n":1}`) + frame(`{"n":2}`)
+	stream := string(contract.Unchecked("data: {\"n\":1}\n\ndata: {\"n\":2}\n\n", "the SSE layer alone, whose frames need be no event's"))
 	seen := 0
 	if err := readSSEFrames(context.Background(), strings.NewReader(stream), func(string) bool {
 		seen++

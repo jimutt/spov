@@ -71,10 +71,10 @@ func TestScenario1(t *testing.T) {
 		counted += d
 	}
 	item := func(inbox, after string, delivered bool) {
-		s.frame(j, store.SourceOpenCode, `{"type":"session.inbox.enqueued","data":{"inboxID":"`+inbox+`","item":{"type":"user",`+
-			`"payload":{"text":"a correction","metadata":{"spov":{"after":"`+after+`"}}},"delivery":"steer"}}}`)
+		s.frame(j, store.SourceOpenCode, "session.inbox.enqueued", `{"inboxID":"`+inbox+`","item":{"type":"user",`+
+			`"payload":{"text":"a correction","metadata":{"spov":{"after":"`+after+`"}}},"delivery":"steer"}}`)
 		if delivered {
-			s.frame(j, store.SourceOpenCode, `{"type":"session.inbox.delivered","data":{"inboxID":"`+inbox+`"}}`)
+			s.frame(j, store.SourceOpenCode, "session.inbox.delivered", `{"inboxID":"`+inbox+`"}`)
 		}
 	}
 
@@ -97,7 +97,7 @@ func TestScenario1(t *testing.T) {
 
 	step("1.2 a correction sent to continue is read without pausing the job", func(t *testing.T) {
 		run(5 * time.Minute)
-		item("inb_fix", "continue", true)
+		item("msg_fix", "continue", true)
 		if got := s.pass(id); got.State != store.JobRunning {
 			t.Fatalf("state %s, want running", got.State)
 		}
@@ -108,7 +108,7 @@ func TestScenario1(t *testing.T) {
 	})
 
 	step("1.3 three takeovers and resumes never add time", func(t *testing.T) {
-		for i, inbox := range []string{"inb_take1", "inb_take2", "inb_take3"} {
+		for i, inbox := range []string{"msg_take1", "msg_take2", "msg_take3"} {
 			item(inbox, "handover", true)
 			if got := s.pass(id); got.State != store.JobSteered {
 				t.Fatalf("takeover %d: state %s, want steered", i+1, got.State)
@@ -132,12 +132,12 @@ func TestScenario1(t *testing.T) {
 		// The agent tries to complete with the message still waiting:
 		// the plugin records the attempt as deferred and announces
 		// nothing, so the job runs on.
-		item("inb_late", "continue", false)
+		item("msg_late", "continue", false)
 		if got := s.pass(id); got.State != store.JobRunning {
 			t.Fatalf("state %s, want running", got.State)
 		}
 		run(2 * time.Minute)
-		s.frame(j, store.SourceOpenCode, `{"type":"session.inbox.delivered","data":{"inboxID":"inb_late"}}`)
+		s.frame(j, store.SourceOpenCode, "session.inbox.delivered", `{"inboxID":"msg_late"}`)
 		if got := s.pass(id); got.State != store.JobRunning {
 			t.Fatalf("after the correction was read: state %s, want running", got.State)
 		}
@@ -240,8 +240,8 @@ func TestScenario1(t *testing.T) {
 		s.worked(pj)
 		if person {
 			s.clock.advance(time.Minute)
-			s.frame(pj, store.SourceOpenCode, `{"type":"session.inbox.enqueued","data":{"inboxID":"inb_drop","item":{"type":"user",`+
-				`"payload":{"text":"drop the second one","metadata":{"spov":{"after":"continue"}}},"delivery":"steer"}}}`)
+			s.frame(pj, store.SourceOpenCode, "session.inbox.enqueued", `{"inboxID":"msg_drop","item":{"type":"user",`+
+				`"payload":{"text":"drop the second one","metadata":{"spov":{"after":"continue"}}},"delivery":"steer"}}`)
 		}
 		oc.evidence(append(lines, `{"event":"completion.declared","summary":"done"}`)...)
 		s.stopped(pj)

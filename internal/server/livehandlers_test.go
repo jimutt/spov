@@ -13,6 +13,7 @@ import (
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/jobs"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/store"
 )
@@ -675,8 +676,8 @@ func TestTheLogSaysWhoSpoke(t *testing.T) {
 		item string
 		want string
 	}{
-		{"a person typing", `{"type":"user","payload":{"text":"reply with ok"}}`, "user"},
-		{"one of spov's own", `{"type":"synthetic","payload":{"text":"SPOV_LOOP_STOPPED {}"}}`, "synthetic"},
+		{"a person typing", `{"type":"user","payload":{"text":"reply with ok"},"delivery":"steer"}`, "user"},
+		{"one of spov's own", `{"type":"synthetic","payload":{"text":"SPOV_LOOP_STOPPED {}"},"delivery":"queue"}`, "synthetic"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newAPIFixture(t)
@@ -684,13 +685,11 @@ func TestTheLogSaysWhoSpoke(t *testing.T) {
 			f.srv.heartbeat = time.Hour
 			sess := seedSession(t, f, "01ARZ3NDEKTSV4RRFFQ69G5FAV", "mine", store.StateRunning)
 			conv := seedConversation(t, f, sess, "ses_1", "one")
-			raw := `{"id":"evt_1","created":1,"type":"session.inbox.enqueued",` +
-				`"data":{"sessionID":"ses_1","item":` + tc.item + `},` +
-				`"durable":{"aggregateID":"ses_1","seq":1,"version":1}}`
+			raw := contract.Event(t, jobs.EventInboxEnqueued, 1, `{"sessionID":"ses_1","inboxID":"msg_1","item":`+tc.item+`}`)
 			seedEvent(t, f, store.Event{
 				OrgID: sess.OrgID, SessionID: sess.ID, ConversationID: conv.ID,
 				Source: store.SourceOpenCode, Seq: 1, Name: jobs.EventInboxEnqueued,
-				Text: "x", At: recordedAt, Raw: []byte(raw),
+				Text: "x", At: recordedAt, Raw: raw,
 			})
 
 			var seen int
@@ -718,7 +717,7 @@ func TestTheLogSaysWhoSpoke(t *testing.T) {
 // @decision(DL-058)
 func TestAnUnreadableFrameCarriesNoRole(t *testing.T) {
 	for _, raw := range []string{"", "not json at all", `{"data":{}}`} {
-		got := storedRole(store.Event{Name: jobs.EventInboxEnqueued, Raw: []byte(raw)})
+		got := storedRole(store.Event{Name: jobs.EventInboxEnqueued, Raw: contract.Unchecked(raw, "an enqueue with no item to read")})
 		if got != "" {
 			t.Errorf("storedRole(%q) = %q, want empty", raw, got)
 		}
@@ -726,58 +725,64 @@ func TestAnUnreadableFrameCarriesNoRole(t *testing.T) {
 	// And a name that is not the inbox is never parsed: it is the one
 	// name where the client's fallback is wrong, and every other would
 	// cost an unmarshal per row per watcher to learn nothing.
-	full := `{"data":{"item":{"type":"synthetic"}}}`
-	if got := storedRole(store.Event{Name: "session.text.ended", Raw: []byte(full)}); got != "" {
+	full := contract.Unchecked(`{"type":"session.text.ended","data":{"item":{"type":"synthetic"}}}`,
+		"a text.ended carrying an inbox item, which only an enqueue has")
+	if got := storedRole(store.Event{Name: "session.text.ended", Raw: full}); got != "" {
 		t.Errorf("storedRole parsed a non-inbox event: %q", got)
 	}
 }
 
 // A tool event names its call, and the input.started event its tool, so
-// the page can join a call's events into one line. The frames are the
-// measured shapes from a real job on OpenCode 2.0.22.
+// the page can join a call's events into one line. The frames are in the
+// shapes OpenCode 2.3.0 sends.
 //
-// @decision(DL-058)
+// @decision(DL-058) @decision(DL-145)
 func TestAToolEventNamesItsCall(t *testing.T) {
 	const output = `"content":[{"type":"text","text":"total 15\n-rw-r--r-- 1 root root 3598 .envrc\n"}],` +
-		`"metadata":{"status":"completed","truncated":false,"exit":0}`
+		`"metadata":{"status":"completed","truncated":false,"exit":0},"executed":false`
 	for _, tc := range []struct {
-		name, event, raw string
-		source           store.EventSource
-		call, tool       string
+		name, event string
+		raw         []byte
+		source      store.EventSource
+		call, tool  string
 	}{
 		{"input started", "session.tool.input.started",
-			`{"id":"evt_1","type":"session.tool.input.started","location":{"directory":"/workspace"},` +
-				`"data":{"sessionID":"ses_1","assistantMessageID":"msg_1","id":"call_a","name":"shell"},` +
-				`"durable":{"aggregateID":"ses_1","seq":7,"version":1}}`,
+			contract.Frame(t, `{"id":"evt_1","created":1794958241160,"type":"session.tool.input.started","location":{"directory":"/workspace"},`+
+				`"data":{"sessionID":"ses_1","assistantMessageID":"msg_1","id":"call_a","name":"shell"},`+
+				`"durable":{"aggregateID":"ses_1","seq":7,"version":1}}`),
 			store.SourceOpenCode, "call_a", "shell"},
 		{"input ended", "session.tool.input.ended",
-			`{"id":"evt_2","type":"session.tool.input.ended","data":{"sessionID":"ses_1","id":"call_a",` +
-				`"text":"{\"command\":\"ls\"}"}}`,
+			contract.Event(t, "session.tool.input.ended", 8, `{"sessionID":"ses_1","assistantMessageID":"msg_1","id":"call_a",`+
+				`"text":"{\"command\":\"ls\"}"}`),
 			store.SourceOpenCode, "call_a", ""},
 		{"success, id before a large output", "session.tool.success",
-			`{"id":"evt_3","type":"session.tool.success","data":{"sessionID":"ses_1","id":"call_a",` + output + `}}`,
+			contract.Event(t, "session.tool.success", 9, `{"sessionID":"ses_1","assistantMessageID":"msg_1","id":"call_a",`+output+`}`),
 			store.SourceOpenCode, "call_a", ""},
 		{"success, id after its output", "session.tool.success",
-			`{"id":"evt_3","type":"session.tool.success","data":{` + output + `,"id":"call_a"}}`,
+			contract.Event(t, "session.tool.success", 9, `{"sessionID":"ses_1","assistantMessageID":"msg_1",`+output+`,"id":"call_a"}`),
 			store.SourceOpenCode, "call_a", ""},
 		{"a name on any other tool event is not the tool", "session.tool.called",
-			`{"id":"evt_4","data":{"id":"call_a","name":"not-a-tool"}}`,
+			contract.Unchecked(`{"id":"evt_4","type":"session.tool.called","data":{"id":"call_a","name":"not-a-tool"}}`,
+				"a tool.called carrying a name, which only input.started has"),
 			store.SourceOpenCode, "call_a", ""},
 		{"the frame's own id is not the call", "session.tool.called",
-			`{"id":"evt_5","data":{"sessionID":"ses_1"}}`,
+			contract.Unchecked(`{"id":"evt_5","type":"session.tool.called","data":{"sessionID":"ses_1"}}`,
+				"a tool.called with no call id, so only the frame's own id is there to misread"),
 			store.SourceOpenCode, "", ""},
 		{"not a tool event", "session.text.ended",
-			`{"id":"evt_6","data":{"id":"call_a","name":"shell"}}`,
+			contract.Unchecked(`{"id":"evt_6","type":"session.text.ended","data":{"id":"call_a","name":"shell"}}`,
+				"a text.ended carrying a call id and a tool name, which no text event has"),
 			store.SourceOpenCode, "", ""},
 		{"spov's own row is never parsed", "session.tool.called",
-			`{"data":{"id":"call_a"}}`,
+			contract.Unchecked(`{"data":{"id":"call_a"}}`, "spov's own row under an OpenCode name"),
 			store.SourceSpov, "", ""},
-		{"unreadable", "session.tool.success", `{"data":{"id":`, store.SourceOpenCode, "", ""},
-		{"not an object", "session.tool.success", `[1,2]`, store.SourceOpenCode, "", ""},
-		{"a data that is not an object", "session.tool.success", `{"data":"call_a"}`, store.SourceOpenCode, "", ""},
+		{"unreadable", "session.tool.success", contract.Unchecked(`{"data":{"id":`, "cut off"), store.SourceOpenCode, "", ""},
+		{"not an object", "session.tool.success", contract.Unchecked(`[1,2]`, "an array"), store.SourceOpenCode, "", ""},
+		{"a data that is not an object", "session.tool.success",
+			contract.Unchecked(`{"data":"call_a"}`, "a data that is a string"), store.SourceOpenCode, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			call, tool := storedToolCall(store.Event{Name: tc.event, Source: tc.source, Raw: []byte(tc.raw)})
+			call, tool := storedToolCall(store.Event{Name: tc.event, Source: tc.source, Raw: tc.raw})
 			if call != tc.call || tool != tc.tool {
 				t.Errorf("storedToolCall = %q, %q; want %q, %q", call, tool, tc.call, tc.tool)
 			}
@@ -788,37 +793,66 @@ func TestAToolEventNamesItsCall(t *testing.T) {
 // A subagent call's result names the session it started, from its
 // metadata, wherever the output sits and however large it is.
 //
-// @decision(DL-112)
+// @decision(DL-112) @decision(DL-145)
 func TestAToolResultNamesTheSessionItStarted(t *testing.T) {
 	big := strings.Repeat(`{"metadata":"not this one"} `, 4000)
+	success := func(data string) []byte { return contract.Event(t, "session.tool.success", 3, data) }
+	const head = `"sessionID":"ses_p","assistantMessageID":"msg_1","id":"call_a","executed":false,`
 	for _, tc := range []struct {
-		name, event, raw string
-		source           store.EventSource
-		want             string
+		name, event string
+		raw         []byte
+		source      store.EventSource
+		want        string
 	}{
 		{"a finished call", "session.tool.success",
-			`{"data":{"sessionID":"ses_p","id":"call_a","content":[{"type":"text","text":"<subagent sessionID=\"ses_c\">x</subagent>"}],` +
-				`"metadata":{"sessionID":"ses_c","status":"completed"},"executed":false}}`,
+			success(`{` + head + `"content":[{"type":"text","text":"<subagent sessionID=\"ses_c\">x</subagent>"}],` +
+				`"metadata":{"sessionID":"ses_c","status":"completed"}}`),
 			store.SourceOpenCode, "ses_c"},
 		{"a background call, still running", "session.tool.success",
-			`{"data":{"id":"call_a","content":[],"metadata":{"status":"running","sessionID":"ses_c"}}}`,
+			success(`{` + head + `"content":[{"type":"text","text":"working"}],"metadata":{"status":"running","sessionID":"ses_c"}}`),
+			store.SourceOpenCode, "ses_c"},
+		{"a background call's progress", "session.tool.progress",
+			contract.Event(t, "session.tool.progress", 0, `{"sessionID":"ses_p","assistantMessageID":"msg_1","id":"call_a",`+
+				`"metadata":{"sessionID":"ses_c","status":"running"}}`),
 			store.SourceOpenCode, "ses_c"},
 		{"whitespace around the key", "session.tool.success",
-			`{"data": {"id": "call_a", "metadata" : { "sessionID" : "ses_c" }}}`, store.SourceOpenCode, "ses_c"},
+			success(`{` + head + `"content":[{"type":"text","text":"x"}], "metadata" : { "sessionID" : "ses_c" }}`), store.SourceOpenCode, "ses_c"},
 		{"a large output ahead of it", "session.tool.success",
-			`{"data":{"id":"call_a","content":[{"type":"text","text":"` + strings.ReplaceAll(big, `"`, `\"`) + `"}],"metadata":{"sessionID":"ses_c"}}}`,
+			success(`{` + head + `"content":[{"type":"text","text":"` + strings.ReplaceAll(big, `"`, `\"`) + `"}],"metadata":{"sessionID":"ses_c"}}`),
+			store.SourceOpenCode, "ses_c"},
+		{"an envelope metadata after the data", "session.tool.success",
+			contract.Frame(t, `{"id":"evt_9","created":1794958241180,"type":"session.tool.success",`+
+				`"data":{`+head+`"content":[{"type":"text","text":"x"}],"metadata":{"sessionID":"ses_c","status":"running"}},`+
+				`"durable":{"aggregateID":"ses_p","seq":14,"version":2},"metadata":{"sessionID":"ses_envelope"}}`),
+			store.SourceOpenCode, "ses_c"},
+		{"an envelope metadata after a data that names no child", "session.tool.success",
+			contract.Frame(t, `{"id":"evt_9","created":1794958241180,"type":"session.tool.success",`+
+				`"data":{`+head+`"content":[{"type":"text","text":"x"}]},`+
+				`"durable":{"aggregateID":"ses_p","seq":14,"version":2},"metadata":{"sessionID":"ses_envelope"}}`),
+			store.SourceOpenCode, ""},
+		{"an envelope metadata holding a metadata of its own", "session.tool.success",
+			contract.Frame(t, `{"id":"evt_9","created":1794958241180,"type":"session.tool.success",`+
+				`"data":{`+head+`"content":[{"type":"text","text":"x"}],"metadata":{"sessionID":"ses_c"}},`+
+				`"durable":{"aggregateID":"ses_p","seq":14,"version":2},"metadata":{"metadata":{"sessionID":"ses_inner"}}}`),
+			store.SourceOpenCode, "ses_c"},
+		{"brackets and quotes inside the metadata's strings", "session.tool.success",
+			success(`{` + head + `"content":[{"type":"text","text":"x"}],"metadata":{"note":"a } \" ] {","sessionID":"ses_c"}}`),
 			store.SourceOpenCode, "ses_c"},
 		{"a tool with other metadata", "session.tool.success",
-			`{"data":{"id":"call_a","metadata":{"count":1,"truncated":false}}}`, store.SourceOpenCode, ""},
-		{"no metadata", "session.tool.success", `{"data":{"id":"call_a"}}`, store.SourceOpenCode, ""},
-		{"metadata that is not an object", "session.tool.success", `{"data":{"metadata":"ses_c"}}`, store.SourceOpenCode, ""},
-		{"a session id that is not text", "session.tool.success", `{"data":{"metadata":{"sessionID":7}}}`, store.SourceOpenCode, ""},
-		{"unreadable", "session.tool.success", `{"data":{"metadata":{"sessionID":`, store.SourceOpenCode, ""},
-		{"not a tool event", "session.text.ended", `{"data":{"metadata":{"sessionID":"ses_c"}}}`, store.SourceOpenCode, ""},
-		{"spov's own row", "session.tool.success", `{"data":{"metadata":{"sessionID":"ses_c"}}}`, store.SourceSpov, ""},
+			success(`{` + head + `"content":[{"type":"text","text":"x"}],"metadata":{"count":1,"truncated":false}}`), store.SourceOpenCode, ""},
+		{"no metadata", "session.tool.success", success(`{` + head + `"content":[{"type":"text","text":"x"}]}`), store.SourceOpenCode, ""},
+		{"metadata that is not an object", "session.tool.success",
+			contract.Unchecked(`{"data":{"metadata":"ses_c"}}`, "a metadata that is a string"), store.SourceOpenCode, ""},
+		{"a session id that is not text", "session.tool.success",
+			success(`{` + head + `"content":[{"type":"text","text":"x"}],"metadata":{"sessionID":7}}`), store.SourceOpenCode, ""},
+		{"unreadable", "session.tool.success", contract.Unchecked(`{"data":{"metadata":{"sessionID":`, "cut off"), store.SourceOpenCode, ""},
+		{"not a tool event", "session.text.ended",
+			contract.Unchecked(`{"data":{"metadata":{"sessionID":"ses_c"}}}`, "a text.ended carrying a tool's metadata"), store.SourceOpenCode, ""},
+		{"spov's own row", "session.tool.success",
+			contract.Unchecked(`{"data":{"metadata":{"sessionID":"ses_c"}}}`, "spov's own row under an OpenCode name"), store.SourceSpov, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := storedChild(store.Event{Name: tc.event, Source: tc.source, Raw: []byte(tc.raw)})
+			got := storedChild(store.Event{Name: tc.event, Source: tc.source, Raw: tc.raw})
 			if got != tc.want {
 				t.Errorf("storedChild = %q, want %q", got, tc.want)
 			}
@@ -838,8 +872,7 @@ func TestTheLogCarriesTheToolCall(t *testing.T) {
 	seedEvent(t, f, store.Event{
 		OrgID: sess.OrgID, SessionID: sess.ID, ConversationID: conv.ID,
 		Source: store.SourceOpenCode, Seq: 1, Name: "session.tool.input.started", At: recordedAt,
-		Raw: []byte(`{"type":"session.tool.input.started","data":{"sessionID":"ses_1","id":"call_a","name":"read"},` +
-			`"durable":{"aggregateID":"ses_1","seq":1,"version":1}}`),
+		Raw: contract.Event(t, "session.tool.input.started", 1, `{"sessionID":"ses_1","assistantMessageID":"msg_1","id":"call_a","name":"read"}`),
 	})
 	for _, ev := range runLog(t, f, &logInput{Ref: "mine"}) {
 		if l, ok := ev.(LogEvent); ok && l.Name == "session.tool.input.started" {
@@ -864,9 +897,8 @@ func TestTheLogCarriesTheChildACallStarted(t *testing.T) {
 	seedEvent(t, f, store.Event{
 		OrgID: sess.OrgID, SessionID: sess.ID, ConversationID: conv.ID,
 		Source: store.SourceOpenCode, Seq: 1, Name: "session.tool.success", At: recordedAt,
-		Raw: []byte(`{"type":"session.tool.success","data":{"sessionID":"ses_1","id":"call_a",` +
-			`"content":[{"type":"text","text":"done"}],"metadata":{"sessionID":"ses_2","status":"completed"}},` +
-			`"durable":{"aggregateID":"ses_1","seq":1,"version":1}}`),
+		Raw: contract.Event(t, "session.tool.success", 1, `{"sessionID":"ses_1","assistantMessageID":"msg_1","id":"call_a","executed":false,`+
+			`"content":[{"type":"text","text":"done"}],"metadata":{"sessionID":"ses_2","status":"completed"}}`),
 	})
 	for _, ev := range runLog(t, f, &logInput{Ref: "mine"}) {
 		if l, ok := ev.(LogEvent); ok && l.Name == "session.tool.success" {

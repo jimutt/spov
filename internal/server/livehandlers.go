@@ -488,20 +488,39 @@ var metadataKey = []byte(`"metadata"`)
 // success names its child there, whether the call is done or a
 // background one is still running). The metadata follows the output in
 // the frame, so it is found from the end of the raw bytes and only it is
-// decoded; a large output is never walked. An OpenCode tool event only.
-// A frame that does not read this way names no child, and the page then
-// places the call by its span.
+// decoded; a large output is never walked. Only a `metadata` directly in
+// a top-level object counts, and not one inside the envelope's own
+// `metadata`. An OpenCode tool event only. A frame that does not read
+// this way names no child, and the page then places the call by its span.
 //
-// @decision(DL-112) @decision(DL-110)
+// @decision(DL-112) @decision(DL-110) @decision(DL-145)
 func storedChild(ev store.Event) string {
 	if ev.Source != store.SourceOpenCode || !strings.HasPrefix(ev.Name, toolEventPrefix) {
 		return ""
 	}
-	i := bytes.LastIndex(ev.Raw, metadataKey)
-	if i < 0 {
-		return ""
+	raw := ev.Raw
+	for end := len(raw); ; {
+		i := bytes.LastIndex(raw[:end], metadataKey)
+		if i < 0 {
+			return ""
+		}
+		end = i
+		if closersAfter(raw[i+len(metadataKey):]) != 2 {
+			continue
+		}
+		// The nearest key before it is the envelope's own metadata when
+		// its value holds this one.
+		if j := bytes.LastIndex(raw[:i], metadataKey); j >= 0 && holdsDirectly(raw[j+len(metadataKey):i]) {
+			end = j
+			continue
+		}
+		return childAt(raw[i+len(metadataKey):])
 	}
-	rest := bytes.TrimLeft(ev.Raw[i+len(metadataKey):], " \t\r\n")
+}
+
+// childAt reads `sessionID` from the object after a metadata key.
+func childAt(rest []byte) string {
+	rest = bytes.TrimLeft(rest, " \t\r\n")
 	if len(rest) == 0 || rest[0] != ':' {
 		return ""
 	}
@@ -527,6 +546,71 @@ func storedChild(ev store.Event) string {
 		return id
 	}
 	return ""
+}
+
+// closersAfter counts the objects and arrays that close in b without
+// opening in it, outside strings: 2 after a key of a top-level object's
+// member, 1 after a top-level key. It stops counting at 3.
+func closersAfter(b []byte) int {
+	depth, closers := 0, 0
+	for k := 0; k < len(b); k++ {
+		switch b[k] {
+		case '"':
+			k = stringEnd(b, k)
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth > 0 {
+				depth--
+				continue
+			}
+			if closers++; closers > 2 {
+				return closers
+			}
+		}
+	}
+	return closers
+}
+
+// holdsDirectly reports whether b, which follows a key, is the start of
+// an object value that is still open, one level deep, where b ends.
+func holdsDirectly(b []byte) bool {
+	b = bytes.TrimLeft(b, " \t\r\n")
+	if len(b) == 0 || b[0] != ':' {
+		return false
+	}
+	b = bytes.TrimLeft(b[1:], " \t\r\n")
+	if len(b) == 0 || b[0] != '{' {
+		return false
+	}
+	depth := 1
+	for k := 1; k < len(b); k++ {
+		switch b[k] {
+		case '"':
+			k = stringEnd(b, k)
+		case '{', '[':
+			depth++
+		case '}', ']':
+			if depth--; depth == 0 {
+				return false
+			}
+		}
+	}
+	return depth == 1
+}
+
+// stringEnd is the index of the quote closing the string that opens at
+// b[open], or len(b) when it does not close.
+func stringEnd(b []byte, open int) int {
+	for k := open + 1; k < len(b); k++ {
+		switch b[k] {
+		case '\\':
+			k++
+		case '"':
+			return k
+		}
+	}
+	return len(b)
 }
 
 // openObject consumes a `{` and reports whether that is what came next.

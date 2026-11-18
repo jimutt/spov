@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -46,48 +47,106 @@ func TestTheDocumentIsThePinnedBuilds(t *testing.T) {
 
 // The validator checks the keywords it knows and reads past the ones it
 // ignores. A keyword it has never seen would be read past silently, so
-// a document that uses one fails until the validator learns it.
+// a document that uses one fails until the validator learns it. Every
+// pattern must compile as Go reads it, or it fails on the first request
+// or frame it meets rather than at the bump.
 //
-// @decision(DL-035)
+// @decision(DL-035) @decision(DL-145)
 func TestTheValidatorKnowsEveryKeywordTheDocumentUses(t *testing.T) {
+	unknown, patterns := documentKeywords(t, document)
+	for _, k := range unknown {
+		t.Errorf("the document uses the schema keyword %q, which the validator neither checks nor ignores", k)
+	}
+	for _, p := range patterns {
+		t.Errorf("the document's pattern %s does not compile in Go", p)
+	}
+}
+
+// The keyword sweep itself: an ignored keyword passes, an unknown one
+// is named wherever it sits, a boolean subschema has no keywords, and a
+// pattern Go cannot compile is named, as a value or a property pattern.
+//
+// @decision(DL-145)
+func TestTheKeywordSweepFindsWhatTheValidatorWouldMiss(t *testing.T) {
+	unknown, patterns := documentKeywords(t, []byte(`{
+	  "paths": {"/a": {"post": {
+	    "parameters": [{"schema": {"type": "string", "pattern": "^(?!x)"}}],
+	    "requestBody": {"content": {"application/json": {"schema": {"type": "object", "properties": {"n": {"not": {"oneOf": []}}}}}}}
+	  }}},
+	  "components": {"schemas": {
+	    "A": {"type": "string", "contentMediaType": "application/json", "contentSchema": {"if": {}}},
+	    "B": {"type": "object", "additionalProperties": false, "properties": {"t": true, "f": false},
+	      "patternProperties": {"\\1": {"type": "string"}}},
+	    "C": {"type": "array", "items": {"const": 1}, "prefixItems": [true, {"type": "integer", "multipleOf": 2}]}
+	  }}
+	}`))
+	slices.Sort(unknown)
+	if want := []string{"const", "multipleOf", "oneOf"}; !slices.Equal(unknown, want) {
+		t.Errorf("unknown keywords %q, want %q", unknown, want)
+	}
+	slices.Sort(patterns)
+	if want := []string{`"\\1"`, `"^(?!x)"`}; !slices.Equal(patterns, want) {
+		t.Errorf("uncompilable patterns %s, want %s", patterns, want)
+	}
+}
+
+// documentKeywords walks every schema of a document and returns the
+// keywords the validator neither checks nor ignores, and the patterns
+// Go's regexp cannot compile.
+func documentKeywords(t *testing.T, raw []byte) (unknown, badPatterns []string) {
+	t.Helper()
 	var doc struct {
 		Paths map[string]map[string]struct {
 			Parameters []struct {
-				Schema map[string]any `json:"schema"`
+				Schema any `json:"schema"`
 			} `json:"parameters"`
 			RequestBody *struct {
 				Content map[string]struct {
-					Schema map[string]any `json:"schema"`
+					Schema any `json:"schema"`
 				} `json:"content"`
 			} `json:"requestBody"`
 		} `json:"paths"`
 		Components struct {
-			Schemas map[string]map[string]any `json:"schemas"`
+			Schemas map[string]any `json:"schemas"`
 		} `json:"components"`
 	}
-	if err := json.Unmarshal(document, &doc); err != nil {
+	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	unknown := map[string]bool{}
-	var walk func(s map[string]any)
-	walk = func(s map[string]any) {
-		for k, v := range s {
-			if !slices.Contains(Keywords, k) && !slices.Contains(Ignored, k) {
-				unknown[k] = true
+	seen := map[string]bool{}
+	compiles := func(p string) {
+		if _, err := regexp.Compile(p); err != nil && !seen["pattern:"+p] {
+			seen["pattern:"+p] = true
+			badPatterns = append(badPatterns, fmt.Sprintf("%q", p))
+		}
+	}
+	var walk func(s any)
+	walk = func(s any) {
+		m, ok := s.(map[string]any)
+		if !ok {
+			return
+		}
+		for k, v := range m {
+			if !slices.Contains(Keywords, k) && !slices.Contains(Ignored, k) && !seen[k] {
+				seen[k] = true
+				unknown = append(unknown, k)
 			}
 			switch k {
+			case "pattern":
+				compiles(v.(string))
 			case "properties", "patternProperties":
-				for _, p := range v.(map[string]any) {
-					walk(p.(map[string]any))
+				for name, p := range v.(map[string]any) {
+					if k == "patternProperties" {
+						compiles(name)
+					}
+					walk(p)
 				}
 			case "anyOf", "allOf", "prefixItems":
 				for _, b := range v.([]any) {
-					walk(b.(map[string]any))
+					walk(b)
 				}
-			case "items", "additionalProperties":
-				if m, ok := v.(map[string]any); ok {
-					walk(m)
-				}
+			case "items", "additionalProperties", "not":
+				walk(v)
 			}
 		}
 	}
@@ -106,9 +165,7 @@ func TestTheValidatorKnowsEveryKeywordTheDocumentUses(t *testing.T) {
 			}
 		}
 	}
-	for k := range unknown {
-		t.Errorf("the document uses the schema keyword %q, which the validator neither checks nor ignores", k)
-	}
+	return unknown, badPatterns
 }
 
 func check1(d *Document, method, target, body string) error {
@@ -188,9 +245,16 @@ func TestTheValidatorsRules(t *testing.T) {
 	      "notnull": {"not": {"type": "null"}},
 	      "both": {"allOf": [{"type": "object", "additionalProperties": {"type": "string"}}], "type": "object", "properties": {"n": {"type": "integer"}}},
 	      "byname": {"type": "object", "additionalProperties": false, "properties": {"ses_fixed": {"type": "string"}},
-	        "patternProperties": {"^ses_": {"type": "string", "minLength": 2}, "^id_": {"type": "integer"}}},
+	        "patternProperties": {"^ses_": {"type": "string", "minLength": 2}, "^id_": {"type": "integer"}, "_9$": {"minimum": 5}}},
+	      "loose": {"type": "object", "additionalProperties": false, "patternProperties": {"ses": {"type": "string"}}},
 	      "badname": {"type": "object", "patternProperties": {"(": {}}},
-	      "encoded": {"type": "string", "contentMediaType": "application/json", "contentSchema": {"type": "object"}}
+	      "anything": true,
+	      "never": false,
+	      "empty": {"type": "array", "items": false},
+	      "nothing": {"not": true},
+	      "odd": 3,
+	      "either": {"anyOf": [false, {"type": "string"}]},
+	      "free": {"type": "object", "additionalProperties": true, "patternProperties": {"^n_": false}}
 	    }},
 	    "Loop": {"$ref": "#/components/schemas/Loop"}
 	  }}
@@ -225,8 +289,23 @@ func TestTheValidatorsRules(t *testing.T) {
 		{"/a/1", `{"byname":{"other":1}}`, `unknown field "other"`},
 		{"/a/1", `{"byname":{"ses_fixed":"x"}}`, "shorter than 2"},
 		{"/a/1", `{"byname":{"ses_fixed":1}}`, "byname.ses_fixed: integer is not of type string"},
+		{"/a/1", `{"byname":{"id_9":7}}`, ""},
+		{"/a/1", `{"byname":{"id_9":3}}`, "byname.id_9: 3 is below 5"},
+		{"/a/1", `{"byname":{"id_9":"x"}}`, "byname.id_9: string is not of type integer"},
+		{"/a/1", `{"loose":{"x_ses_y":"a"}}`, ""},
+		{"/a/1", `{"loose":{"x_ses_y":1}}`, "loose.x_ses_y: integer is not of type string"},
+		{"/a/1", `{"loose":{"x_se":"a"}}`, `unknown field "x_se"`},
 		{"/a/1", `{"badname":{"k":1}}`, "pattern"},
-		{"/a/1", `{"encoded":"not json"}`, ""},
+		{"/a/1", `{"anything":{"a":[1]}}`, ""},
+		{"/a/1", `{"never":1}`, "never: 1 is where the schema allows no value"},
+		{"/a/1", `{"empty":[]}`, ""},
+		{"/a/1", `{"empty":[1]}`, "empty[0]"},
+		{"/a/1", `{"nothing":1}`, "must not"},
+		{"/a/1", `{"odd":1}`, "odd: a schema of type float64"},
+		{"/a/1", `{"either":"x"}`, ""},
+		{"/a/1", `{"either":1}`, "body.either: integer is not of type string"},
+		{"/a/1", `{"free":{"k":1}}`, ""},
+		{"/a/1", `{"free":{"n_k":1}}`, "free.n_k: 1 is where"},
 		{"/a/1", `[1]`, "not of type object"},
 		{"/a/1", `{`, "not JSON"},
 		{"/a/1", `{} {}`, "after its JSON value"},

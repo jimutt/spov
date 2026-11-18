@@ -19,7 +19,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -28,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/jobs"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 	"github.com/jimutt/spov/internal/store/postgres"
 )
@@ -196,8 +196,8 @@ func TestIntegrationJobLifecycleWalksTheStateMachine(t *testing.T) {
 		ID: store.NewID(time.Now()), OrgID: f.job.OrgID, SessionID: f.job.SessionID,
 		ConversationID: conv, Source: store.SourceOpenCode, Seq: 1,
 		Name: jobs.EventInboxEnqueued, At: time.Now(),
-		Raw: []byte(`{"type":"session.inbox.enqueued","data":{"item":{"type":"synthetic",` +
-			`"payload":{"text":"SPOV_LOOP_STOPPED {\"reason\":\"limit\"}"},"delivery":"steer"}}}`),
+		Raw: contract.Event(t, jobs.EventInboxEnqueued, 1, `{"sessionID":"ses_1","inboxID":"msg_stop","item":{"type":"synthetic",`+
+			`"payload":{"text":"SPOV_LOOP_STOPPED {\"reason\":\"limit\"}"},"delivery":"steer"}}`),
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -344,25 +344,19 @@ func TestIntegrationJobLifecycleCountsAgainstTheQuotaUntilItEnds(t *testing.T) {
 	}
 }
 
-// putRaw appends one frame to the job's conversation.
-func (f *jobLifecycleFixture) putRaw(t *testing.T, conv string, seq int64, raw string) {
+// putFrame appends one frame of type typ around data to the job's
+// conversation, in the pinned build's shape.
+//
+// @decision(DL-145)
+func (f *jobLifecycleFixture) putFrame(t *testing.T, conv string, seq int64, typ, data string) {
 	t.Helper()
 	if _, err := f.st.Conversations().PutEvents(context.Background(), []store.Event{{
 		ID: store.NewID(time.Now()), OrgID: f.job.OrgID, SessionID: f.job.SessionID,
 		ConversationID: conv, Source: store.SourceOpenCode, Seq: seq,
-		Name: frameType(raw), At: time.Now(), Raw: []byte(raw),
+		Name: typ, At: time.Now(), Raw: contract.Event(t, typ, seq, data),
 	}}); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// frameType is a raw frame's own name, as the recorder stores it.
-func frameType(raw string) string {
-	var frame struct {
-		Type string `json:"type"`
-	}
-	_ = json.Unmarshal([]byte(raw), &frame)
-	return frame.Type
 }
 
 // conversation creates the job's conversation, once.
@@ -381,16 +375,16 @@ func (f *jobLifecycleFixture) conversation(t *testing.T) string {
 // and humanDelivered its delivery, which is where the takeover happens
 // (DL-052).
 func humanItem(id string) string {
-	return `{"type":"session.inbox.enqueued","data":{"inboxID":"` + id + `","item":{"type":"user",` +
-		`"payload":{"text":"hold on, let me look"},"delivery":"steer"}}}`
+	return `{"sessionID":"ses_1","inboxID":"` + id + `","item":{"type":"user",` +
+		`"payload":{"text":"hold on, let me look"},"delivery":"steer"}}`
 }
 
 func humanDelivered(id string) string {
-	return `{"type":"session.inbox.delivered","data":{"inboxID":"` + id + `"}}`
+	return `{"sessionID":"ses_1","inboxID":"` + id + `"}`
 }
 
-const stopFrame = `{"type":"session.inbox.enqueued","data":{"item":{"type":"synthetic",` +
-	`"payload":{"text":"SPOV_LOOP_STOPPED {\"reason\":\"declared\"}"},"delivery":"steer"}}}`
+const stopData = `{"sessionID":"ses_1","inboxID":"msg_stop","item":{"type":"synthetic",` +
+	`"payload":{"text":"SPOV_LOOP_STOPPED {\"reason\":\"declared\"}"},"delivery":"steer"}}`
 
 // A job steered by a human, handed back, and finishing on its own —
 // against the real store, the real transition rules and the real Pos
@@ -413,8 +407,8 @@ func TestIntegrationJobLifecycleSteersResumesAndFinishes(t *testing.T) {
 	f.pass(t) // provisioning -> running
 
 	conv := f.conversation(t)
-	f.putRaw(t, conv, 1, humanItem("msg_first"))
-	f.putRaw(t, conv, 2, humanDelivered("msg_first"))
+	f.putFrame(t, conv, 1, jobs.EventInboxEnqueued, humanItem("msg_first"))
+	f.putFrame(t, conv, 2, jobs.EventInboxDelivered, humanDelivered("msg_first"))
 
 	if got := f.pass(t); got.State != store.JobSteered {
 		t.Fatalf("a human's message left the job %v, want steered", got.State)
@@ -430,8 +424,8 @@ func TestIntegrationJobLifecycleSteersResumesAndFinishes(t *testing.T) {
 	// exists for — the cursor advances only on a pass, so a message
 	// typed just before the resume is still unconsumed when the row
 	// moves.
-	f.putRaw(t, conv, 3, humanItem("msg_second"))
-	f.putRaw(t, conv, 4, humanDelivered("msg_second"))
+	f.putFrame(t, conv, 3, jobs.EventInboxEnqueued, humanItem("msg_second"))
+	f.putFrame(t, conv, 4, jobs.EventInboxDelivered, humanDelivered("msg_second"))
 	if _, err := f.st.Conversations().PutEvents(ctx, []store.Event{{
 		ID: store.NewID(time.Now()), OrgID: f.job.OrgID, SessionID: f.job.SessionID,
 		Source: store.SourceSpov, Name: jobs.MarkerResumed, Text: "resumed by a person", At: time.Now(),
@@ -456,7 +450,7 @@ func TestIntegrationJobLifecycleSteersResumesAndFinishes(t *testing.T) {
 	// And the agent finishes on its own, as it would have if nobody
 	// had taken it over. That is the whole promise: a steered job is
 	// suspended, not ended.
-	f.putRaw(t, conv, 5, stopFrame)
+	f.putFrame(t, conv, 5, jobs.EventInboxEnqueued, stopData)
 	if got := f.pass(t); got.State != store.JobDelivering {
 		t.Fatalf("the resumed job did not finish: state = %v, want delivering", got.State)
 	}

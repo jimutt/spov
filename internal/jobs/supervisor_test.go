@@ -4,27 +4,38 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
 // inboxFrame builds a session.inbox.enqueued frame carrying an item of
-// this type, shaped as the S4/S5 spikes observed it.
+// this type, in the pinned build's shape.
 func inboxFrame(t *testing.T, itemType string) []byte {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{
-		"type": "session.inbox.enqueued",
-		"data": map[string]any{
-			"sessionID": "ses_1",
-			"item": map[string]any{
-				"type":    itemType,
-				"payload": map[string]any{"text": "do the thing"},
-			},
+	return contract.Event(t, EventInboxEnqueued, 1, string(inboxData(t, itemType)))
+}
+
+// uncheckedInboxFrame is inboxFrame for an item no build enqueues; why
+// says what is wrong with it.
+func uncheckedInboxFrame(t *testing.T, itemType, why string) []byte {
+	t.Helper()
+	return contract.Unchecked(`{"type":"session.inbox.enqueued","data":`+string(inboxData(t, itemType))+`}`, why)
+}
+
+func inboxData(t *testing.T, itemType string) []byte {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"sessionID": "ses_1", "inboxID": "msg_1",
+		"item": map[string]any{
+			"type":     itemType,
+			"payload":  map[string]any{"text": "do the thing"},
+			"delivery": "steer",
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return raw
+	return data
 }
 
 // The distinction this test holds is the one DL-045's invariant rests
@@ -41,10 +52,16 @@ func TestOnlyAUserItemIsATakeover(t *testing.T) {
 		{"", false},
 		{"assistant", false},
 	} {
+		var raw []byte
+		if tc.itemType == "user" || tc.itemType == "synthetic" {
+			raw = inboxFrame(t, tc.itemType)
+		} else {
+			raw = uncheckedInboxFrame(t, tc.itemType, "an item of a type no inbox holds")
+		}
 		e := store.Event{
 			Source: store.SourceOpenCode,
 			Name:   "session.inbox.enqueued",
-			Raw:    inboxFrame(t, tc.itemType),
+			Raw:    raw,
 		}
 		if got := takesOver(e); got != tc.want {
 			t.Errorf("an inbox item typed %q: takesOver = %v, want %v", tc.itemType, got, tc.want)
@@ -65,7 +82,7 @@ func TestAnUnreadableInboxFrameDoesNotSteer(t *testing.T) {
 		[]byte(`{"data":{}}`),
 		[]byte(`{"data":{"item":"a string, not an object"}}`),
 	} {
-		e := store.Event{Source: store.SourceOpenCode, Name: "session.inbox.enqueued", Raw: raw}
+		e := store.Event{Source: store.SourceOpenCode, Name: "session.inbox.enqueued", Raw: contract.Unchecked(string(raw), "an enqueue nobody can read")}
 		if got := signalFor(e); got == signalSteered {
 			t.Errorf("an unparseable frame %q steered the job", raw)
 		}

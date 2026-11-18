@@ -5,23 +5,41 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/jimutt/spov/internal/opencode"
+	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
 
-// humanInboxFrames are the frames both rules are asked about. The first
-// is a captured one (messageid_test.go's realInboxFrame); the rest vary
-// what findMap and the plugin's findItem have to agree on.
-var humanInboxFrames = []string{
+// humanInboxFrames are the frames both rules are asked about: the
+// published ones, in the pinned build's shape, and then the shapes that
+// vary what findMap and the plugin's findItem have to agree on.
+var humanInboxFrames = append(slices.Clone(publishedInboxFrames), variedInboxFrames...)
+
+// publishedInboxFrames are checked against the pinned build's document.
+// The first is a captured one (messageid_test.go's realInboxFrame).
+var publishedInboxFrames = []string{
 	`{"id":"evt_0000000000sampleevent00001","created":1788267414303,` +
 		`"type":"session.inbox.enqueued","location":{"directory":"/workspace/spov"},` +
 		`"data":{"inboxID":"msg_0000000000sampleinbox00001","sessionID":"ses_0000000000samplesession000",` +
 		`"item":{"type":"user","payload":{"text":"reply with ok"},"delivery":"steer"}},` +
 		`"durable":{"aggregateID":"ses_0000000000samplesession000","seq":30,"version":1}}`,
-	`{"type":"session.inbox.enqueued","data":{"item":{"type":"synthetic","payload":{"text":"continue"}}}}`,
+	`{"id":"evt_c","created":1788267414304,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_c",` +
+		`"item":{"type":"synthetic","payload":{"text":"continue"},"delivery":"queue"}},"durable":{"aggregateID":"ses_1","seq":31,"version":1}}`,
+	`{"id":"evt_a","created":1788267414305,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_a",` +
+		`"item":{"type":"user","payload":{"text":"go on","metadata":{"spov":{"after":"continue"}}},"delivery":"queue"}},` +
+		`"durable":{"aggregateID":"ses_1","seq":32,"version":1}}`,
+	`{"id":"evt_b","created":1788267414306,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_b",` +
+		`"item":{"type":"user","payload":{"text":"over to me","metadata":{"spov":{"after":"handover"}}},"delivery":"queue"}},` +
+		`"durable":{"aggregateID":"ses_1","seq":33,"version":1}}`,
+}
+
+// variedInboxFrames are shapes no build sends, each moving or bending
+// the item, for the two walkers to agree on.
+var variedInboxFrames = []string{
 	`{"type":"session.inbox.enqueued","data":{"item":{"type":"user","delivery":"queue"}}}`,
 	`{"type":"session.inbox.enqueued","properties":{"item":{"type":"user"}}}`,
 	`{"type":"session.inbox.enqueued","data":{"wrap":{"item":{"type":"user"}}}}`,
@@ -33,11 +51,18 @@ var humanInboxFrames = []string{
 	`{"type":"session.inbox.enqueued","data":{"item":{"type":"User"}}}`,
 	`{"type":"session.inbox.delivered","data":{"item":{"type":"user"}}}`,
 	`{"type":"session.inbox.enqueued"}`,
-	`{"type":"session.inbox.enqueued","data":{"inboxID":"msg_a","item":{"type":"user","payload":{"text":"go on","metadata":{"spov":{"after":"continue"}}},"delivery":"queue"}}}`,
-	`{"type":"session.inbox.enqueued","data":{"inboxID":"msg_b","item":{"type":"user","payload":{"text":"over to me","metadata":{"spov":{"after":"handover"}}},"delivery":"queue"}}}`,
 	`{"type":"session.inbox.enqueued","data":{"item":{"type":"user","payload":{"metadata":{"spov":{"after":"Continue"}}}}}}`,
 	`{"type":"session.inbox.enqueued","data":{"item":{"type":"user","payload":{"metadata":{"other":{"after":"continue"}}}}}}`,
 	`{"type":"session.inbox.enqueued","data":{"item":{"type":"synthetic","payload":{"metadata":{"spov":{"after":"handover"}}}}}}`,
+}
+
+// The published frames are in the pinned build's shape.
+//
+// @decision(DL-145)
+func TestThePublishedInboxFramesAreThePinnedBuilds(t *testing.T) {
+	for _, raw := range publishedInboxFrames {
+		contract.CheckEventFrame(t, []byte(raw))
+	}
 }
 
 // The plugin holds its loop on exactly the items the supervisor reads as

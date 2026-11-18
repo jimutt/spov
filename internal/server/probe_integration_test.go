@@ -328,6 +328,49 @@ type probeEvents struct {
 	all []probeEvent
 }
 
+// frameAudit checks every frame a probe reads from the pinned build
+// against the document's schemas for it, and reports the refused ones on
+// t when the test ends, since the reading goroutine may outlive it.
+//
+// @decision(DL-145)
+type frameAudit struct {
+	check   func([]byte) error
+	mu      sync.Mutex
+	checked int
+	refused []string
+}
+
+// auditEvents audits event-stream frames, auditLog session-log items.
+func auditEvents(t *testing.T) *frameAudit { return newFrameAudit(t, "streamed", contract.CheckEvent) }
+func auditLog(t *testing.T) *frameAudit    { return newFrameAudit(t, "logged", contract.CheckLogItem) }
+
+func newFrameAudit(t *testing.T, what string, check func([]byte) error) *frameAudit {
+	t.Helper()
+	a := &frameAudit{check: check}
+	t.Cleanup(func() {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		t.Logf("checked %d %s frames against the document", a.checked, what)
+		if a.checked == 0 {
+			t.Errorf("contract: no %s frame reached the audit", what)
+		}
+		for _, r := range a.refused {
+			t.Errorf("contract: the pinned build %s a frame its document refuses: %s", what, r)
+		}
+	})
+	return a
+}
+
+func (a *frameAudit) frame(raw string) {
+	err := a.check([]byte(raw))
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.checked++
+	if err != nil {
+		a.refused = append(a.refused, fmt.Sprintf("%v\n\tframe: %.600s", err, raw))
+	}
+}
+
 func (p *probeEvents) has(match func(probeEvent) bool) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -353,9 +396,13 @@ func (p *probeEvents) names() string {
 	return strings.Join(out, ", ")
 }
 
-// followProbeEvents reads the event stream the way the recorder does.
+// followProbeEvents reads the event stream the way the recorder does,
+// and audits every frame against the pinned build's event schemas.
+//
+// @decision(DL-145)
 func followProbeEvents(ctx context.Context, t *testing.T, conn Connection) *probeEvents {
 	t.Helper()
+	audit := auditEvents(t)
 	body, err := openSandboxEvents(ctx, conn)
 	if err != nil {
 		t.Fatalf("opening the event stream: %v", err)
@@ -364,6 +411,7 @@ func followProbeEvents(ctx context.Context, t *testing.T, conn Connection) *prob
 	p := &probeEvents{}
 	go func() {
 		_ = readSSEFrames(ctx, body, func(raw string) bool {
+			audit.frame(raw)
 			var frame map[string]any
 			if json.Unmarshal([]byte(raw), &frame) != nil {
 				return true
