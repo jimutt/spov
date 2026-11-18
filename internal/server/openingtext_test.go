@@ -77,3 +77,21 @@ func TestTheOpeningTextFlattensTheAssessmentItself(t *testing.T) {
 		t.Errorf("the assessment reproduced the labelling structure: %q", after)
 	}
 }
+
+// A job's title never reaches the agent: the opening text is the same
+// with one as without.
+//
+// @decision(DL-150)
+func TestATitleLeavesTheOpeningTextUnchanged(t *testing.T) {
+	for _, assessment := range []string{"", "Make the login test pass reliably."} {
+		plain := store.Job{Goal: "the login test fails one run in ten", Assessment: assessment}
+		titled := plain
+		titled.Title = "Fix the flaky login test"
+		if got, want := openingText(titled), openingText(plain); got != want {
+			t.Errorf("with assessment %q the title changed the opening text:\n%s", assessment, got)
+		}
+		if strings.Contains(openingText(titled), titled.Title) {
+			t.Errorf("the opening text carries the title")
+		}
+	}
+}

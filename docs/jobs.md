@@ -119,8 +119,11 @@ line: the created job, then the final one.
 
 It moves through `queued`, `provisioning`, `running` and `delivering` to
 `succeeded` or `failed` (or `cancelled`). Before provisioning, the server can
-run one short model call that assesses the goal and may propose a check; a
-check you gave always wins, and `--no-prep` skips the call. Two states wait on
+run one short model call that assesses the goal, may propose a check and
+names the job in a few words; a check you gave always wins, and `--no-prep`
+skips the call. The name is the job's title in the dashboard and in the API's
+`title` until its conversation has one of its own (a conversation someone
+wrote in gets one from OpenCode); the agent never sees it. Two states wait on
 a person:
 
 - `blocked`: the agent is waiting on a permission question it cannot answer

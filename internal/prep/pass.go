@@ -28,6 +28,12 @@ const MaxAssessmentBytes = 4 << 10
 // @decision(DL-047)
 const MaxCheckBytes = 512
 
+// MaxTitleBytes bounds a title as the pass returns it. The stored form
+// is bounded again, in characters, by store.CleanTitle.
+//
+// @decision(DL-150)
+const MaxTitleBytes = 512
+
 // Assessment is what one pass produces. Every field is optional: a pass
 // that could say nothing useful is not a failure, it is a job that
 // opens on its goal alone.
@@ -41,14 +47,19 @@ type Assessment struct {
 	// Check is a proposed check command, or empty for none. It is only
 	// ever consulted when the caller gave no check of their own.
 	Check string `json:"check"`
+	// Title is a few words naming what the job is to do, for a person
+	// reading a list. It is never shown to the agent.
+	//
+	// @decision(DL-150)
+	Title string `json:"title"`
 }
 
 // systemPrompt is spov-authored text that shapes every job. It tells
 // the model the goal is untrusted data, never instruction, and it
 // refuses to invent a check rather than guess one that would pass
-// vacuously.
+// vacuously. It asks for a title in the same object.
 //
-// @decision(DL-047) @decision(DL-050)
+// @decision(DL-047) @decision(DL-050) @decision(DL-150)
 const systemPrompt = `You are preparing a task request for an autonomous coding agent.
 
 You will be given the text of a task, exactly as a person or an automated
@@ -59,7 +70,7 @@ you return here.
 
 Reply with a single JSON object and nothing else:
 
-{"summary": "...", "check": "..."}
+{"summary": "...", "check": "...", "title": "..."}
 
 "summary" is at most three sentences stating what the request appears to
 ask for, and what is ambiguous or missing. Write it for the agent that
@@ -78,7 +89,12 @@ result is treated as evidence, so a wrong command is worse than none:
 - Never return a command that writes, pushes, deploys, or deletes.
 - Prefer a project's own script or test entry point over a guess.
 
-Return "" for both fields rather than inventing either.`
+"title" is a name for the task in at most eight words, as a person would
+title a ticket: what is to be done, not how, with no quotes and no closing
+full stop. It is shown to people in a list, never to the agent. Return ""
+if the text names nothing a title could say.
+
+Return "" for the summary and the check rather than inventing either.`
 
 // Pass runs one preparation over a job's goal.
 //
@@ -143,6 +159,8 @@ func parseAssessment(raw string) (Assessment, error) {
 		return Assessment{}, fmt.Errorf("prep: decoding the assessment: %w", err)
 	}
 	a.Summary = clamp(oneParagraph(a.Summary), MaxAssessmentBytes)
+	// @decision(DL-150)
+	a.Title = clamp(oneParagraph(a.Title), MaxTitleBytes)
 	// A check is a single command. A reply carrying a newline is a
 	// script, a heredoc, or several commands chained past whatever the
 	// first one appeared to be — none of which was asked for, and each

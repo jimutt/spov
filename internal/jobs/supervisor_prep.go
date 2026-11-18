@@ -24,9 +24,11 @@ func (s *Supervisor) prepare(ctx context.Context, job store.Job) store.Job {
 	if s.Prepare == nil || job.SkipPrep {
 		return job
 	}
-	// A redelivered attempt must not pay for a second call. Both fields
-	// are checked, since a pass may propose a check with no summary.
-	if strings.TrimSpace(job.Assessment) != "" || job.CheckProposed {
+	// A redelivered attempt must not pay for a second call. Each field
+	// is checked, since a pass may give any one of them alone.
+	//
+	// @decision(DL-150)
+	if strings.TrimSpace(job.Assessment) != "" || job.CheckProposed || job.Title != "" {
 		return job
 	}
 	if strings.TrimSpace(job.Goal) == "" {
@@ -45,7 +47,9 @@ func (s *Supervisor) prepare(ctx context.Context, job store.Job) store.Job {
 
 	summary := strings.TrimSpace(a.Summary)
 	check := strings.TrimSpace(a.Check)
-	if summary == "" && check == "" {
+	// @decision(DL-150) @decision(DL-149)
+	title := store.CleanTitle(a.Title)
+	if summary == "" && check == "" && title == "" {
 		// The pass ran and had nothing to say. Writing the row anyway
 		// would cost a write and change nothing.
 		return job
@@ -64,6 +68,10 @@ func (s *Supervisor) prepare(ctx context.Context, job store.Job) store.Job {
 			return err
 		}
 		current.Assessment = summary
+		// Stored only while the row has none.
+		//
+		// @decision(DL-150)
+		current.Title = title
 		// A caller's check always wins, re-checked against the current
 		// row rather than the copy this pass started from.
 		if check != "" && strings.TrimSpace(current.CheckCommand) == "" {
