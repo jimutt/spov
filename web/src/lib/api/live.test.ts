@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { logStream, sessionsStream } from './live';
+import { ConnectionNoticeDelay, logStream, sessionsStream, steadyConnection } from './live';
 import { describeProblem } from '../problem';
 
 /** serve replies to each successive fetch with the next response, and
@@ -371,5 +371,55 @@ describe('a stream that is up but useless', () => {
     // 1+2+4+8+16+32 — six retries, not sixty.
     expect(gaps.mock.calls.length).toBeLessThanOrEqual(8);
     expect(fetchMock.mock.calls.length).toBeLessThanOrEqual(9);
+  });
+});
+
+describe("a connection notice", () => {
+  test("is not raised for a drop that ends within the delay", () => {
+    vi.useFakeTimers();
+    try {
+      const seen: boolean[] = [];
+      const report = steadyConnection((c) => seen.push(c));
+      report(false);
+      vi.advanceTimersByTime(ConnectionNoticeDelay - 1);
+      report(true);
+      vi.advanceTimersByTime(ConnectionNoticeDelay * 2);
+      expect(seen).toEqual([true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("is raised once a drop has lasted the delay, and withdrawn at once", () => {
+    vi.useFakeTimers();
+    try {
+      const seen: boolean[] = [];
+      const report = steadyConnection((c) => seen.push(c));
+      report(false);
+      report(false);
+      vi.advanceTimersByTime(ConnectionNoticeDelay);
+      expect(seen).toEqual([false]);
+      report(true);
+      expect(seen).toEqual([false, true]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("says nothing once its stream was given up", () => {
+    vi.useFakeTimers();
+    try {
+      const seen: boolean[] = [];
+      const ctl = new AbortController();
+      const report = steadyConnection((c) => seen.push(c), ctl.signal);
+      report(false);
+      ctl.abort();
+      vi.advanceTimersByTime(ConnectionNoticeDelay * 2);
+      report(false);
+      vi.advanceTimersByTime(ConnectionNoticeDelay * 2);
+      expect(seen).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

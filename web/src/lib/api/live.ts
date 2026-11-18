@@ -297,3 +297,38 @@ export function logStream(ref: string, opts: LiveOptions): AsyncGenerator<LogEve
     of: (ev) => ev.pos,
   });
 }
+
+/** How long a connection must stay down before a page says so. */
+export const ConnectionNoticeDelay = 2000;
+
+/**
+ * steadyConnection wraps a page's connection flag so a short drop is
+ * never shown: `apply(false)` is called only once the connection has
+ * been down for `delay`, and `apply(true)` at once. A page that is
+ * being left drops its stream, and so does one quick reconnect; neither
+ * should draw a notice and shift the layout.
+ *
+ * @decision(DL-058)
+ */
+export function steadyConnection(
+  apply: (connected: boolean) => void,
+  signal?: AbortSignal,
+  delay = ConnectionNoticeDelay,
+): (connected: boolean) => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // A stream its page gave up says nothing more, a pending drop included.
+  signal?.addEventListener("abort", () => clearTimeout(timer), { once: true });
+  return (connected) => {
+    if (signal?.aborted) return;
+    if (connected) {
+      clearTimeout(timer);
+      timer = undefined;
+      apply(true);
+      return;
+    }
+    timer ??= setTimeout(() => {
+      timer = undefined;
+      apply(false);
+    }, delay);
+  };
+}
