@@ -19,7 +19,7 @@ offers to set up each thing that is missing:
 |---|---|---|
 | Modal | Its credentials are found and Modal accepts them | Run `modal setup` in your terminal |
 | Git platform | A configured platform has a working credential | GitHub through `gh`: run `gh auth login` if needed, add the `platforms` entry to your user config, and use gh's login |
-| Model | A provider key is stored or exported, or OpenCode is signed in | Paste an API key, or sign in to OpenCode Go or Zen |
+| Model | OpenCode is signed in, or a provider key is stored or exported | Sign in with an OpenCode Go or Zen subscription (no API key needed), or paste a provider's API key |
 | OpenCode client | A client the pinned version accepts is installed | Nothing: it prints the install command. `spov fly --web` works without one |
 | Sandbox image | The image for the pinned OpenCode version is published | Build it, which takes a few minutes |
 

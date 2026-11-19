@@ -130,7 +130,7 @@ func newInitCmd(env *Env) *cobra.Command {
 		Long: "Checks what a first `spov fly` needs, in order, and offers to set up each thing that is missing:\n\n" +
 			"  1. Modal, where the sandboxes run\n" +
 			"  2. a git platform: GitHub through the gh CLI's login\n" +
-			"  3. a model: an API key, or an OpenCode Go or Zen sign-in\n" +
+			"  3. a model: an OpenCode Go or Zen subscription, or a provider's API key\n" +
 			"  4. the OpenCode client on this machine\n" +
 			"  5. the sandbox image, built once\n\n" +
 			"It asks before each change and is safe to run again: a step that is already done is left alone.\n" +
@@ -413,9 +413,9 @@ func checkModel(_ context.Context, r *initRun) stepResult {
 		have = append(have, "OpenCode is signed in")
 	}
 	if len(have) == 0 {
-		return stepResult{state: stepMissing, detail: "no provider key and no OpenCode sign-in",
-			why: "The agent needs a model: an API key for a provider, or an OpenCode Go or Zen subscription.",
-			fix: "spov credentials add ANTHROPIC_API_KEY, or spov login opencode"}
+		return stepResult{state: stepMissing, detail: "no OpenCode sign-in and no provider key",
+			why: "The agent needs a model. An OpenCode Go or Zen subscription is enough, with no API key: sign in with it. Otherwise store an API key for a provider.",
+			fix: "spov login opencode, or spov credentials add ANTHROPIC_API_KEY"}
 	}
 	return stepResult{state: stepOK, detail: strings.Join(have, "; ")}
 }

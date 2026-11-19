@@ -47,8 +47,8 @@ You need:
 - a GitHub account, with [`gh`](https://cli.github.com) signed in on this
   machine or a GitHub App (Forgejo, Gitea and GitLab work too:
   [credentials.md](docs/credentials.md#forgejo-gitea-and-gitlab));
-- a model: an API key such as `ANTHROPIC_API_KEY`, or an OpenCode Go or Zen
-  subscription.
+- a model: an OpenCode Go or Zen subscription, or an API key such as
+  `ANTHROPIC_API_KEY`.
 
 **1. Install spov**, with the OpenCode 2 version it expects:
 
@@ -82,7 +82,8 @@ asking before each change:
 - **GitHub**: uses the `gh` CLI's login (and runs `gh auth login` if it is
   not signed in), and writes the `platforms` entry in
   `~/.config/spov/config.yaml` for you;
-- **a model**: takes a pasted API key, or signs you in to OpenCode Go or Zen;
+- **a model**: signs you in with an OpenCode Go or Zen subscription, which
+  needs no API key, or takes a pasted API key;
 - **the sandbox image**: builds it once, which takes a few minutes.
 
 Run it again at any time: a step that is done is left alone. `spov init
