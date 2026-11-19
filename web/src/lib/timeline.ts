@@ -1259,6 +1259,23 @@ const InputKeys = [
   "question",
 ];
 
+/**
+ * toolDetail is a call's whole input for its opened line: JSON indented
+ * when it parses, else the text as it arrived. The log carries no
+ * result for a call, so this and the error are all there is to show.
+ *
+ * @decision(DL-158)
+ */
+export function toolDetail(input: string): string {
+  const text = input.trim();
+  if (!text) return "";
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
 /** InputLimit bounds the summary drawn for a call, in characters. */
 export const InputLimit = 200;
 

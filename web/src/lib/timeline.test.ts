@@ -20,6 +20,7 @@ import {
   trimBlankLines,
   shownWarnings,
   NotRecorded,
+  toolDetail,
   openingAsk,
   stopNote,
   type Activity,
@@ -1616,5 +1617,14 @@ describe('a rename in the log', () => {
     expect(renamesMain([ev({ source: 'spov' })])).toBe(false);
     expect(renamesMain([ev({ name: 'session.text.ended' }), ev({ name: 'session.created' })])).toBe(false);
     expect(renamesMain([])).toBe(false);
+  });
+});
+
+describe("a tool call opened on its own", () => {
+  // @decision(DL-158)
+  test("shows its input indented when it is JSON and as it came when not", () => {
+    expect(toolDetail('{"command":"ls -la","timeout":30}')).toBe('{\n  "command": "ls -la",\n  "timeout": 30\n}');
+    expect(toolDetail('{"command":"ls -la", "descr')).toBe('{"command":"ls -la", "descr');
+    expect(toolDetail("  ")).toBe("");
   });
 });
