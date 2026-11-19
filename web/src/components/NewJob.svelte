@@ -77,7 +77,9 @@
       await createAndGo(
         draft,
         (body) => api.POST('/api/v1/jobs', { body }),
-        nav.go,
+        // The job's session page takes the form's place in the history.
+        // @decision(DL-156)
+        nav.replace,
       );
     } catch (err) {
       failure = err;

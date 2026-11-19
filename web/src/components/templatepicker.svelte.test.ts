@@ -76,7 +76,10 @@ describe("the template picker on a launch form", () => {
     stub.templates = [acme];
     stub.templatesStatus = 200;
     went.length = 0;
-    vi.spyOn(nav, "go").mockImplementation((url) => void went.push(url));
+    // The form leaves by replacing itself in the history, so Back from
+    // the session returns to the list. @decision(DL-156)
+    vi.spyOn(nav, "go").mockImplementation((url) => void went.push(`go ${url}`));
+    vi.spyOn(nav, "replace").mockImplementation((url) => void went.push(url));
     localStorage.clear();
   });
 

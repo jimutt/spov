@@ -42,7 +42,9 @@
     starting = true;
     failure = undefined;
     try {
-      await startAndGo(selected, (body) => api.POST('/api/v1/sessions', { body }), nav.go, model, template);
+      // The new session's page takes the form's place in the history.
+      // @decision(DL-156)
+      await startAndGo(selected, (body) => api.POST('/api/v1/sessions', { body }), nav.replace, model, template);
     } catch (err) {
       failure = err;
       // Re-enabled only for a refusal: a Committed session exists, and a
