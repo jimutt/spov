@@ -51,6 +51,7 @@
     childIds,
     renamesMain,
     shownWarnings,
+    openingAsk,
     stopNote,
     timeDividers,
     trimBlankLines,
@@ -80,6 +81,7 @@
     type EchoTrack,
     cancel,
     composerShown,
+    dragDismisses,
     inboxClosed,
     queuedNote,
     echoNote,
@@ -407,7 +409,6 @@
   // @decision(DL-144)
   const working = $derived(subagentsWorking(timelines, recordingStopped(activity)));
   const subagentsShown = $derived(!inFlight && working > 0 ? ` · ${subagentsWord(working)}` : '');
-  const openWarnings = $derived(shownWarnings(warnings, blocks.length));
 
   // Runs the reader opened, by the run's stable key. Expanding reads
   // only from what the page already holds: no request, and nothing that
@@ -546,6 +547,16 @@
   // At most one: the filter is on a session, and a session has at most
   // one job.
   const job = $derived(jobs.data?.jobs?.[0]);
+  // Where a new session is: booting, or live with the composer drawn
+  // for the main conversation. @decision(DL-154)
+  const phase = $derived(
+    viewing || tailEnded ? 'other' : s?.state === 'starting' ? 'starting' : composerShown(s?.state, tailEnded) ? 'live' : 'other',
+  );
+  const openWarnings = $derived(shownWarnings(warnings, blocks.length, phase !== 'other'));
+  // Starting needs no transcript read: there is nothing to say yet either way.
+  const ask = $derived(
+    phase === 'starting' || readTranscript ? openingAsk(blocks.length, phase, s?.job != null) : null,
+  );
 
   // Whether asking again could learn anything. `jobs.loaded` covers the
   // ordinary session: a job's session is created with the job in one
@@ -778,22 +789,59 @@
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
   });
+  // A finger dragging the conversation while the composer's box has
+  // focus takes the focus away, which closes a phone's keyboard, as a
+  // chat app does. Touch only, and never for a drag inside the dock; a
+  // scroll the page makes itself is not a touch.
+  //
+  // @decision(DL-155)
+  $effect(() => {
+    let start: { y: number; inDock: boolean; focused: boolean } | undefined;
+    const box = () => document.getElementById('composer-text');
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      start = t && e.touches.length === 1
+        ? { y: t.clientY, inDock: dock?.contains(e.target as Node) ?? false, focused: document.activeElement === box() }
+        : undefined;
+    };
+    const onMove = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t || !dragDismisses(start, t.clientY)) return;
+      start = undefined;
+      box()?.blur();
+    };
+    window.addEventListener('touchstart', onStart, { passive: true });
+    window.addEventListener('touchmove', onMove, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', onStart);
+      window.removeEventListener('touchmove', onMove);
+    };
+  });
   // The page also follows growth no event announces: a font arriving, an
   // image, the dock changing height. Only while the latch is armed, as
   // with a new block, so a reader up the page is left where they are.
   //
   // @decision(DL-106) @decision(DL-057)
+  //
+  // So does the screen shrinking under it: a phone's keyboard opening
+  // resizes the viewport (`interactive-widget=resizes-content`), which
+  // changes no element's size on a long page, and the end would slip
+  // behind the dock. @decision(DL-154)
   $effect(() => {
-    if (typeof ResizeObserver === 'undefined') return;
-    const watch = new ResizeObserver(() => {
+    const follow = () => {
       const el = scroller();
       if (!el) return;
       const to = tail.onGrow(el);
       if (to !== undefined) el.scrollTo({ top: to, behavior: 'auto' });
       measure();
-    });
-    watch.observe(document.body);
-    return () => watch.disconnect();
+    };
+    window.addEventListener('resize', follow);
+    const watch = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(follow);
+    watch?.observe(document.body);
+    return () => {
+      window.removeEventListener('resize', follow);
+      watch?.disconnect();
+    };
   });
   // Below `lg` the sidebar is a sheet over the page, opened from the
   // title bar. Escape closes it, focus moves in on open and back to the
@@ -947,313 +995,337 @@
          grid is one column and the sidebar is a sheet over the
          transcript, so it is ordered first.
          @decision(DL-057) @decision(DL-106) -->
-    <div class="order-2 min-w-0 lg:order-1">
-      <!-- Below `lg`: one slim bar that stays on screen, with the way back,
-           the title, the state and the button for everything else. The
-           page's own header has scrolled away by then.
-           @decision(DL-106) -->
-      {#if true}
-        {@const st = listState(s)}
-        {@const lead = sessionHeadline(s)}
-        <div
-          class="sticky top-0 z-10 -mx-[var(--page-pad-x)] -mt-[var(--main-pad-y)] mb-4 flex items-center gap-1 border-b border-rule bg-raised px-1.5 py-1.5 lg:hidden"
-          data-testid="session-bar"
-        >
-          <a
-            href="/"
-            aria-label="Back to the sessions"
-            class="grid size-10 shrink-0 place-items-center rounded-ctl text-ink no-underline focus-visible:outline-2 focus-visible:outline-olive focus-visible:-outline-offset-2"
+    <div class="order-2 min-w-0 lg:order-1 max-lg:flex max-lg:min-h-[calc(100dvh-var(--header-h)-var(--main-pad-y))] max-lg:flex-col">
+      <!-- One block, so the transcript's margins collapse as they always
+           have, while below `lg` the column around it is a flex column as
+           tall as the screen, so the dock sits at its foot even when there
+           is little above it. @decision(DL-154) -->
+      <div>
+        <!-- Below `lg`: one slim bar that stays on screen, with the way back,
+             the title, the state and the button for everything else. The
+             page's own header has scrolled away by then.
+             @decision(DL-106) -->
+        {#if true}
+          {@const st = listState(s)}
+          {@const lead = sessionHeadline(s)}
+          <div
+            class="sticky top-0 z-10 -mx-[var(--page-pad-x)] -mt-[var(--main-pad-y)] mb-4 flex items-center gap-1 border-b border-rule bg-raised px-1.5 py-1.5 lg:hidden"
+            data-testid="session-bar"
           >
-            <Icon name="back" class="size-5" />
-          </a>
-          <div class="min-w-0 flex-1">
-            <!-- The title leads when there is one, and the repository joins
-                 the line below it. @decision(DL-151) -->
-            <p class="m-0 truncate text-base leading-tight font-semibold" title={lead.kind === 'title' ? lead.title : undefined}>
-              {#if lead.kind === 'title'}{lead.title}{:else if lead.kind === 'repo'}<span class="font-normal text-soft"
-                  >{lead.repo.owner}</span
-                >{lead.repo.name}{#if lead.repo.more > 0}<span class="ml-1.5 text-sm font-normal text-soft">+{lead.repo.more}</span
-                  >{/if}{:else}{lead.name}{/if}
-            </p>
-            <!-- Under a title the repository stands in for the name, which
-                 is in the details, and gives way before the reason does.
-                 @decision(DL-151) -->
-            <p class="m-0 flex min-w-0 items-center gap-x-2 overflow-hidden text-sm whitespace-nowrap text-soft">
-              <StateMark mark={st.mark} word={st.word} />
-              {#if st.why}<span class="min-w-0 truncate">{st.why}</span>
-              {:else}<span class="tabular-nums">{duration(age(s, now))}</span>{/if}
-              {#if lead.kind === 'title'}{#if repoLine(s)}<span class="min-w-0 shrink-[1000] truncate">{repoLine(s)}</span>{/if}
-              {:else if lead.kind === 'repo'}<span class="min-w-0 truncate">{s.name || s.id}</span>{/if}
-            </p>
-          </div>
-          <button
-            type="button"
-            bind:this={infoButton}
-            class="grid size-10 shrink-0 cursor-pointer place-items-center rounded-ctl border-0 bg-transparent text-ink focus-visible:outline-2 focus-visible:outline-olive focus-visible:-outline-offset-2"
-            aria-label="Session details"
-            aria-expanded={infoOpen}
-            aria-controls="session-details"
-            data-testid="session-details-open"
-            onclick={() => (infoOpen = !infoOpen)}
-          >
-            <Icon name="info" class="size-5" />
-          </button>
-        </div>
-      {/if}
-
-      <!-- The title, one facts line, and the clock bar. The heading is
-           the session's title when there is one, and the name then joins
-           the facts line. @decision(DL-057) @decision(DL-151) -->
-      <div class="mb-7 max-lg:hidden">
-        <h1 class="m-0 mb-1.5 text-xl font-semibold tracking-[-0.01em] [overflow-wrap:anywhere]">
-          {s.title?.trim() || s.name || s.id}
-        </h1>
-        <div class="flex flex-wrap items-center gap-x-[18px] gap-y-1 text-md text-soft">
-          <StateMark
-            mark={sessionMark(s.state)}
-            word={s.state === 'running'
-              ? `Running for ${duration(age(s, now))}`
-              : s.state === 'starting'
-                ? 'Starting'
-                : `${stateWord(s.state)} after ${duration(age(s, now))}`}
-          />
-          {#each repoNames(s) as repo (repo)}
-            <span class="font-mono text-ink">{repo}</span>
-          {/each}
-          {#if s.title?.trim()}<span class="text-ink">{s.name || s.id}</span>{/if}
-          {#if s.sandbox_id}
-            <span>Sandbox <span class="font-mono text-ink">{s.sandbox_id}</span></span>
-          {/if}
-        </div>
-        {@render clockStrip('mt-4 max-w-[72ch]')}
-      </div>
-
-      <!-- A subagent's view: the way back, its heading and its siblings.
-           An id this session does not have is a quiet note over the main
-           conversation. @decision(DL-113) -->
-      {#if viewing}
-        <SubagentBar
-          session={s.name || s.id}
-          trail={trailTo(tree, viewing)}
-          siblings={siblingsOf(tree, viewing)}
-          waiting={askingIn(scopeOf(tree, viewing)).length}
-          href={(id) => viewHref(ref, id)}
-          onview={go}
-        />
-      {:else if unknownAgent}
-        <p class="{row} mb-6 text-md text-soft" data-testid="subagent-unknown">
-          This session has no subagent with that id, so this is the main conversation.
-        </p>
-      {/if}
-
-      {#if s.error}
-        <div class="mb-6"><Problem error={new Error(s.error)} what="this session" /></div>
-      {/if}
-
-      {#if transcriptError}
-        <div class="mb-6"><Problem error={transcriptError} what="the conversation" /></div>
-      {/if}
-
-      <!-- Dropped as soon as anything is on screen: a warning here
-           describes the one-off transcript read, not the live stream,
-           and must not outlive it. Derived rather than cleared, so it
-           returns if a re-read on a gap finds the same thing again.
-           @decision(DL-017) -->
-      {#each openWarnings as warning (warning)}
-        <div class="{row} mb-3">
-          <p class="m-0 text-md text-gold-t">{warning}</p>
-        </div>
-      {/each}
-
-      <!-- @decision(DL-070) -->
-      {#if windowed.hidden > 0}
-        <div class="{row} mb-6">
-          <button type="button" class={secondary} onclick={showEarlier} data-testid="transcript-earlier">
-            {earlierLabel(windowed.hidden)}
-          </button>
-        </div>
-      {/if}
-      {#each windowed.shown as block (block.key)}
-        <!-- A quiet time before the first entry and after a pause.
-             @decision(DL-058) -->
-        {#if dividers.has(block.key)}
-          <div class="{row} my-6 flex items-center gap-3 text-xs text-faint tabular-nums" data-testid="time-divider">
-            <span class="h-px flex-1 bg-rule" aria-hidden="true"></span>
-            <span>{dividers.get(block.key)}</span>
-            <span class="h-px flex-1 bg-rule" aria-hidden="true"></span>
+            <a
+              href="/"
+              aria-label="Back to the sessions"
+              class="grid size-10 shrink-0 place-items-center rounded-ctl text-ink no-underline focus-visible:outline-2 focus-visible:outline-olive focus-visible:-outline-offset-2"
+            >
+              <Icon name="back" class="size-5" />
+            </a>
+            <div class="min-w-0 flex-1">
+              <!-- The title leads when there is one, and the repository joins
+                   the line below it. @decision(DL-151) -->
+              <p class="m-0 truncate text-base leading-tight font-semibold" title={lead.kind === 'title' ? lead.title : undefined}>
+                {#if lead.kind === 'title'}{lead.title}{:else if lead.kind === 'repo'}<span class="font-normal text-soft"
+                    >{lead.repo.owner}</span
+                  >{lead.repo.name}{#if lead.repo.more > 0}<span class="ml-1.5 text-sm font-normal text-soft">+{lead.repo.more}</span
+                    >{/if}{:else}{lead.name}{/if}
+              </p>
+              <!-- Under a title the repository stands in for the name, which
+                   is in the details, and gives way before the reason does.
+                   @decision(DL-151) -->
+              <p class="m-0 flex min-w-0 items-center gap-x-2 overflow-hidden text-sm whitespace-nowrap text-soft">
+                <StateMark mark={st.mark} word={st.word} />
+                {#if st.why}<span class="min-w-0 truncate">{st.why}</span>
+                {:else}<span class="tabular-nums">{duration(age(s, now))}</span>{/if}
+                {#if lead.kind === 'title'}{#if repoLine(s)}<span class="min-w-0 shrink-[1000] truncate">{repoLine(s)}</span>{/if}
+                {:else if lead.kind === 'repo'}<span class="min-w-0 truncate">{s.name || s.id}</span>{/if}
+              </p>
+            </div>
+            <button
+              type="button"
+              bind:this={infoButton}
+              class="grid size-10 shrink-0 cursor-pointer place-items-center rounded-ctl border-0 bg-transparent text-ink focus-visible:outline-2 focus-visible:outline-olive focus-visible:-outline-offset-2"
+              aria-label="Session details"
+              aria-expanded={infoOpen}
+              aria-controls="session-details"
+              data-testid="session-details-open"
+              onclick={() => (infoOpen = !infoOpen)}
+            >
+              <Icon name="info" class="size-5" />
+            </button>
           </div>
         {/if}
-        {#if block.kind === 'message' && block.entry.role === 'prompt'}
-          <!-- What the parent agent asked this subagent: in its view
-               only. @decision(DL-111) @decision(DL-113) -->
-          <div class="{row} mb-5"><SubagentPrompt text={block.entry.text} /></div>
-        {:else if block.kind === 'message'}
-          {@const synthetic = block.entry.role === 'synthetic'}
-          {@const mine = block.entry.role === 'user'}
-          <!-- Only a SYNTHETIC's text is read as the stop marker, or a
-               human typing it or the agent quoting it would end a run
-               that never ended. @decision(DL-058) @decision(DL-048) -->
-          {@const stopped = synthetic ? stopNote(block.entry.text) : null}
-          <!-- Who spoke is the layout: yours on the right, the agent's
-               plain, spov's tagged and quieter, never mistaken for the
-               agent's. Who and when sit under it, shown on hover, focus
-               or tap; a tap is a pointer's stand-in for hover, and the
-               text stays in the document for a screen reader.
-               @decision(DL-058) @decision(DL-057) -->
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <div
-            class="group {row} mb-5 flex flex-col {mine ? 'items-end' : 'items-start'}"
-            data-testid="message"
-            onclick={() => toggleDetails(block.key)}
-          >
-            <!-- A message on its way is the same bubble, faded; it comes
-                 into full view as the transcript records it, keyed as
-                 one element. @decision(DL-059) -->
-            <div
-              class="min-w-0 transition-opacity duration-500 ease-out motion-reduce:transition-none {mine ? 'max-w-[85%] rounded-ctl bg-raised px-3.5 py-2.5' : 'w-full'} {block
-                .entry.pending
-                ? 'opacity-55'
-                : 'opacity-100'}"
-              title={block.entry.pending || undefined}
-            >
-              {#if synthetic}
-                <span class="mb-0.5 block text-xs font-medium tracking-wide text-faint" data-testid="spov-tag">spov</span>
-              {/if}
-              {#if stopped}
-                <!-- The marker's text must not be reworded to read better
-                     — the supervisor matches on it. An unparseable payload
-                     falls through to the raw line rather than being
-                     hidden. @decision(DL-058) @decision(DL-048) -->
-                <p class="m-0 text-md text-soft">{sentence(stopped)}</p>
-              {:else}
-                {@render markdown(block.entry.text, synthetic ? 'text-md text-soft' : 'text-read')}
-              {/if}
-              {#if block.entry.pending}
-                <!-- An accepted message the recorder hasn't stored yet
-                     stays on screen rather than vanishing on answer — a
-                     recorder that attached late (DL-017) stores nothing.
-                     Said to a screen reader only; the fade says it to the
-                     eye. @decision(DL-059) -->
-                <span class="sr-only" data-testid="echo-note">{block.entry.pending}</span>
-              {/if}
-              <!-- A queued message waits below the log until the agent
-                   reads it, and can be cancelled until then. Processed
-                   needs no word. @decision(DL-019) @decision(DL-048) -->
-              {#if block.entry.status === 'queued' && block.entry.id}
-                {@const id = block.entry.id}
-                <span class="mt-1 flex flex-wrap items-center gap-x-3 text-sm text-faint" data-testid="message-queued">
-                  {#if cancelling.has(id)}
-                    Cancelling…
-                  {:else}
-                    {queuedNote(block.entry.delivery, block.entry.after)}
-                    {#if composerShown(s.state, tailEnded)}
-                      <button type="button" class={textButton} data-testid="message-cancel" onclick={() => cancelQueued(id)}
-                        >Cancel</button
-                      >
-                    {/if}
-                  {/if}
-                </span>
-              {:else if block.entry.status === 'cancelled'}
-                <span class="mt-1 block text-sm text-faint" data-testid="message-cancelled">Cancelled before the agent read it.</span>
-              {:else if block.entry.status === 'unprocessed'}
-                <span class="mt-1 block text-sm text-gold-t" data-testid="message-unprocessed"
-                  >Not processed: the run ended before the agent read it.</span
-                >
-              {/if}
-            </div>
-            <div class={details(block.key)} data-testid="message-details">
-              {speaker(block.entry.role)}{#if block.entry.at}{' · '}{clock(new Date(block.entry.at).toISOString())}{/if}
-            </div>
-          </div>
-        {:else if block.kind === 'seam'}
-          <!-- Where the recorder was not listening. Drawn across the
-               column rather than folded into a run, so an incomplete
-               transcript is never mistaken for a quiet one. A broken
-               rule for a broken record. @decision(DL-058) @decision(DL-057) -->
-          <div class="{row} mt-1 mb-6">
-            <p class="m-0 min-w-0 border-y border-dashed border-rust py-1.5 text-md text-rust">
-              {#if block.entry.at}<span class="mr-2 tabular-nums">{clock(new Date(block.entry.at).toISOString())}</span>{/if}{seamText(
-                block.entry,
-              )}
-            </p>
-          </div>
-        {:else if block.kind === 'ask'}
-          <!-- Where the agent asked, beside the call it holds up.
-               @decision(DL-020) -->
-          <div class="{row} mb-5" data-testid="ask" data-ask-id={block.entry.ask.id}>
-            <AskCard
-              {ref}
-              ask={block.entry.ask}
-              from={block.entry.from}
-              askState={asks.get(block.entry.ask.id) ?? { status: 'pending' }}
-              open={composerShown(s.state, tailEnded)}
+
+        <!-- The title, one facts line, and the clock bar. The heading is
+             the session's title when there is one, and the name then joins
+             the facts line. @decision(DL-057) @decision(DL-151) -->
+        <div class="mb-7 max-lg:hidden">
+          <h1 class="m-0 mb-1.5 text-xl font-semibold tracking-[-0.01em] [overflow-wrap:anywhere]">
+            {s.title?.trim() || s.name || s.id}
+          </h1>
+          <div class="flex flex-wrap items-center gap-x-[18px] gap-y-1 text-md text-soft">
+            <StateMark
+              mark={sessionMark(s.state)}
+              word={s.state === 'running'
+                ? `Running for ${duration(age(s, now))}`
+                : s.state === 'starting'
+                  ? 'Starting'
+                  : `${stateWord(s.state)} after ${duration(age(s, now))}`}
             />
-          </div>
-        {:else if block.kind === 'note'}
-          <!-- What spov did with the job: one of spov's quiet lines, like
-               the stop marker, not a rule across the column.
-               @decision(DL-058) -->
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <div class="group {row} mb-5" onclick={() => toggleDetails(block.key)}>
-            <span class="mb-0.5 block text-xs font-medium tracking-wide text-faint">spov</span>
-            <p class="m-0 min-w-0 text-md text-soft">{sentence(noteText(block.entry))}</p>
-            {#if block.entry.at}
-              <div class={details(block.key)}>spov · {clock(new Date(block.entry.at).toISOString())}</div>
+            {#each repoNames(s) as repo (repo)}
+              <span class="font-mono text-ink">{repo}</span>
+            {/each}
+            {#if s.title?.trim()}<span class="text-ink">{s.name || s.id}</span>{/if}
+            {#if s.sandbox_id}
+              <span>Sandbox <span class="font-mono text-ink">{s.sandbox_id}</span></span>
             {/if}
           </div>
-        {:else if block.kind === 'subagent'}
-          <!-- A subagent: one card at the call that started it, its child
-               opened inline. @decision(DL-112) -->
-          <div class="{row} -mt-1.5 mb-5">
-            <SubagentCard
-              entry={block.entry}
-              kids={timelines.children}
-              {askingIn}
-              onjump={jumpToAsk}
-              {markdown}
-              href={(id) => viewHref(ref, id)}
-              onview={go}
-            />
+          {@render clockStrip('mt-4 max-w-[72ch]')}
+        </div>
+
+        <!-- A subagent's view: the way back, its heading and its siblings.
+             An id this session does not have is a quiet note over the main
+             conversation. @decision(DL-113) -->
+        {#if viewing}
+          <SubagentBar
+            session={s.name || s.id}
+            trail={trailTo(tree, viewing)}
+            siblings={siblingsOf(tree, viewing)}
+            waiting={askingIn(scopeOf(tree, viewing)).length}
+            href={(id) => viewHref(ref, id)}
+            onview={go}
+          />
+        {:else if unknownAgent}
+          <p class="{row} mb-6 text-md text-soft" data-testid="subagent-unknown">
+            This session has no subagent with that id, so this is the main conversation.
+          </p>
+        {/if}
+
+        {#if s.error}
+          <div class="mb-6"><Problem error={new Error(s.error)} what="this session" /></div>
+        {/if}
+
+        {#if transcriptError}
+          <div class="mb-6"><Problem error={transcriptError} what="the conversation" /></div>
+        {/if}
+
+        <!-- Dropped as soon as anything is on screen: a warning here
+             describes the one-off transcript read, not the live stream,
+             and must not outlive it. Derived rather than cleared, so it
+             returns if a re-read on a gap finds the same thing again.
+             @decision(DL-017) -->
+        {#each openWarnings as warning (warning)}
+          <div class="{row} mb-3">
+            <p class="m-0 text-md text-gold-t">{warning}</p>
           </div>
-        {:else}
-          {@const showAll = expanded.has(block.key)}
-          <!-- Machine output, so mono, one line each. A folded run is its
-               summary alone; a tool call is one line however many events
-               OpenCode sent about it. @decision(DL-057) @decision(DL-058) -->
-          <div class="{row} -mt-1.5 mb-5">
-            <EventRun events={block.events} open={showAll} ontoggle={() => (showAll ? expanded.delete(block.key) : expanded.add(block.key))} />
+        {/each}
+
+        <!-- @decision(DL-070) -->
+        {#if windowed.hidden > 0}
+          <div class="{row} mb-6">
+            <button type="button" class={secondary} onclick={showEarlier} data-testid="transcript-earlier">
+              {earlierLabel(windowed.hidden)}
+            </button>
           </div>
         {/if}
-      {/each}
+        {#each windowed.shown as block (block.key)}
+          <!-- A quiet time before the first entry and after a pause.
+               @decision(DL-058) -->
+          {#if dividers.has(block.key)}
+            <div class="{row} my-6 flex items-center gap-3 text-xs text-faint tabular-nums" data-testid="time-divider">
+              <span class="h-px flex-1 bg-rule" aria-hidden="true"></span>
+              <span>{dividers.get(block.key)}</span>
+              <span class="h-px flex-1 bg-rule" aria-hidden="true"></span>
+            </div>
+          {/if}
+          {#if block.kind === 'message' && block.entry.role === 'prompt'}
+            <!-- What the parent agent asked this subagent: in its view
+                 only. @decision(DL-111) @decision(DL-113) -->
+            <div class="{row} mb-5"><SubagentPrompt text={block.entry.text} /></div>
+          {:else if block.kind === 'message'}
+            {@const synthetic = block.entry.role === 'synthetic'}
+            {@const mine = block.entry.role === 'user'}
+            <!-- Only a SYNTHETIC's text is read as the stop marker, or a
+                 human typing it or the agent quoting it would end a run
+                 that never ended. @decision(DL-058) @decision(DL-048) -->
+            {@const stopped = synthetic ? stopNote(block.entry.text) : null}
+            <!-- Who spoke is the layout: yours on the right, the agent's
+                 plain, spov's tagged and quieter, never mistaken for the
+                 agent's. Who and when sit under it, shown on hover, focus
+                 or tap; a tap is a pointer's stand-in for hover, and the
+                 text stays in the document for a screen reader.
+                 @decision(DL-058) @decision(DL-057) -->
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+            <div
+              class="group {row} mb-5 flex flex-col {mine ? 'items-end' : 'items-start'}"
+              data-testid="message"
+              onclick={() => toggleDetails(block.key)}
+            >
+              <!-- A message on its way is the same bubble, faded; it comes
+                   into full view as the transcript records it, keyed as
+                   one element. @decision(DL-059) -->
+              <div
+                class="min-w-0 transition-opacity duration-500 ease-out motion-reduce:transition-none {mine ? 'max-w-[85%] rounded-ctl bg-raised px-3.5 py-2.5' : 'w-full'} {block
+                  .entry.pending
+                  ? 'opacity-55'
+                  : 'opacity-100'}"
+                title={block.entry.pending || undefined}
+              >
+                {#if synthetic}
+                  <span class="mb-0.5 block text-xs font-medium tracking-wide text-faint" data-testid="spov-tag">spov</span>
+                {/if}
+                {#if stopped}
+                  <!-- The marker's text must not be reworded to read better
+                       — the supervisor matches on it. An unparseable payload
+                       falls through to the raw line rather than being
+                       hidden. @decision(DL-058) @decision(DL-048) -->
+                  <p class="m-0 text-md text-soft">{sentence(stopped)}</p>
+                {:else}
+                  {@render markdown(block.entry.text, synthetic ? 'text-md text-soft' : 'text-read')}
+                {/if}
+                {#if block.entry.pending}
+                  <!-- An accepted message the recorder hasn't stored yet
+                       stays on screen rather than vanishing on answer — a
+                       recorder that attached late (DL-017) stores nothing.
+                       Said to a screen reader only; the fade says it to the
+                       eye. @decision(DL-059) -->
+                  <span class="sr-only" data-testid="echo-note">{block.entry.pending}</span>
+                {/if}
+                <!-- A queued message waits below the log until the agent
+                     reads it, and can be cancelled until then. Processed
+                     needs no word. @decision(DL-019) @decision(DL-048) -->
+                {#if block.entry.status === 'queued' && block.entry.id}
+                  {@const id = block.entry.id}
+                  <span class="mt-1 flex flex-wrap items-center gap-x-3 text-sm text-faint" data-testid="message-queued">
+                    {#if cancelling.has(id)}
+                      Cancelling…
+                    {:else}
+                      {queuedNote(block.entry.delivery, block.entry.after)}
+                      {#if composerShown(s.state, tailEnded)}
+                        <button type="button" class={textButton} data-testid="message-cancel" onclick={() => cancelQueued(id)}
+                          >Cancel</button
+                        >
+                      {/if}
+                    {/if}
+                  </span>
+                {:else if block.entry.status === 'cancelled'}
+                  <span class="mt-1 block text-sm text-faint" data-testid="message-cancelled">Cancelled before the agent read it.</span>
+                {:else if block.entry.status === 'unprocessed'}
+                  <span class="mt-1 block text-sm text-gold-t" data-testid="message-unprocessed"
+                    >Not processed: the run ended before the agent read it.</span
+                  >
+                {/if}
+              </div>
+              <div class={details(block.key)} data-testid="message-details">
+                {speaker(block.entry.role)}{#if block.entry.at}{' · '}{clock(new Date(block.entry.at).toISOString())}{/if}
+              </div>
+            </div>
+          {:else if block.kind === 'seam'}
+            <!-- Where the recorder was not listening. Drawn across the
+                 column rather than folded into a run, so an incomplete
+                 transcript is never mistaken for a quiet one. A broken
+                 rule for a broken record. @decision(DL-058) @decision(DL-057) -->
+            <div class="{row} mt-1 mb-6">
+              <p class="m-0 min-w-0 border-y border-dashed border-rust py-1.5 text-md text-rust">
+                {#if block.entry.at}<span class="mr-2 tabular-nums">{clock(new Date(block.entry.at).toISOString())}</span>{/if}{seamText(
+                  block.entry,
+                )}
+              </p>
+            </div>
+          {:else if block.kind === 'ask'}
+            <!-- Where the agent asked, beside the call it holds up.
+                 @decision(DL-020) -->
+            <div class="{row} mb-5" data-testid="ask" data-ask-id={block.entry.ask.id}>
+              <AskCard
+                {ref}
+                ask={block.entry.ask}
+                from={block.entry.from}
+                askState={asks.get(block.entry.ask.id) ?? { status: 'pending' }}
+                open={composerShown(s.state, tailEnded)}
+              />
+            </div>
+          {:else if block.kind === 'note'}
+            <!-- What spov did with the job: one of spov's quiet lines, like
+                 the stop marker, not a rule across the column.
+                 @decision(DL-058) -->
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+            <div class="group {row} mb-5" onclick={() => toggleDetails(block.key)}>
+              <span class="mb-0.5 block text-xs font-medium tracking-wide text-faint">spov</span>
+              <p class="m-0 min-w-0 text-md text-soft">{sentence(noteText(block.entry))}</p>
+              {#if block.entry.at}
+                <div class={details(block.key)}>spov · {clock(new Date(block.entry.at).toISOString())}</div>
+              {/if}
+            </div>
+          {:else if block.kind === 'subagent'}
+            <!-- A subagent: one card at the call that started it, its child
+                 opened inline. @decision(DL-112) -->
+            <div class="{row} -mt-1.5 mb-5">
+              <SubagentCard
+                entry={block.entry}
+                kids={timelines.children}
+                {askingIn}
+                onjump={jumpToAsk}
+                {markdown}
+                href={(id) => viewHref(ref, id)}
+                onview={go}
+              />
+            </div>
+          {:else}
+            {@const showAll = expanded.has(block.key)}
+            <!-- Machine output, so mono, one line each. A folded run is its
+                 summary alone; a tool call is one line however many events
+                 OpenCode sent about it. @decision(DL-057) @decision(DL-058) -->
+            <div class="{row} -mt-1.5 mb-5">
+              <EventRun events={block.events} open={showAll} ontoggle={() => (showAll ? expanded.delete(block.key) : expanded.add(block.key))} />
+            </div>
+          {/if}
+        {/each}
 
-      <!-- The warnings above already say when nothing was recorded and
-           why, so this is only for a session that was recorded and had
-           nothing to say. -->
-      {#if readTranscript && blocks.length === 0 && openWarnings.length === 0}
-        <div class={row}>
-          <p class="m-0 text-soft">
-            {viewing ? 'Nothing has been recorded from this subagent yet.' : 'Nothing has been said in this session yet.'}
+        <!-- The warnings above already say when nothing was recorded and
+             why, so this is only for a session that was recorded and had
+             nothing to say. -->
+        {#if readTranscript && blocks.length === 0 && openWarnings.length === 0 && !ask}
+          <div class={row}>
+            <p class="m-0 text-soft">
+              {viewing ? 'Nothing has been recorded from this subagent yet.' : 'Nothing has been said in this session yet.'}
+            </p>
+          </div>
+        {/if}
+
+        {#if !connected}
+          <div class="{row} mt-4">
+            <StateMark class="text-md" mark={tailEnded ? 'stop' : 'wait'} word={tailEnded ? 'Recording ended' : 'Not live, reconnecting'} />
+          </div>
+        {/if}
+
+        {#if tailError}
+          <div class="mt-4 max-w-[var(--log-w)]"><Problem error={tailError} what="the activity tail" /></div>
+        {/if}
+
+        <!-- At the foot of the transcript rather than fixed to the
+             viewport: the "Jump to latest" control below is already
+             viewport-anchored there. Whether it is drawn is
+             `composerShown`'s, which reads both the row and the stream —
+             see lib/steer.ts. @decision(DL-059) -->
+        {#if messageCancelFailure}
+          <div class="mt-4"><Problem error={messageCancelFailure} what="cancelling that message" /></div>
+        {/if}
+
+      </div>
+
+      <!-- A live session with nothing in it yet asks what to work on,
+           in the space above the dock. @decision(DL-154) -->
+      {#if ask}
+        <div class="{row} flex flex-col justify-center py-10 max-lg:flex-1 max-lg:text-center" data-testid="opening-ask" role="status">
+          <p class="m-0 inline-flex items-center gap-2.5 self-center text-lg font-medium text-ink lg:self-start">
+            {#if ask.busy}
+              <span
+                class="size-4 shrink-0 animate-spin rounded-full border-2 border-rule-2 border-t-olive motion-reduce:animate-none"
+                aria-hidden="true"
+              ></span>
+            {/if}
+            {ask.ask}
           </p>
+          <p class="m-0 mt-1.5 text-md text-soft">{ask.hint}</p>
         </div>
-      {/if}
-
-      {#if !connected}
-        <div class="{row} mt-4">
-          <StateMark class="text-md" mark={tailEnded ? 'stop' : 'wait'} word={tailEnded ? 'Recording ended' : 'Not live, reconnecting'} />
-        </div>
-      {/if}
-
-      {#if tailError}
-        <div class="mt-4 max-w-[var(--log-w)]"><Problem error={tailError} what="the activity tail" /></div>
-      {/if}
-
-      <!-- At the foot of the transcript rather than fixed to the
-           viewport: the "Jump to latest" control below is already
-           viewport-anchored there. Whether it is drawn is
-           `composerShown`'s, which reads both the row and the stream —
-           see lib/steer.ts. @decision(DL-059) -->
-      {#if messageCancelFailure}
-        <div class="mt-4"><Problem error={messageCancelFailure} what="cancelling that message" /></div>
       {/if}
 
       <!-- Below `lg` the composer is docked to the foot of the screen, as in
@@ -1261,7 +1333,7 @@
            as --dock-h for "Jump to latest". @decision(DL-106) -->
       <div
         class={!viewing && (composerShown(s.state, tailEnded) || (s.resume && resumeOffered(s.state, s.resume) && !job))
-          ? 'max-lg:sticky max-lg:bottom-0 max-lg:z-10 max-lg:-mx-[var(--page-pad-x)] max-lg:border-t max-lg:border-rule max-lg:bg-raised max-lg:px-[var(--page-pad-x)] max-lg:pt-2 max-lg:pb-[calc(0.5rem+env(safe-area-inset-bottom))]'
+          ? 'max-lg:mt-auto max-lg:sticky max-lg:bottom-0 max-lg:z-10 max-lg:-mx-[var(--page-pad-x)] max-lg:border-t max-lg:border-rule max-lg:bg-raised max-lg:px-[var(--page-pad-x)] max-lg:pt-2 max-lg:pb-[calc(0.5rem+env(safe-area-inset-bottom))]'
           : ''}
         bind:this={dock}
         data-testid="dock"
@@ -1312,8 +1384,11 @@
              instead would leave the control right of the text.
              @decision(DL-057) -->
         <div class="w-full max-w-[var(--log-w)] text-center">
+          <!-- A press takes no focus from the composer, so a phone's
+               keyboard stays up while the page jumps. @decision(DL-155) -->
           <button
             type="button"
+            onmousedown={(e) => e.preventDefault()}
             onclick={toEnd}
             class="{secondarySmall} pointer-events-auto shadow-sm"
           >

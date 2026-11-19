@@ -95,6 +95,37 @@ export interface Echo {
  *
  * @decision(DL-059) @decision(DL-019)
  */
+/**
+ * restoredDraft is the box's text after a refused send: the refused
+ * words, ahead of anything written into the box since it was cleared.
+ *
+ * @decision(DL-155) @decision(DL-059)
+ */
+export function restoredDraft(refused: string, since: string): string {
+  return since.trim() ? `${refused}\n${since}` : refused;
+}
+
+/**
+ * DismissDistance is how far, in CSS pixels, a finger must drag the
+ * conversation before the page takes the focus from the composer, which
+ * closes a phone's keyboard. A tap moves less than this.
+ *
+ * @decision(DL-155)
+ */
+export const DismissDistance = 10;
+
+/**
+ * dragDismisses reports whether a touch is a drag of the conversation
+ * that should close the keyboard: it began outside the dock, while the
+ * composer's box had focus, and has moved DismissDistance vertically.
+ *
+ * @decision(DL-155)
+ */
+export function dragDismisses(start: { y: number; inDock: boolean; focused: boolean } | undefined, y: number): boolean {
+  if (!start || start.inDock || !start.focused) return false;
+  return Math.abs(y - start.y) >= DismissDistance;
+}
+
 export function draftProblem(text: string): string {
   return text.trim() ? "" : "a message needs some text";
 }

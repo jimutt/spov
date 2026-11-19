@@ -19,6 +19,8 @@ import {
   toolInput,
   trimBlankLines,
   shownWarnings,
+  NotRecorded,
+  openingAsk,
   stopNote,
   type Activity,
   type Block,
@@ -507,6 +509,35 @@ describe("a transcript warning", () => {
   test("having no warnings is not a warning", () => {
     expect(shownWarnings([], 0)).toEqual([]);
     expect(shownWarnings([], 5)).toEqual([]);
+  });
+});
+
+describe("an empty live session", () => {
+  // @decision(DL-154)
+  test("is not told nothing was recorded, but keeps every other warning", () => {
+    const stopped = "the recorder stopped: its redial budget is spent";
+    expect(shownWarnings([NotRecorded, stopped], 0, true)).toEqual([stopped]);
+    expect(shownWarnings([NotRecorded, stopped], 0, false)).toEqual([NotRecorded, stopped]);
+  });
+
+  // @decision(DL-154)
+  test("asks a person what to work on, and a job's says it is starting", () => {
+    expect(openingAsk(0, "live", false)?.ask).toBe("What do you want to work on?");
+    expect(openingAsk(0, "live", true)?.ask).toMatch(/starting on the job/);
+  });
+
+  // @decision(DL-154)
+  test("says the sandbox is starting while it boots", () => {
+    expect(openingAsk(0, "starting", false)).toMatchObject({ ask: "Starting the sandbox", busy: true });
+    expect(openingAsk(0, "starting", true)?.busy).toBe(true);
+    expect(openingAsk(0, "live", false)?.busy).toBe(false);
+  });
+
+  // @decision(DL-154)
+  test("asks nothing once anything is on screen, or once it is not live", () => {
+    expect(openingAsk(1, "live", false)).toBeNull();
+    expect(openingAsk(1, "starting", false)).toBeNull();
+    expect(openingAsk(0, "other", false)).toBeNull();
   });
 });
 

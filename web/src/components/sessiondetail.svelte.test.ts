@@ -49,6 +49,7 @@ const stub = vi.hoisted(() => {
   let session: Record<string, unknown> = {};
   let logOpens = 0;
   let conversations: unknown[] = [];
+  let warnings: string[] = [];
 
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
@@ -110,7 +111,7 @@ const stub = vi.hoisted(() => {
     }
     if (url.pathname.endsWith("/messages")) {
       messageReads++;
-      return json({ conversations });
+      return json({ conversations, warnings });
     }
     if (url.pathname === "/api/v1/jobs/j1/file") {
       const path = url.searchParams.get("path") ?? "";
@@ -168,11 +169,13 @@ const stub = vi.hoisted(() => {
       session = {};
       logOpens = 0;
       conversations = [];
+      warnings = [];
     },
     withResume: (r: Record<string, unknown>) => (resume = r),
     logOpens: () => logOpens,
     requests: () => fetched.mock.calls.length,
     withConversations: (c: unknown[]) => (conversations = c),
+    withWarnings: (w: string[]) => (warnings = w),
     setAnswer: (a: Record<string, unknown>) => (answer = a),
     refuse: (s: number, problem: Record<string, unknown>) => {
       status = s;
@@ -342,6 +345,36 @@ describe("the composer on the session page", () => {
     expect(page.notes()).toEqual([]);
     expect(page.said()).toContain("the job is blocked");
     expect(page.box()!.value).toBe("are you stuck?");
+    page.done();
+  });
+
+  // @decision(DL-154)
+  it("asks what to work on in place of the not-recorded warning while the session is live", async () => {
+    stub.withWarnings(["nothing has been recorded for this session"]);
+    const page = await open();
+    expect(page.control("opening-ask")?.textContent).toContain("What do you want to work on?");
+    expect(page.said()).not.toContain("nothing has been recorded");
+    page.done();
+  });
+
+  // @decision(DL-154)
+  it("says the sandbox is starting, with no composer, until the session runs", async () => {
+    stub.sessionState("starting");
+    stub.withWarnings(["nothing has been recorded for this session"]);
+    const page = await open();
+    expect(page.control("opening-ask")?.textContent).toContain("Starting the sandbox");
+    expect(page.said()).not.toContain("nothing has been recorded");
+    expect(page.box()).toBeNull();
+    page.done();
+  });
+
+  // @decision(DL-154)
+  it("keeps the not-recorded warning on a session that is not live", async () => {
+    stub.sessionState("stopped");
+    stub.withWarnings(["nothing has been recorded for this session"]);
+    const page = await open();
+    expect(page.control("opening-ask")).toBeNull();
+    expect(page.said()).toContain("nothing has been recorded");
     page.done();
   });
 
