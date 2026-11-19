@@ -219,20 +219,20 @@ func fixGitHub(ctx context.Context, r *initRun) error {
 	return nil
 }
 
-// fixModel offers a pasted API key, the OpenCode sign-in, or neither.
+// fixModel offers the OpenCode sign-in first, a pasted API key, or
+// neither.
 //
 // @decision(DL-124)
 func fixModel(ctx context.Context, r *initRun) error {
 	env := r.env
-	options := []string{"Paste an API key for a model provider"}
-	const signIn = "Sign in to OpenCode Go or Zen"
-	modalReady := r.results[stepModal].state == stepOK
-	if modalReady {
+	const signIn = "Use an OpenCode Go or Zen subscription: sign in, no API key needed"
+	var options []string
+	if r.results[stepModal].state == stepOK {
 		options = append(options, signIn)
 	} else {
-		r.say("(Signing in to OpenCode Go or Zen is offered once Modal is connected: it goes through spov's local server.)")
+		r.say("(With an OpenCode Go or Zen subscription you need no API key: signing in is offered once Modal is connected, since it goes through spov's local server. Later, run `spov login opencode`.)")
 	}
-	options = append(options, "Skip for now")
+	options = append(options, "Paste an API key for a model provider", "Skip for now")
 	choice, err := env.choose(ctx, r.ask, "How should the agent reach a model?", options)
 	if err != nil || choice < 0 || options[choice] == "Skip for now" {
 		r.say("Skipped. The agent cannot reach a model until you add one.")

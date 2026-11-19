@@ -165,7 +165,7 @@ func TestInitOnAReadySetupAsksNothing(t *testing.T) {
 // @decision(DL-124)
 func TestInitSetsUpAFreshMachine(t *testing.T) {
 	f := newInitFixture(t, "sandbox:\n  egress: install # mine\n")
-	f.choices = []int{0, 0}
+	f.choices = []int{1, 0}
 	out, stderr, err := f.run()
 	if err != nil || !strings.Contains(out, "Ready.") {
 		t.Fatalf("init: %v\n%s", err, out)
@@ -284,14 +284,14 @@ func TestInitWithoutModal(t *testing.T) {
 	if !strings.Contains(out, "– 5. Sandbox image  waiting") || !strings.Contains(out, "waits for Modal") {
 		t.Errorf("the image step did not wait for Modal:\n%s", out)
 	}
-	if strings.Contains(strings.Join(f.offered, "|"), "Sign in to OpenCode") || !strings.Contains(out, "offered once Modal is connected") {
+	if strings.Contains(strings.Join(f.offered, "|"), "OpenCode Go or Zen subscription") || !strings.Contains(out, "offered once Modal is connected") || !strings.Contains(out, "spov login opencode") {
 		t.Errorf("the OpenCode sign-in was offered without Modal: %v\n%s", f.offered, out)
 	}
 	// With Modal it is one of the choices.
 	m := newInitFixture(t, "")
 	_, _, _ = m.run()
-	if !strings.Contains(strings.Join(m.offered, "|"), "Sign in to OpenCode") {
-		t.Errorf("with Modal the sign-in was not offered: %v", m.offered)
+	if len(m.offered) == 0 || !strings.Contains(m.offered[0], "OpenCode Go or Zen subscription") {
+		t.Errorf("with Modal the sign-in was not offered first: %v", m.offered)
 	}
 
 	// Credentials that are found and refused are step 1's failure.
@@ -544,7 +544,7 @@ func TestInitSettlesARunningLocalServer(t *testing.T) {
 			}
 		}))
 		f := newInitFixture(t, "")
-		f.choices = []int{0, 0}
+		f.choices = []int{1, 0}
 		f.env.ProcessAlive = func(int) bool { return true }
 		f.env.writeTestState(t, localState{PID: 4242, URL: srv.URL, Token: "tok", Version: tc.version})
 		out, _, err := f.run()
