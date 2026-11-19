@@ -80,6 +80,11 @@ func TestTheLaunchsOwnUnlistedModelCanBeSwitchedBackTo(t *testing.T) {
 	if err := f.svc.deps.Store.Sessions().Update(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
+	// @decision(DL-160)
+	if err := f.svc.deps.Store.Sessions().SetModelVariants(context.Background(), sess.OrgID, sess.ID, sess.SandboxID,
+		map[string][]string{"anthropic/claude-new-unlisted": {"high"}}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := f.svc.SwitchModel(context.Background(), f.p, f.sess.ID, ModelSwitch{Model: "anthropic/claude-new-unlisted#high"}); err != nil {
 		t.Errorf("err = %v", err)
 	}

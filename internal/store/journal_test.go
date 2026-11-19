@@ -162,6 +162,48 @@ func TestAJournalReopensToTheSameStore(t *testing.T) {
 	}
 }
 
+// A running session's model variants survive a reopen, a rolled-back
+// write of them leaves no trace, and a stopped session's are gone.
+//
+// @decision(DL-159) @decision(DL-091)
+func TestAJournalKeepsARunningSessionsModelVariants(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	m, j := journaled(t, dir, JournalOptions{})
+	run := Session{ID: NewID(jt0), OrgID: "org", OwnerID: "u", Name: "on", State: StateRunning, SandboxID: "sb-1"}
+	done := Session{ID: NewID(jt0.Add(time.Second)), OrgID: "org", OwnerID: "u", Name: "off", State: StateRunning, SandboxID: "sb-2"}
+	for _, s := range []Session{run, done} {
+		if err := m.Sessions().Create(ctx, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[string][]string{"anthropic/claude": {"low", "high", "max"}, "openai/gpt": {"minimal", "high"}}
+	if err := m.Sessions().SetModelVariants(ctx, "org", run.ID, "sb-1", want); err != nil {
+		t.Fatal(err)
+	}
+	_ = m.Tx(ctx, func(tx Store) error {
+		_ = tx.Sessions().SetModelVariants(ctx, "org", run.ID, "sb-9", map[string][]string{"x/y": {"never"}})
+		return errors.New("roll back")
+	})
+	if err := m.Sessions().SetModelVariants(ctx, "org", done.ID, "sb-2", want); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Sessions().MarkStopped(ctx, "org", done.ID, StateStopped, jt0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := m.Sessions().ModelVariants(ctx, "org", run.ID); got.SandboxID != "sb-1" || !reflect.DeepEqual(got.Models, want) {
+		t.Errorf("after the rolled-back write: %+v", got)
+	}
+	_ = j.Close()
+	again, _ := journaled(t, dir, JournalOptions{})
+	if got, err := again.Sessions().ModelVariants(ctx, "org", run.ID); err != nil || got.SandboxID != "sb-1" || !reflect.DeepEqual(got.Models, want) {
+		t.Errorf("reopened: %+v, %v; want sb-1's", got, err)
+	}
+	if got, _ := again.Sessions().ModelVariants(ctx, "org", done.ID); got.SandboxID != "" || got.Models != nil {
+		t.Errorf("the stopped session's came back: %+v", got)
+	}
+}
+
 // A torn last line is cut off before anything else is appended, and a
 // mostly superseded transcript is compacted.
 //

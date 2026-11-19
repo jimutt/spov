@@ -282,3 +282,24 @@ func TestAnOrdinaryFailureIsNotARefusal(t *testing.T) {
 		})
 	}
 }
+
+// A bounded read refuses a body past its bound once it has read one
+// byte more, where a plain read cuts it short.
+//
+// @decision(DL-159)
+func TestABoundedReadRefusesALongerBody(t *testing.T) {
+	sb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat("x", 100))
+	}))
+	defer sb.Close()
+	ctx := context.Background()
+	if body, err := sandboxGetBounded(ctx, sb.URL, "tok", "u", "p", 100); err != nil || len(body) != 100 {
+		t.Errorf("at the bound: %d bytes, %v", len(body), err)
+	}
+	if _, err := sandboxGetBounded(ctx, sb.URL, "tok", "u", "p", 99); !errors.Is(err, errSandboxBodyTooLarge) {
+		t.Errorf("past the bound: %v", err)
+	}
+	if body, err := sandboxGet(ctx, sb.URL, "tok", "u", "p"); err != nil || len(body) != 100 {
+		t.Errorf("a plain read: %d bytes, %v", len(body), err)
+	}
+}

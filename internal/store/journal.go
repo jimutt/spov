@@ -46,9 +46,13 @@ type change struct {
 	session string
 	row     *Session
 	runs    []Run
-	conv    *Conversation
-	msgs    []Message
-	evs     []Event
+	// variants is the row's model variants, nil when none are kept.
+	//
+	// @decision(DL-159)
+	variants *ModelVariants
+	conv     *Conversation
+	msgs     []Message
+	evs      []Event
 }
 
 // emit hands a committed write to the sink, or holds it in a
@@ -76,7 +80,12 @@ func (m *Memory) emitRow(id string) {
 		return
 	}
 	row := copySession(sess)
-	m.emit(change{session: id, row: &row, runs: slices.Clone(m.runs[id])})
+	c := change{session: id, row: &row, runs: slices.Clone(m.runs[id])}
+	// @decision(DL-159)
+	if v, ok := m.modelVariants[id]; ok {
+		c.variants = &ModelVariants{SandboxID: v.SandboxID, Models: cloneVariants(v.Models)}
+	}
+	m.emit(c)
 }
 
 // Journal keeps a memory store's sessions on disk, one directory per
@@ -190,7 +199,7 @@ func (j *Journal) write(changes []change) {
 	for _, c := range changes {
 		switch {
 		case c.row != nil:
-			if err := j.writeRow(*c.row, c.runs); err != nil {
+			if err := j.writeRow(*c.row, c.runs, c.variants); err != nil {
 				failed = err
 			}
 		case c.conv != nil:
@@ -243,7 +252,7 @@ func (j *Journal) sessionDir(id string) (string, error) {
 // file.
 //
 // @decision(DL-092)
-func (j *Journal) writeRow(sess Session, runs []Run) error {
+func (j *Journal) writeRow(sess Session, runs []Run, variants *ModelVariants) error {
 	dir, err := j.sessionDir(sess.ID)
 	if err != nil {
 		return err
@@ -252,7 +261,12 @@ func (j *Journal) writeRow(sess Session, runs []Run) error {
 		return err
 	}
 	var buf bytes.Buffer
-	if err := encodeLine(&buf, sessionFileBody{Format: JournalFormat, Session: sessionRecordOf(sess), Runs: runRecordsOf(runs)}); err != nil {
+	body := sessionFileBody{Format: JournalFormat, Session: sessionRecordOf(sess), Runs: runRecordsOf(runs)}
+	// @decision(DL-159)
+	if variants != nil {
+		body.ModelVariants = &modelVariantsRecord{SandboxID: variants.SandboxID, Models: variants.Models}
+	}
+	if err := encodeLine(&buf, body); err != nil {
 		return err
 	}
 	return writeAtomic(filepath.Join(dir, sessionFile), buf.Bytes())
@@ -362,6 +376,10 @@ func (j *Journal) loadSession(m *Memory, dir string) error {
 	}
 	if len(runs) > 0 {
 		m.runs[sess.ID] = runs
+	}
+	// @decision(DL-159)
+	if v := file.ModelVariants; v != nil {
+		m.modelVariants[sess.ID] = ModelVariants{SandboxID: v.SandboxID, Models: cloneVariants(v.Models)}
 	}
 	return j.loadTranscript(m, sess.ID, filepath.Join(dir, transcriptFile))
 }
@@ -547,6 +565,7 @@ func (m *Memory) forgetSessionLocked(id string) {
 	delete(m.sessions, id)
 	delete(m.runs, id)
 	delete(m.proxyCAs, id)
+	delete(m.modelVariants, id)
 	for _, evID := range m.eventsBySession[id] {
 		ev := m.events[evID]
 		delete(m.eventSeqs, convSeq{ev.ConversationID, ev.Seq})
@@ -575,6 +594,15 @@ type (
 		Format  int           `json:"format"`
 		Session sessionRecord `json:"session"`
 		Runs    []runRecord   `json:"runs"`
+		// ModelVariants is optional, so a format 1 file written
+		// before it reads as none kept.
+		//
+		// @decision(DL-159)
+		ModelVariants *modelVariantsRecord `json:"model_variants,omitempty"`
+	}
+	modelVariantsRecord struct {
+		SandboxID string              `json:"sandbox_id"`
+		Models    map[string][]string `json:"models"`
 	}
 	headerRecord struct {
 		Type    string    `json:"type"`

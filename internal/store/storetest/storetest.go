@@ -425,6 +425,69 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("a stopped session's CA is still kept: %v", err)
 		}
 	},
+	// @decision(DL-159)
+	"a session's model variants are kept for their sandbox while it runs there": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		in := session(store.NewID(t0), "org", "u1", "variants", store.StateRunning)
+		in.SandboxID = "sb-1"
+		if err := s.Sessions().Create(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.Sessions().ModelVariants(ctx, "org", in.ID); err != nil || got.SandboxID != "" || len(got.Models) != 0 {
+			t.Errorf("a new session's variants = %+v, %v; want none", got, err)
+		}
+		stale, err := s.Sessions().Get(ctx, "org", in.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		first := map[string][]string{"anthropic/claude": {"low", "high", "max"}}
+		if err := s.Sessions().SetModelVariants(ctx, "org", in.ID, "sb-1", first); err != nil {
+			t.Fatal(err)
+		}
+		second := map[string][]string{"openrouter/x/y": {"none", "thinking"}, "openai/gpt": {"minimal", "low", "medium", "high"}}
+		if err := s.Sessions().SetModelVariants(ctx, "org", in.ID, "sb-1", second); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Sessions().Update(ctx, stale); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Sessions().ModelVariants(ctx, "org", in.ID)
+		if err != nil || got.SandboxID != "sb-1" || !reflect.DeepEqual(got.Models, second) {
+			t.Errorf("ModelVariants = %+v, %v; want the second write, in order, kept across an update", got, err)
+		}
+		// A late write from another run's sandbox changes nothing.
+		if err := s.Sessions().SetModelVariants(ctx, "org", in.ID, "sb-old", first); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("another sandbox's write: %v", err)
+		}
+		if got, _ := s.Sessions().ModelVariants(ctx, "org", in.ID); got.SandboxID != "sb-1" || !reflect.DeepEqual(got.Models, second) {
+			t.Errorf("another sandbox's write replaced the list: %+v", got)
+		}
+		if _, err := s.Sessions().ModelVariants(ctx, "other", in.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("another org read them: %v", err)
+		}
+		if err := s.Sessions().SetModelVariants(ctx, "other", in.ID, "sb-3", first); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("another org wrote them: %v", err)
+		}
+		if err := s.Sessions().SetModelVariants(ctx, "org", "nope", "sb-3", first); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a missing session: %v", err)
+		}
+		if _, err := s.Sessions().ModelVariants(ctx, "org", "nope"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a missing session's read: %v", err)
+		}
+		if _, err := s.Sessions().MarkStopped(ctx, "org", in.ID, store.StateStopped, t0, ""); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.Sessions().ModelVariants(ctx, "org", in.ID); err != nil || got.SandboxID != "" || len(got.Models) != 0 {
+			t.Errorf("a stopped session's variants are still kept: %+v, %v", got, err)
+		}
+		// A write that lands after the stop does not bring them back.
+		if err := s.Sessions().SetModelVariants(ctx, "org", in.ID, "sb-1", first); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a write after the stop: %v", err)
+		}
+		if got, _ := s.Sessions().ModelVariants(ctx, "org", in.ID); got.SandboxID != "" {
+			t.Errorf("a write after the stop brought them back: %+v", got)
+		}
+	},
 	// @decision(DL-015)
 	"a session's OpenCode grant generation is its own write": func(t *testing.T, s store.Store) {
 		ctx := context.Background()

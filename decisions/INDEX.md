@@ -2,9 +2,12 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-161 | A running session's composer offers the model's reasoning modes beside the model, and keeps the chosen mode across a switch when the new model offers it | accepted | web | reasoning-modes, models, session-page |
+| DL-160 | A session serves its models' reasoning modes, and its model switch refuses a mode the model does not offer there | accepted | server | reasoning-modes, models |
+| DL-159 | The recorder reads which reasoning modes each model offers from the running sandbox, once per run, and keeps them on the session | accepted | server | reasoning-modes, models |
+| DL-158 | An opened run draws thoughts whole and readable, and each tool call opens on its own press | accepted | web | session-page, transcript |
 | DL-157 | The page of spov sign-in tokens is called Access tokens and points to where session credentials live | accepted | web | settings, wording |
 | DL-156 | A create form leaves for the new session by replacing itself in the history | accepted | web | session-page, navigation |
-| DL-158 | An opened run draws thoughts whole and readable, and each tool call opens on its own press | accepted | web | session-page, transcript |
 | DL-155 | The composer keeps its focus through a send and a jump to the end, and a drag of the conversation closes the keyboard | accepted | web | phone-layout, session-page |
 | DL-154 | On a phone the composer sits at the foot of the screen, and a new session says it is starting, then asks what to work on | accepted | web | phone-layout, session-page |
 | DL-153 | The light theme is a bright warm paper with white raised surfaces, and a hover darkens | accepted | web | web, theme, palette |

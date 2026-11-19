@@ -129,6 +129,11 @@ func (o *jobOpenCode) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == "/api/session":
 		jobJSON(w, `{"data":{"id":"ses_job"}}`)
+	// The recorder's model list, which has no model with variants here.
+	//
+	// @decision(DL-159)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/model":
+		jobJSON(w, `{"location":{"directory":"/workspace"},"data":[]}`)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/fs/list":
 		o.mu.Lock()
 		status := o.listStatus

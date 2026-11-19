@@ -247,6 +247,14 @@ type Session struct {
 	RoutedCredentials []byte
 }
 
+type SessionModelVariant struct {
+	SessionID string
+	OrgID     string
+	SandboxID string
+	Models    []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type SessionProxyCa struct {
 	SessionID  string
 	OrgID      string

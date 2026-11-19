@@ -147,6 +147,39 @@ type SessionStore interface {
 	// @decision(DL-034)
 	SetProxyCA(ctx context.Context, orgID, id string, ca SealedValue) error
 	ProxyCA(ctx context.Context, orgID, id string) (SealedValue, error)
+	// SetModelVariants keeps the reasoning modes each model offers in
+	// the session's sandbox, with the sandbox they were read from, only
+	// while the session runs on that sandbox (ErrNotFound otherwise); a
+	// second write replaces the first, Update keeps them and MarkStopped
+	// deletes them. ModelVariants reads them back, the zero value when
+	// none are kept, and ErrNotFound for a session that is not this
+	// org's. No listing or session read carries them.
+	//
+	// @decision(DL-159)
+	SetModelVariants(ctx context.Context, orgID, id, sandboxID string, models map[string][]string) error
+	ModelVariants(ctx context.Context, orgID, id string) (ModelVariants, error)
+}
+
+// ModelVariants is what a session's sandbox said each model offers:
+// Models maps provider/model to its variant ids in OpenCode's order,
+// and holds only models that have some.
+//
+// @decision(DL-159)
+type ModelVariants struct {
+	SandboxID string
+	Models    map[string][]string
+}
+
+// cloneVariants copies a ModelVariants' models, slices included.
+func cloneVariants(models map[string][]string) map[string][]string {
+	if models == nil {
+		return nil
+	}
+	out := make(map[string][]string, len(models))
+	for k, v := range models {
+		out[k] = slices.Clone(v)
+	}
+	return out
 }
 
 // SealedValue is a secret sealed with auth.Sealer: the ciphertext, its

@@ -108,6 +108,7 @@
     watchesForAResume,
   } from '../lib/resume';
   import { currentModel } from '../lib/modelpick';
+  import { VariantsRetries, VariantsRetryMs, type ModelVariants } from '../lib/reasoning';
   import { stateMark, stateWord as subagentWord, subagentsWord, subagentsWorking } from '../lib/subagent';
   import {
     agentOf,
@@ -520,6 +521,43 @@
     document.title = pageTitle;
   });
   const life = $derived(s ? lifetime(s, now) : undefined);
+
+  // The reasoning modes the running session's sandbox lists: read once
+  // per sandbox, at the page's level so a composer drawn again asks for
+  // nothing, and while none are read again now and then, a bounded
+  // number of times. A store read.
+  //
+  // @decision(DL-161) @decision(DL-018)
+  const variantsSandbox = $derived(s?.state === 'running' ? (s.sandbox_id ?? '') : '');
+  let variants = $state<ModelVariants | undefined>(undefined);
+  // Reads are numbered, so an older answer never replaces a newer one.
+  let variantReads = 0;
+  async function readVariants() {
+    const n = ++variantReads;
+    try {
+      const body = await unwrap(await api.GET('/api/v1/sessions/{ref}/model-variants', { params: { path: { ref } } }));
+      if (n === variantReads && body) variants = body;
+    } catch {
+      // No list, no reasoning choice.
+    }
+  }
+  $effect(() => {
+    if (!variantsSandbox) return;
+    variants = undefined;
+    void readVariants();
+    // Only a read made counts: a hidden tab's ticks ask for nothing.
+    let tries = 0;
+    const timer = setInterval(() => {
+      if (untrack(() => variants?.read) || tries >= VariantsRetries) {
+        clearInterval(timer);
+        return;
+      }
+      if (document.visibilityState !== 'visible') return;
+      tries++;
+      void readVariants();
+    }, VariantsRetryMs);
+    return () => clearInterval(timer);
+  });
 
   // The job this session is running, if it is running one. A store
   // read, so polling it does not reset the idle clock.
@@ -1354,6 +1392,8 @@
           turnsEnded={turnsSeenEnded}
           {asking}
           {model}
+          {variants}
+          onVariantsStale={readVariants}
           jobKnown={jobs.loaded}
           jobState={job?.state}
           jobId={job?.id}

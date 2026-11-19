@@ -33,6 +33,7 @@
   } from '../lib/steer';
   import Icon from './Icon.svelte';
   import InfoToggle from './InfoToggle.svelte';
+  import { modelChip, type ModelVariants } from '../lib/reasoning';
   import ModelSwitch from './ModelSwitch.svelte';
   import Problem from './Problem.svelte';
   import StateMark from './StateMark.svelte';
@@ -87,6 +88,14 @@
      * @decision(DL-014)
      */
     model?: string;
+    /**
+     * The reasoning modes the session's sandbox lists, as the page read
+     * them, and how to ask it to read them again.
+     *
+     * @decision(DL-161)
+     */
+    variants?: ModelVariants;
+    onVariantsStale?: () => void;
     /** Called at each step of a send, so the page can draw the echo. */
     onEcho: EchoTrack;
     /**
@@ -99,7 +108,8 @@
     onJobChanged?: () => void | Promise<void>;
   }
 
-  const { ref, jobKnown, jobState, jobId, inFlight, working = 0, turnsEnded = 0, asking = false, model, onEcho, onJobChanged }: Props = $props();
+  const { ref, jobKnown, jobState, jobId, inFlight, working = 0, turnsEnded = 0, asking = false, model, variants, onVariantsStale, onEcho, onJobChanged }: Props =
+    $props();
 
   let text = $state('');
   // What follows this message on a running job. Back to continue after
@@ -176,7 +186,10 @@
   //
   // @decision(DL-106)
   let optionsOpen = $state(false);
-  const modelShort = $derived(model ? (model.split('#')[0].split('/').pop() ?? model) : '');
+  // The model and its reasoning mode, if any.
+  //
+  // @decision(DL-161)
+  const modelShort = $derived(model ? modelChip(model) : '');
   const chip = $derived(
     `${modelShort || 'Options'}${choosesAfter && following === 'handover' ? ' · hand over' : ''}`,
   );
@@ -492,10 +505,11 @@
           {/if}
         {/if}
 
-        <!-- Switching applies from the agent's next step.
-             @decision(DL-014) -->
+        <!-- Switching applies from the agent's next step; the reasoning
+             choice is a cell of its own beside it.
+             @decision(DL-014) @decision(DL-161) -->
         {#if model !== undefined}
-          <ModelSwitch {ref} current={model} />
+          <ModelSwitch {ref} current={model} {variants} onStale={onVariantsStale} />
         {/if}
 
         {#if !touch}

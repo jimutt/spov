@@ -52,8 +52,10 @@ const (
 	// @decision(DL-149) @decision(DL-150)
 	aConversationTitle = "A's private conversation title"
 	aJobTitle          = "A's private job title"
-	aTemplate          = "a-tmpl"
-	strangerOrg        = "org-stranger"
+	// @decision(DL-160)
+	aReasoningMode = "a-private-reasoning-mode"
+	aTemplate      = "a-tmpl"
+	strangerOrg    = "org-stranger"
 	// The service account's, which only it and an admin may reach.
 	//
 	// @decision(DL-140)
@@ -148,6 +150,8 @@ func (w *tenantWorld) markers() []string {
 		aTemplateText, aTemplateEnv,
 		// @decision(DL-149) @decision(DL-150)
 		aConversationTitle, aJobTitle,
+		// @decision(DL-160)
+		aReasoningMode,
 		w.webSessionID, w.tokenID, w.attempt,
 		w.run.SandboxID, w.askID, w.formID,
 		// @decision(DL-140)
@@ -267,6 +271,13 @@ func newTenantWorld(t *testing.T) *tenantWorld {
 		Name: jobs.EventInboxEnqueued, Text: aMessageText, At: recordedAt,
 		Raw: []byte(strings.Replace(realInboxFrame, "reply with ok", aMessageText, 1)),
 	})
+	// The reasoning modes A's sandbox listed.
+	//
+	// @decision(DL-160)
+	if err := f.store.Sessions().SetModelVariants(ctx, w.run.OrgID, w.run.ID, w.run.SandboxID,
+		map[string][]string{"anthropic/claude-opus-5": {"low", aReasoningMode}}); err != nil {
+		t.Fatal(err)
+	}
 	askOn(t, f.srv.svc, w.run, eventPermissionAsked, w.askID, store.SourceEphemeral)
 	askOn(t, f.srv.svc, w.run, eventFormCreated, w.formID, store.SourceEphemeral)
 
@@ -421,7 +432,10 @@ func (w *tenantWorld) snapshot() string {
 	for _, s := range sessions {
 		evs, _ := st.Conversations().ListEvents(ctx, s.OrgID, s.ID, 0, 1000)
 		msgs, _ := st.Conversations().ListMessages(ctx, s.OrgID, s.ID)
-		rows = append(rows, fmt.Sprintf("%s %s %s sandbox=%s events=%d messages=%d", s.ID, s.Name, s.State, s.SandboxID, len(evs), len(msgs)))
+		// @decision(DL-160)
+		variants, _ := st.Sessions().ModelVariants(ctx, s.OrgID, s.ID)
+		rows = append(rows, fmt.Sprintf("%s %s %s sandbox=%s events=%d messages=%d variants=%v", s.ID, s.Name, s.State, s.SandboxID,
+			len(evs), len(msgs), variants))
 	}
 	sort.Strings(rows)
 	out["sessions"] = rows
@@ -538,6 +552,8 @@ func (w *tenantWorld) byRef() []route {
 			body: map[string]any{"answer": map[string]any{"q0": "Blue"}}},
 		{op: "DELETE /api/v1/sessions/{ref}/forms/{id}", refs: sess, ids: map[string]string{"id": w.formID}},
 		{op: "POST /api/v1/sessions/{ref}/model", refs: sess, body: map[string]string{"model": "openrouter/some-model"}},
+		// @decision(DL-160)
+		{op: "GET /api/v1/sessions/{ref}/model-variants", refs: sess},
 		{op: "POST /api/v1/sessions/{ref}/sync-export", refs: sess},
 		{op: "POST /api/v1/sessions/{ref}/connect", refs: sess},
 		{op: "POST /api/v1/sessions/{ref}/resume", refs: sess, body: map[string]any{}, ownerRef: w.stopped.ID},

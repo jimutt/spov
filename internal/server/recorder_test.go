@@ -49,10 +49,16 @@ type fakeSandbox struct {
 	connectErr error
 	// connectAs records the principal of every connect.
 	connectAs []auth.Principal
+	// models is what /api/model answers, and modelsErr fails it.
+	//
+	// @decision(DL-159)
+	models    string
+	modelsErr error
 }
 
 func newFakeSandbox(t testing.TB) *fakeSandbox {
-	return &fakeSandbox{t: t, reads: map[string]int{}, listing: `{"data":[]}`, messages: map[string]string{}, infos: map[string]string{}, stream: make(chan string, 64)}
+	return &fakeSandbox{t: t, reads: map[string]int{}, listing: `{"data":[]}`, messages: map[string]string{}, infos: map[string]string{},
+		models: `{"location":{"directory":"/workspace"},"data":[]}`, stream: make(chan string, 64)}
 }
 
 func (f *fakeSandbox) connect(_ context.Context, p auth.Principal, _ store.Session) (Connection, error) {
@@ -117,6 +123,13 @@ func (f *fakeSandbox) fetch(_ context.Context, _ Connection, path string) ([]byt
 		}
 		return []byte(f.listing), nil
 	}
+	// @decision(DL-159)
+	if path == modelListPath {
+		if f.modelsErr != nil {
+			return nil, f.modelsErr
+		}
+		return []byte(f.models), nil
+	}
 	route, query, _ := strings.Cut(path, "?")
 	if id, ok := strings.CutPrefix(route, "/api/session/"); ok && !strings.Contains(id, "/") {
 		if f.infoErr != nil {
@@ -133,6 +146,18 @@ func (f *fakeSandbox) fetch(_ context.Context, _ Connection, path string) ([]byt
 		}
 	}
 	return nil, errors.New("no such conversation")
+}
+
+// fetchBounded is fetch, refusing a body over limit as the real read
+// does.
+//
+// @decision(DL-159)
+func (f *fakeSandbox) fetchBounded(ctx context.Context, conn Connection, path string, limit int64) ([]byte, error) {
+	body, err := f.fetch(ctx, conn, path)
+	if err == nil && int64(len(body)) > limit {
+		return nil, fmt.Errorf("%w: over %d bytes", errSandboxBodyTooLarge, limit)
+	}
+	return body, err
 }
 
 // pageOfMessages answers a /message read as the pinned build does
@@ -300,6 +325,8 @@ func newRecorderFixture(t *testing.T) *recorderFixture {
 		f.warns = append(f.warns, s)
 	})
 	f.rec.connect, f.rec.events, f.rec.fetch = f.sb.connect, f.sb.events, f.sb.fetch
+	// @decision(DL-159)
+	f.rec.fetchBounded = f.sb.fetchBounded
 	// NewRecorder was handed a nil Service, so the production drop
 	// closure would panic rather than fail the moment a fake returned
 	// a refusal. Stubbed here; the tests that care replace it.

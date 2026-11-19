@@ -117,6 +117,8 @@ interface Drawn {
   onJobChanged?: () => void | Promise<void>;
   /** The session's model, which the composer's chip names. */
   model?: string;
+  /** The models' reasoning modes, as the page read them. @decision(DL-161) */
+  variants?: { read: boolean; models: Record<string, string[]> };
 }
 
 function draw(jobState?: JobState, opts: Drawn = {}) {
@@ -134,6 +136,7 @@ function draw(jobState?: JobState, opts: Drawn = {}) {
       jobId: given ?? undefined,
       inFlight: opts.inFlight ?? false,
       model: opts.model,
+      variants: opts.variants,
       onEcho: track,
       onJobChanged: changed,
     },
@@ -732,7 +735,8 @@ describe("resuming a job", () => {
 describe("the options a phone folds away", () => {
   it("names the model on the chip and opens the options on a press", () => {
     const c = draw("running", { model: "anthropic/claude-sonnet-4-5#high" });
-    expect(c.chip().textContent).toContain("claude-sonnet-4-5");
+    // @decision(DL-161)
+    expect(c.chip().textContent).toContain("claude-sonnet-4-5 · high");
     expect(c.chip().textContent).not.toContain("anthropic/");
     expect(c.chip().getAttribute("aria-expanded")).toBe("false");
     expect(c.options().className).toContain("hidden");
@@ -742,6 +746,21 @@ describe("the options a phone folds away", () => {
     expect(c.chip().getAttribute("aria-expanded")).toBe("true");
     expect(c.options().className).not.toContain("hidden");
     expect(c.options().contains(c.after())).toBe(true);
+    c.done();
+  });
+
+  // @decision(DL-161) @decision(DL-117)
+  it("folds the reasoning choice away with the model, as one cell of the options", () => {
+    const c = draw("running", {
+      model: "anthropic/claude-sonnet-4-5",
+      variants: { read: true, models: { "anthropic/claude-sonnet-4-5": ["low", "high"] } },
+    });
+    flushSync();
+    const reasoning = c.target.querySelectorAll('[data-testid="composer-reasoning"]');
+    expect(reasoning).toHaveLength(1);
+    expect(c.options().contains(reasoning[0])).toBe(true);
+    expect(reasoning[0].closest('[data-testid="model-switch"]')).toBeNull();
+    expect(c.chip().textContent).not.toContain("·");
     c.done();
   });
 

@@ -112,6 +112,21 @@ func openSandboxEvents(ctx context.Context, conn Connection) (io.ReadCloser, err
 //
 // @decision(DL-018) @decision(DL-030)
 func sandboxGet(ctx context.Context, url, token, user, password string) ([]byte, error) {
+	return sandboxRead(ctx, url, token, user, password, MaxSandboxReadBytes, false)
+}
+
+// sandboxGetBounded is sandboxGet for a body of at most limit bytes: a
+// longer one is refused once limit+1 bytes are read, rather than cut
+// short.
+//
+// @decision(DL-018) @decision(DL-159)
+func sandboxGetBounded(ctx context.Context, url, token, user, password string, limit int64) ([]byte, error) {
+	return sandboxRead(ctx, url, token, user, password, limit, true)
+}
+
+// sandboxRead reads up to limit bytes of one response, refusing a longer
+// body when strict and cutting it short otherwise.
+func sandboxRead(ctx context.Context, url, token, user, password string, limit int64, strict bool) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -132,8 +147,23 @@ func sandboxGet(ctx context.Context, url, token, user, password string) ([]byte,
 	if resp.StatusCode != http.StatusOK {
 		return nil, sandboxStatus(actRead, resp.StatusCode, resp.Status)
 	}
-	return io.ReadAll(io.LimitReader(resp.Body, MaxSandboxReadBytes))
+	if !strict {
+		return io.ReadAll(io.LimitReader(resp.Body, limit))
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read the sandbox: %s", redact.Error(err))
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("%w: over %d bytes", errSandboxBodyTooLarge, limit)
+	}
+	return body, nil
 }
+
+// errSandboxBodyTooLarge is a bounded read's body past its bound.
+//
+// @decision(DL-159)
+var errSandboxBodyTooLarge = errors.New("the sandbox's answer is too large")
 
 // readSSEFrames delivers each frame's data to fn until the stream ends,
 // fn returns false, or ctx is cancelled. Multi-line data is joined, and
