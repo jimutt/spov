@@ -6,7 +6,7 @@
   //
   // @decision(DL-058) @decision(DL-112) @decision(DL-158)
   import { SvelteSet } from 'svelte/reactivity';
-  import { CollapseFrom, Thought, runSummary, shown, toolDetail, toolInput, type EventEntry } from '../lib/timeline';
+  import { CollapseFrom, Thought, clipDetail, runSummary, shown, toolDetail, toolInput, type EventEntry } from '../lib/timeline';
   import Icon from './Icon.svelte';
   import { textButton } from './ui';
 
@@ -74,7 +74,7 @@
               class="pl-[9ch] font-sans text-rust {isOpen ? 'whitespace-pre-wrap break-words' : 'truncate'}"
               title={entry.calls.error}
             >
-              {entry.calls.error ? `Failed: ${entry.calls.error}` : 'Failed'}
+              {entry.calls.error ? `Failed: ${isOpen ? clipDetail(entry.calls.error) : entry.calls.error}` : 'Failed'}
             </li>
           {/if}
         {:else if entry.name === Thought && entry.text.trim()}
