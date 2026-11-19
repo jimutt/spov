@@ -195,6 +195,8 @@ func New(deps Deps, addr string) (*Server, error) {
 	s.registerLive()
 	s.registerAsks()
 	s.registerSwitchModel()
+	// @decision(DL-160)
+	s.registerModelVariants()
 	s.registerOrgGitHub()
 	// Autonomous jobs. Registered unconditionally so the API document
 	// does not depend on how a deployment is configured; a server with

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -315,6 +316,50 @@ func (p pgSessions) ProxyCA(ctx context.Context, orgID, id string) (store.Sealed
 	return store.SealedValue{Ciphertext: row.Ciphertext, Nonce: row.Nonce, KeyVersion: int(row.KeyVersion)}, nil
 }
 
+// SetModelVariants keeps what the session's sandbox said its models
+// offer, replacing what was kept; a session that is not this org's is
+// ErrNotFound.
+//
+// @decision(DL-159)
+func (p pgSessions) SetModelVariants(ctx context.Context, orgID, id, sandboxID string, models map[string][]string) error {
+	if models == nil {
+		models = map[string][]string{}
+	}
+	raw, err := json.Marshal(models)
+	if err != nil {
+		return fmt.Errorf("store: encode model variants: %w", err)
+	}
+	n, err := p.s.q.PutSessionModelVariants(ctx, sqlcgen.PutSessionModelVariantsParams{
+		ID: id, OrgID: orgID, SandboxID: sandboxID, Models: raw, UpdatedAt: ts(p.s.now()),
+	})
+	if err != nil {
+		return mapErr("set session model variants", err)
+	}
+	if n == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// ModelVariants reads back what SetModelVariants kept: the zero value
+// when nothing is, ErrNotFound for a session that is not this org's.
+//
+// @decision(DL-159)
+func (p pgSessions) ModelVariants(ctx context.Context, orgID, id string) (store.ModelVariants, error) {
+	row, err := p.s.q.GetSessionModelVariants(ctx, sqlcgen.GetSessionModelVariantsParams{ID: id, OrgID: orgID})
+	if err != nil {
+		return store.ModelVariants{}, mapErr("get session model variants", err)
+	}
+	if row.SandboxID == nil {
+		return store.ModelVariants{}, nil
+	}
+	out := store.ModelVariants{SandboxID: *row.SandboxID}
+	if err := json.Unmarshal(row.Models, &out.Models); err != nil {
+		return store.ModelVariants{}, fmt.Errorf("store: decode model variants: %w", err)
+	}
+	return out, nil
+}
+
 // SetGitToken records the session's current renewable git token. Update
 // leaves these columns alone, so an older copy of the row cannot undo it.
 //
@@ -372,6 +417,10 @@ func (p pgSessions) MarkStopped(ctx context.Context, orgID, id string, state sto
 	if n == 1 {
 		if err := p.s.q.DeleteSessionProxyCA(ctx, sqlcgen.DeleteSessionProxyCAParams{SessionID: id, OrgID: orgID}); err != nil {
 			return true, mapErr("forget session proxy CA", err)
+		}
+		// @decision(DL-159)
+		if err := p.s.q.DeleteSessionModelVariants(ctx, sqlcgen.DeleteSessionModelVariantsParams{SessionID: id, OrgID: orgID}); err != nil {
+			return true, mapErr("forget session model variants", err)
 		}
 		// @decision(DL-085)
 		if err := p.s.q.EndCurrentRun(ctx, sqlcgen.EndCurrentRunParams{SessionID: id, OrgID: orgID, EndedAt: ts(at)}); err != nil {

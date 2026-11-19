@@ -1,0 +1,513 @@
+{
+ "location": {
+  "directory": "/workspace"
+ },
+ "data": [
+  {
+   "id": "claude-fable-5-2",
+   "modelID": "claude-fable-5-2",
+   "providerID": "anthropic",
+   "type": "chat",
+   "family": "claude-fable",
+   "name": "Claude Fable 5.2",
+   "package": "@opencode/ai/providers/anthropic",
+   "settings": {
+    "baseURL": "https://api.anthropic.com/v1"
+   },
+   "capabilities": {
+    "tools": true,
+    "input": [
+     "text",
+     "image",
+     "pdf"
+    ],
+    "output": [
+     "text"
+    ],
+    "temperature": false
+   },
+   "variants": [
+    {
+     "id": "low",
+     "settings": {
+      "thinking": {
+       "type": "adaptive",
+       "display": "summarized"
+      },
+      "effort": "low"
+     }
+    },
+    {
+     "id": "medium",
+     "settings": {
+      "thinking": {
+       "type": "adaptive",
+       "display": "summarized"
+      },
+      "effort": "medium"
+     }
+    },
+    {
+     "id": "high",
+     "settings": {
+      "thinking": {
+       "type": "adaptive",
+       "display": "summarized"
+      },
+      "effort": "high"
+     }
+    },
+    {
+     "id": "xhigh",
+     "settings": {
+      "thinking": {
+       "type": "adaptive",
+       "display": "summarized"
+      },
+      "effort": "xhigh"
+     }
+    },
+    {
+     "id": "max",
+     "settings": {
+      "thinking": {
+       "type": "adaptive",
+       "display": "summarized"
+      },
+      "effort": "max"
+     }
+    }
+   ],
+   "time": {
+    "released": 1794182400000
+   },
+   "cost": [
+    {
+     "input": 8,
+     "output": 40,
+     "cache": {
+      "read": 0.2,
+      "write": 10
+     }
+    }
+   ],
+   "status": "active",
+   "enabled": true,
+   "limit": {
+    "context": 1000000,
+    "output": 128000
+   }
+  },
+  {
+   "id": "gpt-5-nano",
+   "modelID": "gpt-5-nano",
+   "providerID": "openai",
+   "type": "chat",
+   "family": "gpt-nano",
+   "name": "GPT-5 Nano",
+   "package": "@opencode/ai/providers/openai/responses",
+   "settings": {
+    "baseURL": "https://api.openai.com/v1"
+   },
+   "capabilities": {
+    "tools": true,
+    "freeform": [
+     "text",
+     "lark",
+     "regex"
+    ],
+    "input": [
+     "text",
+     "image"
+    ],
+    "output": [
+     "text"
+    ],
+    "temperature": false
+   },
+   "variants": [
+    {
+     "id": "minimal",
+     "settings": {
+      "reasoningEffort": "minimal",
+      "reasoningSummary": "auto",
+      "include": [
+       "reasoning.encrypted_content"
+      ]
+     }
+    },
+    {
+     "id": "low",
+     "settings": {
+      "reasoningEffort": "low",
+      "reasoningSummary": "auto",
+      "include": [
+       "reasoning.encrypted_content"
+      ]
+     }
+    },
+    {
+     "id": "medium",
+     "settings": {
+      "reasoningEffort": "medium",
+      "reasoningSummary": "auto",
+      "include": [
+       "reasoning.encrypted_content"
+      ]
+     }
+    },
+    {
+     "id": "high",
+     "settings": {
+      "reasoningEffort": "high",
+      "reasoningSummary": "auto",
+      "include": [
+       "reasoning.encrypted_content"
+      ]
+     }
+    }
+   ],
+   "time": {
+    "released": 1754524800000
+   },
+   "cost": [
+    {
+     "input": 0.05,
+     "output": 0.4,
+     "cache": {
+      "read": 0.005,
+      "write": 0
+     }
+    }
+   ],
+   "status": "active",
+   "enabled": true,
+   "limit": {
+    "context": 400000,
+    "input": 272000,
+    "output": 128000
+   }
+  },
+  {
+   "id": "tencent/hy4-flash",
+   "modelID": "tencent/hy4-flash",
+   "providerID": "openrouter",
+   "type": "chat",
+   "family": "Hy",
+   "name": "Hy4 flash",
+   "package": "@opencode/ai/providers/openrouter",
+   "settings": {
+    "baseURL": "https://openrouter.ai/api/v1"
+   },
+   "headers": {
+    "HTTP-Referer": "https://opencode.ai/",
+    "X-Title": "opencode"
+   },
+   "capabilities": {
+    "tools": true,
+    "input": [
+     "text",
+     "image"
+    ],
+    "output": [
+     "text"
+    ],
+    "temperature": true
+   },
+   "variants": [
+    {
+     "id": "none",
+     "settings": {
+      "reasoning": {
+       "enabled": false
+      }
+     }
+    },
+    {
+     "id": "thinking",
+     "settings": {
+      "reasoning": {
+       "enabled": true
+      }
+     }
+    }
+   ],
+   "time": {
+    "released": 1794787200000
+   },
+   "cost": [
+    {
+     "input": 0.035,
+     "output": 0.1405,
+     "cache": {
+      "read": 0.0015,
+      "write": 0
+     }
+    }
+   ],
+   "status": "active",
+   "enabled": true,
+   "limit": {
+    "context": 1048576,
+    "input": 983040,
+    "output": 65536
+   }
+  },
+  {
+   "id": "liquid/lfm-3-1.7b:free",
+   "modelID": "liquid/lfm-3-1.7b:free",
+   "providerID": "openrouter",
+   "type": "chat",
+   "family": "liquid",
+   "name": "LFM3-1.7B (free)",
+   "package": "@opencode/ai/providers/openrouter",
+   "settings": {
+    "baseURL": "https://openrouter.ai/api/v1"
+   },
+   "headers": {
+    "HTTP-Referer": "https://opencode.ai/",
+    "X-Title": "opencode"
+   },
+   "capabilities": {
+    "tools": true,
+    "input": [
+     "text"
+    ],
+    "output": [
+     "text"
+    ],
+    "temperature": true
+   },
+   "variants": [],
+   "time": {
+    "released": 1793923200000
+   },
+   "cost": [
+    {
+     "input": 0,
+     "output": 0,
+     "cache": {
+      "read": 0,
+      "write": 0
+     }
+    }
+   ],
+   "status": "active",
+   "enabled": true,
+   "limit": {
+    "context": 262144,
+    "output": 8192
+   }
+  },
+  {
+   "id": "gemini-4-neon",
+   "modelID": "gemini-4-neon",
+   "providerID": "google",
+   "type": "chat",
+   "family": "gemini",
+   "name": "Gemini 4 Neon",
+   "package": "@opencode/ai/providers/google",
+   "settings": {
+    "baseURL": "https://generativelanguage.googleapis.com/v1beta"
+   },
+   "capabilities": {
+    "tools": true,
+    "input": [
+     "text",
+     "image",
+     "video",
+     "audio",
+     "pdf"
+    ],
+    "output": [
+     "text"
+    ],
+    "temperature": true
+   },
+   "variants": [
+    {
+     "id": "low",
+     "settings": {
+      "thinkingConfig": {
+       "includeThoughts": true,
+       "thinkingLevel": "low"
+      }
+     }
+    },
+    {
+     "id": "medium",
+     "settings": {
+      "thinkingConfig": {
+       "includeThoughts": true,
+       "thinkingLevel": "medium"
+      }
+     }
+    },
+    {
+     "id": "high",
+     "settings": {
+      "thinkingConfig": {
+       "includeThoughts": true,
+       "thinkingLevel": "high"
+      }
+     }
+    },
+    {
+     "id": "xhigh",
+     "settings": {
+      "thinkingConfig": {
+       "includeThoughts": true,
+       "thinkingLevel": "xhigh"
+      }
+     }
+    }
+   ],
+   "time": {
+    "released": 1794960000000
+   },
+   "cost": [
+    {
+     "input": 3,
+     "output": 15,
+     "cache": {
+      "read": 0.15,
+      "write": 0
+     }
+    }
+   ],
+   "status": "active",
+   "enabled": true,
+   "limit": {
+    "context": 1048576,
+    "output": 65536
+   }
+  },
+  {
+   "id": "qwen4-max",
+   "modelID": "qwen4-max",
+   "providerID": "opencode-go",
+   "type": "chat",
+   "family": "qwen4-max",
+   "name": "Qwen4 Max",
+   "package": "@opencode/ai/providers/anthropic",
+   "settings": {
+    "baseURL": "https://opencode.ai/inference/go/anthropic/v1"
+   },
+   "capabilities": {
+    "tools": true,
+    "input": [
+     "text",
+     "image",
+     "video"
+    ],
+    "output": [
+     "text"
+    ],
+    "temperature": true
+   },
+   "variants": [
+    {
+     "id": "none",
+     "settings": {
+      "thinking": {
+       "type": "disabled"
+      }
+     }
+    },
+    {
+     "id": "low",
+     "settings": {
+      "thinking": {
+       "type": "adaptive",
+       "display": "summarized"
+      },
+      "effort": "low"
+     }
+    },
+    {
+     "id": "high",
+     "settings": {
+      "thinking": {
+       "type": "adaptive",
+       "display": "summarized"
+      },
+      "effort": "high"
+     }
+    },
+    {
+     "id": "xhigh",
+     "settings": {
+      "thinking": {
+       "type": "adaptive",
+       "display": "summarized"
+      },
+      "effort": "xhigh"
+     }
+    }
+   ],
+   "time": {
+    "released": 1794787200000
+   },
+   "cost": [
+    {
+     "input": 1.5,
+     "output": 4.5,
+     "cache": {
+      "read": 0.075,
+      "write": 1.875
+     }
+    }
+   ],
+   "status": "active",
+   "enabled": true,
+   "limit": {
+    "context": 1000000,
+    "output": 262144
+   }
+  },
+  {
+   "id": "ministral-14b-2512",
+   "modelID": "ministral-14b-2512",
+   "providerID": "mistral",
+   "type": "chat",
+   "family": "ministral",
+   "name": "Ministral 3 14B",
+   "package": "@opencode/ai/providers/mistral",
+   "settings": {
+    "baseURL": "https://api.mistral.ai/v1"
+   },
+   "capabilities": {
+    "tools": true,
+    "input": [
+     "text",
+     "image",
+     "pdf"
+    ],
+    "output": [
+     "text"
+    ],
+    "temperature": true
+   },
+   "variants": [],
+   "time": {
+    "released": 1764633600000
+   },
+   "cost": [
+    {
+     "input": 0.2,
+     "output": 0.2,
+     "cache": {
+      "read": 0.02,
+      "write": 0
+     }
+    }
+   ],
+   "status": "active",
+   "enabled": true,
+   "limit": {
+    "context": 262144,
+    "output": 262144
+   }
+  }
+ ]
+}

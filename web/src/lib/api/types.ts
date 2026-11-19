@@ -748,6 +748,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{ref}/model-variants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the reasoning modes each model offers in a session */
+        get: operations["session-model-variants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{ref}/permissions/{id}": {
         parameters: {
             query?: never;
@@ -1527,6 +1544,20 @@ export interface components {
             conversation?: string;
             /** @description The model to switch to, as provider/model */
             model: string;
+        };
+        ModelVariantsView: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ModelVariantsView.json
+             */
+            readonly $schema?: string;
+            /** @description Each model that has reasoning modes, as provider/model, to its modes in OpenCode's order; empty while read is false */
+            models: {
+                [key: string]: string[] | null;
+            };
+            /** @description Whether the session's current sandbox has listed its models' reasoning modes */
+            read: boolean;
         };
         ModelsOutputBody: {
             /**
@@ -6446,6 +6477,66 @@ export interface operations {
             };
             /** @description Too Many Requests */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "session-model-variants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session ID or name */
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelVariantsView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

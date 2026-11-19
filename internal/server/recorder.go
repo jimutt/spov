@@ -181,7 +181,13 @@ type Recorder struct {
 	// sandbox given up on. Never retried while this process leads; a new
 	// leader starts afresh, and a resumed session's next sandbox too.
 	abandoned map[string]string
-	wg        sync.WaitGroup
+	// variantsTried is, by session, the sandbox whose model list this
+	// process has tried to read, so a failed read is not made again on
+	// every redial.
+	//
+	// @decision(DL-159)
+	variantsTried map[string]string
+	wg            sync.WaitGroup
 }
 
 // NewRecorder builds a recorder that reaches sandboxes through svc, as
@@ -214,10 +220,11 @@ func NewRecorder(svc *Service, st store.Store, now func() time.Time, warn func(s
 		fetch: func(ctx context.Context, conn Connection, path string) ([]byte, error) {
 			return sandboxGet(ctx, conn.URL+path, conn.Token, conn.User, conn.Password)
 		},
-		backoff:   RecorderBackoff,
-		sleep:     sleepFor,
-		captures:  map[string]context.CancelFunc{},
-		abandoned: map[string]string{},
+		backoff:       RecorderBackoff,
+		sleep:         sleepFor,
+		captures:      map[string]context.CancelFunc{},
+		abandoned:     map[string]string{},
+		variantsTried: map[string]string{},
 	}
 }
 
@@ -291,6 +298,12 @@ func (r *Recorder) Sync(ctx context.Context) error {
 	for id, cancel := range r.captures {
 		if !running[id] {
 			cancel()
+		}
+	}
+	// @decision(DL-159)
+	for id := range r.variantsTried {
+		if !running[id] {
+			delete(r.variantsTried, id)
 		}
 	}
 	return nil
@@ -677,18 +690,19 @@ func (r *Recorder) spanOver(ctx context.Context, sess store.Session, conn Connec
 }
 
 // attach arms the gap check against where the store's recording of
-// each conversation stopped, then catches the store up with the
-// sandbox's message store. A redial, a restart and a first attach are
-// one rule: a session never recorded has nothing stored, and its logs
-// are judged from sequence 1.
+// each conversation stopped, reads the run's model list once, then
+// catches the store up with the sandbox's message store. A redial, a
+// restart and a first attach are one rule: a session never recorded has
+// nothing stored, and its logs are judged from sequence 1.
 //
-// @decision(DL-017)
+// @decision(DL-017) @decision(DL-159)
 func (r *Recorder) attach(ctx context.Context, c *capture) error {
 	last, err := r.store.Conversations().LastSeqs(ctx, c.sess.OrgID, c.sess.ID)
 	if err != nil {
 		return fmt.Errorf("read the store: %w", err)
 	}
 	c.lastSeq = last
+	r.readModelVariants(ctx, c)
 	if err := r.measure(ctx, c); err != nil {
 		return err
 	}

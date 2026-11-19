@@ -61,6 +61,8 @@ var Used = []Operation{
 	{"POST", "/api/session/{sessionID}/form/{formID}/reply"},
 	{"DELETE", "/api/session/{sessionID}/form/{formID}"},
 	{"POST", "/api/session/{sessionID}/model"},
+	// @decision(DL-159)
+	{"GET", "/api/model"},
 	{"POST", "/api/session/{sessionID}/command"},
 	{"GET", "/api/fs/read/*"},
 	{"GET", "/api/fs/list"},

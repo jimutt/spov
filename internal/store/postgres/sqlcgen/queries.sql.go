@@ -689,6 +689,21 @@ func (q *Queries) DeleteSandboxTemplate(ctx context.Context, arg DeleteSandboxTe
 	return result.RowsAffected(), nil
 }
 
+const deleteSessionModelVariants = `-- name: DeleteSessionModelVariants :exec
+delete from session_model_variants where session_id = $1 and org_id = $2
+`
+
+type DeleteSessionModelVariantsParams struct {
+	SessionID string
+	OrgID     string
+}
+
+// @decision(DL-159)
+func (q *Queries) DeleteSessionModelVariants(ctx context.Context, arg DeleteSessionModelVariantsParams) error {
+	_, err := q.db.Exec(ctx, deleteSessionModelVariants, arg.SessionID, arg.OrgID)
+	return err
+}
+
 const deleteSessionProxyCA = `-- name: DeleteSessionProxyCA :exec
 delete from session_proxy_cas where session_id = $1 and org_id = $2
 `
@@ -1392,6 +1407,31 @@ func (q *Queries) GetSessionBySandbox(ctx context.Context, sandboxID string) (Se
 		&i.Booted,
 		&i.RoutedCredentials,
 	)
+	return i, err
+}
+
+const getSessionModelVariants = `-- name: GetSessionModelVariants :one
+select s.id, v.sandbox_id, v.models from sessions s
+left join session_model_variants v on v.session_id = s.id and v.org_id = s.org_id
+where s.id = $1 and s.org_id = $2
+`
+
+type GetSessionModelVariantsParams struct {
+	ID    string
+	OrgID string
+}
+
+type GetSessionModelVariantsRow struct {
+	ID        string
+	SandboxID *string
+	Models    []byte
+}
+
+// @decision(DL-159)
+func (q *Queries) GetSessionModelVariants(ctx context.Context, arg GetSessionModelVariantsParams) (GetSessionModelVariantsRow, error) {
+	row := q.db.QueryRow(ctx, getSessionModelVariants, arg.ID, arg.OrgID)
+	var i GetSessionModelVariantsRow
+	err := row.Scan(&i.ID, &i.SandboxID, &i.Models)
 	return i, err
 }
 
@@ -3295,6 +3335,36 @@ func (q *Queries) PutSandboxTemplate(ctx context.Context, arg PutSandboxTemplate
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const putSessionModelVariants = `-- name: PutSessionModelVariants :execrows
+insert into session_model_variants (session_id, org_id, sandbox_id, models, updated_at)
+select s.id, s.org_id, $3, $4, $5 from sessions s where s.id = $1 and s.org_id = $2
+on conflict (session_id) do update
+set sandbox_id = excluded.sandbox_id, models = excluded.models, updated_at = excluded.updated_at
+`
+
+type PutSessionModelVariantsParams struct {
+	ID        string
+	OrgID     string
+	SandboxID string
+	Models    []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
+// @decision(DL-159)
+func (q *Queries) PutSessionModelVariants(ctx context.Context, arg PutSessionModelVariantsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, putSessionModelVariants,
+		arg.ID,
+		arg.OrgID,
+		arg.SandboxID,
+		arg.Models,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const putSessionProxyCA = `-- name: PutSessionProxyCA :execrows

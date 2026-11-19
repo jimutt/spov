@@ -1274,6 +1274,32 @@ components:
       required:
         - model
       type: object
+    ModelVariantsView:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/schemas/ModelVariantsView.json
+          format: uri
+          readOnly: true
+          type: string
+        models:
+          additionalProperties:
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+          description: Each model that has reasoning modes, as provider/model, to its modes in OpenCode's order; empty while read is false
+          type: object
+        read:
+          description: Whether the session's current sandbox has listed its models' reasoning modes
+          type: boolean
+      required:
+        - read
+        - models
+      type: object
     ModelsOutputBody:
       additionalProperties: false
       properties:
@@ -6307,6 +6333,57 @@ paths:
       security:
         - bearer: []
       summary: Switch a running session's model
+      tags:
+        - sessions
+  /api/v1/sessions/{ref}/model-variants:
+    get:
+      operationId: session-model-variants
+      parameters:
+        - description: Session ID or name
+          in: path
+          name: ref
+          required: true
+          schema:
+            description: Session ID or name
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelVariantsView"
+          description: OK
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: List the reasoning modes each model offers in a session
       tags:
         - sessions
   /api/v1/sessions/{ref}/permissions/{id}:

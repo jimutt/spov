@@ -17,9 +17,10 @@ import (
 
 // Switching a running session's model: a per-act write like a message,
 // relayed to OpenCode's switchModel. The current model is read back
-// from the durable session.model.selected frame, never from here.
+// from the durable session.model.selected frame, never from here. A
+// #variant must be one the session's sandbox listed for the model.
 //
-// @decision(DL-014)
+// @decision(DL-014) @decision(DL-160)
 
 // MarkerModelSwitched records who switched a session's model, and to
 // which.
@@ -80,6 +81,10 @@ func (s *Service) SwitchModel(ctx context.Context, p auth.Principal, ref string,
 	if s.modelUnlisted(model) && withoutVariant(model) != withoutVariant(sess.Request.Model) {
 		return SwitchedModel{}, fmt.Errorf("%w: %s is not in spov's model list, and such a model can be chosen only"+
 			" when a session is launched", ErrInvalidRequest, model)
+	}
+	// @decision(DL-160)
+	if err := s.checkVariant(ctx, sess, model); err != nil {
+		return SwitchedModel{}, err
 	}
 	conversation, err := s.steerInto(ctx, sess, req.Conversation)
 	first := errors.Is(err, ErrNoConversation) && !isJob

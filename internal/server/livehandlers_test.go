@@ -428,7 +428,9 @@ func TestNoReadPathTouchesTheSandbox(t *testing.T) {
 		Seq: 1, Name: "session.step.started", At: recordedAt,
 	})
 
-	for _, path := range []string{"/api/v1/sessions", "/api/v1/sessions/alpha/messages", "/api/v1/sessions/alpha/log"} {
+	for _, path := range []string{"/api/v1/sessions", "/api/v1/sessions/alpha/messages", "/api/v1/sessions/alpha/log",
+		// @decision(DL-160)
+		"/api/v1/sessions/alpha/model-variants"} {
 		if resp, body := f.do(http.MethodGet, path, nil); resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET %s = %d: %s", path, resp.StatusCode, body)
 		}

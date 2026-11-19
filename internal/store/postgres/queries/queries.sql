@@ -40,6 +40,23 @@ delete from session_proxy_cas where session_id = $1 and org_id = $2;
 select ciphertext, nonce, key_version from session_proxy_cas
 where session_id = $1 and org_id = $2;
 
+-- name: PutSessionModelVariants :execrows
+-- @decision(DL-159)
+insert into session_model_variants (session_id, org_id, sandbox_id, models, updated_at)
+select s.id, s.org_id, $3, $4, $5 from sessions s where s.id = $1 and s.org_id = $2
+on conflict (session_id) do update
+set sandbox_id = excluded.sandbox_id, models = excluded.models, updated_at = excluded.updated_at;
+
+-- name: GetSessionModelVariants :one
+-- @decision(DL-159)
+select s.id, v.sandbox_id, v.models from sessions s
+left join session_model_variants v on v.session_id = s.id and v.org_id = s.org_id
+where s.id = $1 and s.org_id = $2;
+
+-- name: DeleteSessionModelVariants :exec
+-- @decision(DL-159)
+delete from session_model_variants where session_id = $1 and org_id = $2;
+
 -- name: SetSessionGitToken :execrows
 -- @decision(DL-021)
 update sessions

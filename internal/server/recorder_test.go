@@ -49,10 +49,16 @@ type fakeSandbox struct {
 	connectErr error
 	// connectAs records the principal of every connect.
 	connectAs []auth.Principal
+	// models is what /api/model answers, and modelsErr fails it.
+	//
+	// @decision(DL-159)
+	models    string
+	modelsErr error
 }
 
 func newFakeSandbox(t testing.TB) *fakeSandbox {
-	return &fakeSandbox{t: t, reads: map[string]int{}, listing: `{"data":[]}`, messages: map[string]string{}, infos: map[string]string{}, stream: make(chan string, 64)}
+	return &fakeSandbox{t: t, reads: map[string]int{}, listing: `{"data":[]}`, messages: map[string]string{}, infos: map[string]string{},
+		models: `{"location":{"directory":"/workspace"},"data":[]}`, stream: make(chan string, 64)}
 }
 
 func (f *fakeSandbox) connect(_ context.Context, p auth.Principal, _ store.Session) (Connection, error) {
@@ -116,6 +122,13 @@ func (f *fakeSandbox) fetch(_ context.Context, _ Connection, path string) ([]byt
 			return nil, f.listErr
 		}
 		return []byte(f.listing), nil
+	}
+	// @decision(DL-159)
+	if path == modelListPath {
+		if f.modelsErr != nil {
+			return nil, f.modelsErr
+		}
+		return []byte(f.models), nil
 	}
 	route, query, _ := strings.Cut(path, "?")
 	if id, ok := strings.CutPrefix(route, "/api/session/"); ok && !strings.Contains(id, "/") {

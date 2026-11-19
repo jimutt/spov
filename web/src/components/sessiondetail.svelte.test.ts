@@ -66,6 +66,9 @@ const stub = vi.hoisted(() => {
   let messageReads = 0;
   let sessionReads = 0;
   let deleteAnswer: { status: number; problem?: Record<string, unknown> } = { status: 204 };
+  // @decision(DL-161)
+  let variants: unknown = { read: false, models: {} };
+  let variantReads = 0;
   const fetched = vi.fn(async (input: RequestInfo | URL) => {
     const req = input instanceof Request ? input : new Request(String(input));
     const url = new URL(req.url);
@@ -131,6 +134,11 @@ const stub = vi.hoisted(() => {
       if (!jobsAnswer) return new Promise<Response>(() => {});
       return json({ jobs });
     }
+    // @decision(DL-161)
+    if (url.pathname.endsWith("/model-variants")) {
+      variantReads++;
+      return json(variants);
+    }
     if (url.pathname.startsWith("/api/v1/sessions/")) {
       sessionReads++;
       return json({ ...SESSION, ...session, state, credentials, resume });
@@ -150,6 +158,8 @@ const stub = vi.hoisted(() => {
     jobReads: () => jobReads,
     messageReads: () => messageReads,
     sessionReads: () => sessionReads,
+    variantReads: () => variantReads,
+    withVariants: (v: unknown) => (variants = v),
     refuseDelete: (status: number, problem: Record<string, unknown>) =>
       (deleteAnswer = { status, problem }),
     setSession: (fields: Record<string, unknown>) => (session = fields),
@@ -164,6 +174,8 @@ const stub = vi.hoisted(() => {
       jobReads = 0;
       messageReads = 0;
       sessionReads = 0;
+      variants = { read: false, models: {} };
+      variantReads = 0;
       credentials = undefined;
       resume = undefined;
       session = {};
@@ -1361,6 +1373,47 @@ describe("resuming a stopped session", () => {
 // and where the page was told to scroll.
 //
 // @decision(DL-106) @decision(DL-057)
+// The page reads the sandbox's reasoning modes for the composer once per
+// sandbox while the session runs, and again when its sandbox changes.
+//
+// @decision(DL-161)
+describe("the reasoning modes", () => {
+  it("are read once per sandbox and handed to the composer", async () => {
+    stub.setSession({ sandbox_id: "sb-1", model: "anthropic/claude-opus-5" });
+    stub.withVariants({ read: true, models: { "anthropic/claude-opus-5": ["low", "high"] } });
+    const page = await open();
+    await settle();
+    expect(stub.variantReads()).toBe(1);
+    const reasoning = page.target.querySelector('[data-testid="composer-reasoning"]') as HTMLSelectElement;
+    expect(Array.from(reasoning.options).map((o) => o.textContent)).toEqual(["Default", "low", "high"]);
+
+    // A re-read that finds the same sandbox asks for nothing more.
+    stub.say({ name: "session.renamed", source: "opencode", session: "ses_1", pos: 1 });
+    await settle();
+    await settle();
+    expect(stub.variantReads()).toBe(1);
+
+    // A new run's sandbox is read again.
+    stub.setSession({ sandbox_id: "sb-2", model: "anthropic/claude-opus-5" });
+    stub.withVariants({ read: true, models: { "anthropic/claude-opus-5": ["max"] } });
+    stub.say({ name: "session.renamed", source: "opencode", session: "ses_1", pos: 2 });
+    await settle();
+    await settle();
+    expect(stub.variantReads()).toBe(2);
+    const again = page.target.querySelector('[data-testid="composer-reasoning"]') as HTMLSelectElement;
+    expect(Array.from(again.options).map((o) => o.textContent)).toEqual(["Default", "max"]);
+    page.done();
+  });
+
+  it("are not read for a session that is not running", async () => {
+    stub.setSession({ sandbox_id: "sb-1" });
+    stub.sessionState("stopped");
+    const page = await open();
+    expect(stub.variantReads()).toBe(0);
+    page.done();
+  });
+});
+
 describe("the session page on a phone", () => {
   it("opens the details from the title bar and closes them with Escape", async () => {
     const page = await open();

@@ -52,6 +52,11 @@ type Memory struct {
 	//
 	// @decision(DL-034)
 	proxyCAs map[string]proxyCA
+	// modelVariants are what each session's sandbox said its models
+	// offer, by session ID. A stored value is never changed in place.
+	//
+	// @decision(DL-159)
+	modelVariants map[string]ModelVariants
 	// @decision(DL-045)
 	jobs map[string]Job
 	// runs are each session's runs, oldest first, by session ID.
@@ -94,6 +99,7 @@ func NewMemory() *Memory {
 	return &Memory{
 		sessions:        map[string]Session{},
 		proxyCAs:        map[string]proxyCA{},
+		modelVariants:   map[string]ModelVariants{},
 		mints:           map[string]Mint{},
 		users:           map[string]User{},
 		tokens:          map[string]APIToken{},
@@ -212,6 +218,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	orgCreds, admin := cloneMap(m.orgCredentials), slices.Clone(m.adminEvents)
 	jobs, seeds := cloneMap(m.jobs), cloneMap(m.jobSeeds)
 	runs := cloneRuns(m.runs)
+	variants := cloneMap(m.modelVariants)
 	var undo []func()
 	var pending []change
 	pos := m.eventPos
@@ -223,7 +230,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
 		messagesBySession: m.messagesBySession,
 		jobs:              m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending,
-		jobSeeds: m.jobSeeds}
+		jobSeeds: m.jobSeeds, modelVariants: m.modelVariants}
 	committed := false
 	defer func() {
 		view.done = true
@@ -248,6 +255,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		}
 		m.jobs, m.jobSeeds = jobs, seeds
 		m.runs = runs
+		m.modelVariants = variants
 		m.eventPos = pos
 	}()
 	if err := fn(view); err != nil {
@@ -442,6 +450,8 @@ func (s memSessions) MarkStopped(_ context.Context, orgID, id string, state Sess
 	if runs := s.m.runs[id]; len(runs) > 0 && runs[len(runs)-1].EndedAt == nil {
 		runs[len(runs)-1].EndedAt = &stopped
 	}
+	// @decision(DL-159)
+	delete(s.m.modelVariants, id)
 	s.m.emitRow(id)
 	// @decision(DL-034)
 	delete(s.m.proxyCAs, id)
@@ -525,6 +535,32 @@ func (s memSessions) ProxyCA(_ context.Context, orgID, id string) (SealedValue, 
 		return SealedValue{}, ErrNotFound
 	}
 	return SealedValue{Ciphertext: bytes.Clone(got.ca.Ciphertext), Nonce: bytes.Clone(got.ca.Nonce), KeyVersion: got.ca.KeyVersion}, nil
+}
+
+// SetModelVariants keeps what the session's sandbox said its models
+// offer, replacing what was kept.
+//
+// @decision(DL-159)
+func (s memSessions) SetModelVariants(_ context.Context, orgID, id, sandboxID string, models map[string][]string) error {
+	defer s.m.lock()()
+	if cur, ok := s.m.sessions[id]; !ok || cur.OrgID != orgID {
+		return ErrNotFound
+	}
+	s.m.modelVariants[id] = ModelVariants{SandboxID: sandboxID, Models: cloneVariants(models)}
+	s.m.emitRow(id)
+	return nil
+}
+
+// ModelVariants reads back what SetModelVariants kept.
+//
+// @decision(DL-159)
+func (s memSessions) ModelVariants(_ context.Context, orgID, id string) (ModelVariants, error) {
+	defer s.m.lock()()
+	if cur, ok := s.m.sessions[id]; !ok || cur.OrgID != orgID {
+		return ModelVariants{}, ErrNotFound
+	}
+	got := s.m.modelVariants[id]
+	return ModelVariants{SandboxID: got.SandboxID, Models: cloneVariants(got.Models)}, nil
 }
 
 // SetOpenCodeGrant records which OpenCode Console grant generation the
