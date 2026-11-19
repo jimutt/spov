@@ -20,6 +20,9 @@ import {
   trimBlankLines,
   shownWarnings,
   NotRecorded,
+  toolDetail,
+  clipDetail,
+  DetailLimit,
   openingAsk,
   stopNote,
   type Activity,
@@ -1616,5 +1619,24 @@ describe('a rename in the log', () => {
     expect(renamesMain([ev({ source: 'spov' })])).toBe(false);
     expect(renamesMain([ev({ name: 'session.text.ended' }), ev({ name: 'session.created' })])).toBe(false);
     expect(renamesMain([])).toBe(false);
+  });
+});
+
+describe("a tool call opened on its own", () => {
+  // @decision(DL-158)
+  test("shows its input indented when it is JSON and as it came when not", () => {
+    expect(toolDetail('{"command":"ls -la","timeout":30}')).toBe('{\n  "command": "ls -la",\n  "timeout": 30\n}');
+    expect(toolDetail('{"command":"ls -la", "descr')).toBe('{"command":"ls -la", "descr');
+    expect(toolDetail("  ")).toBe("");
+  });
+
+  // @decision(DL-158)
+  test("draws at most DetailLimit characters and says how many it left out", () => {
+    const file = "x".repeat(DetailLimit + 1234);
+    const big = toolDetail(JSON.stringify({ filePath: "a.txt", content: file }));
+    expect(big.length).toBeLessThan(DetailLimit + 100);
+    expect(big).toMatch(/… 1,2\d\d more characters not shown$/);
+    expect(clipDetail("short")).toBe("short");
+    expect(clipDetail("y".repeat(DetailLimit + 1))).toMatch(/… 1 more character not shown$/);
   });
 });

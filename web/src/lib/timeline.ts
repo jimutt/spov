@@ -1259,6 +1259,44 @@ const InputKeys = [
   "question",
 ];
 
+/**
+ * DetailLimit bounds what an opened call draws of its input or its
+ * error, in characters: a write's input can hold a whole file.
+ *
+ * @decision(DL-158)
+ */
+export const DetailLimit = 20_000;
+
+/**
+ * clipDetail cuts text past DetailLimit and says how much was left out.
+ *
+ * @decision(DL-158)
+ */
+export function clipDetail(text: string): string {
+  if (text.length <= DetailLimit) return text;
+  const rest = text.length - DetailLimit;
+  return `${text.slice(0, DetailLimit)}\n… ${rest.toLocaleString("en")} more ${rest === 1 ? "character" : "characters"} not shown`;
+}
+
+/**
+ * toolDetail is a call's input for its opened line: JSON indented when
+ * it parses and is no longer than DetailLimit, else the text as it
+ * arrived, cut at DetailLimit either way. The log carries no result for
+ * a call, so this and the error are all there is to show.
+ *
+ * @decision(DL-158)
+ */
+export function toolDetail(input: string): string {
+  const text = input.trim();
+  if (!text) return "";
+  if (text.length > DetailLimit) return clipDetail(text);
+  try {
+    return clipDetail(JSON.stringify(JSON.parse(text), null, 2));
+  } catch {
+    return text;
+  }
+}
+
 /** InputLimit bounds the summary drawn for a call, in characters. */
 export const InputLimit = 200;
 
