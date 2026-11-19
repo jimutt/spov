@@ -38,8 +38,15 @@
   }
 </script>
 
-<h1 class="{pageTitle} mb-1.5">Tokens</h1>
-<p class="mt-0 mb-7 max-w-[64ch] text-soft">Tokens that can act as you.</p>
+<!-- Named apart from the credentials a session uses, which a reader of a
+     page called "Tokens" would expect to find here. @decision(DL-157) -->
+<h1 class="{pageTitle} mb-1.5">Access tokens</h1>
+<p class="mt-0 mb-7 max-w-[64ch] text-soft">
+  Your sign-ins to this spov server. Each one lets a terminal where you ran
+  <code class="bg-sunk px-1 font-mono text-md text-ink">spov login</code> act as you here, and revoking it signs that
+  terminal out. The keys your sessions use to reach a model provider or a git forge are not here: they are under
+  <a class="underline" href="/settings/#credentials">Settings, Credentials</a>.
+</p>
 
 {#if tokens.error}
   <Problem error={tokens.error} what="your tokens" />
@@ -51,8 +58,8 @@
 {#if tokens.data}
   {#if tokens.data.tokens.length === 0}
     <p class="max-w-[62ch] text-soft">
-      No tokens. <code class="bg-sunk px-1 font-mono text-md text-ink">spov login</code> issues one for a
-      terminal.
+      No access tokens. <code class="bg-sunk px-1 font-mono text-md text-ink">spov login</code> issues one for
+      each terminal you sign in from.
     </p>
   {:else}
     <div class="max-w-[80ch] border-t border-rule">

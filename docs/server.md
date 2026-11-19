@@ -77,7 +77,9 @@ allowlist.
   - what credentials and environment variables the sandbox was given.
 - **Usage**: sessions, sandbox hours and estimated sandbox cost this month.
   Model token cost is marked as not yet tracked.
-- **Tokens**: your CLI tokens, which you can revoke.
+- **Access tokens**: your sign-ins to spov, one per terminal that ran
+  `spov login`, which you can revoke. The keys sessions use to reach a model
+  provider or a forge are under **Settings**, not here.
 - **Settings**: your stored credentials and OpenCode connection, default
   model, git access, job time limit and git identity. An admin also stores the
   organisation's GitHub App here (see [credentials.md](credentials.md#github)),

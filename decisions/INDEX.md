@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-157 | The page of spov sign-in tokens is called Access tokens and points to where session credentials live | accepted | web | settings, wording |
 | DL-156 | A create form leaves for the new session by replacing itself in the history | accepted | web | session-page, navigation |
 | DL-155 | The composer keeps its focus through a send and a jump to the end, and a drag of the conversation closes the keyboard | accepted | web | phone-layout, session-page |
 | DL-154 | On a phone the composer sits at the foot of the screen, and a new session says it is starting, then asks what to work on | accepted | web | phone-layout, session-page |

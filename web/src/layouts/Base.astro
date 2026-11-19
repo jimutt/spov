@@ -32,7 +32,7 @@ const nav = [
   // @decision(DL-060)
   { href: '/jobs/', label: 'Jobs', match: ['/jobs'] },
   { href: '/usage/', label: 'Usage', match: ['/usage'] },
-  { href: '/tokens/', label: 'Tokens', match: ['/tokens'] },
+  { href: '/tokens/', label: 'Access tokens', match: ['/tokens'] },
   { href: '/settings/', label: 'Settings', match: ['/settings'] },
 ];
 const current = nav.find((item) => item.match.some((m) => here === m || here.startsWith(`${m}/`)));
