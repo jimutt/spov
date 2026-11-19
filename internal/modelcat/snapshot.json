@@ -132,6 +132,13 @@
   ],
   "google": [
    {
+    "id": "gemini-4-neon",
+    "name": "Gemini 4 Neon",
+    "released": "2026-11-18",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
     "id": "gemini-4-hydrogen",
     "name": "Gemini 4 Hydrogen",
     "released": "2026-11-12",
@@ -747,6 +754,20 @@
   ],
   "opencode": [
    {
+    "id": "gemini-4-neon",
+    "name": "Gemini 4 Neon",
+    "released": "2026-11-18",
+    "context": 1048576,
+    "output": 65536
+   },
+   {
+    "id": "tidepool-alpha-free",
+    "name": "Tidepool Alpha Free",
+    "released": "2026-11-18",
+    "context": 1048576,
+    "output": 131072
+   },
+   {
     "id": "gpt-6.2-astra",
     "name": "GPT-6.2 Astra",
     "released": "2026-11-17",
@@ -1076,13 +1097,6 @@
     "output": 128000
    },
    {
-    "id": "glm-5.2",
-    "name": "GLM-5.2",
-    "released": "2026-06-13",
-    "context": 1000000,
-    "output": 131072
-   },
-   {
     "id": "kimi-k2.7-code",
     "name": "Kimi K2.7 Code",
     "released": "2026-06-12",
@@ -1160,13 +1174,6 @@
     "output": 256000
    },
    {
-    "id": "glm-5.1",
-    "name": "GLM-5.1",
-    "released": "2026-04-07",
-    "context": 204800,
-    "output": 131072
-   },
-   {
     "id": "qwen3.6-plus",
     "name": "Qwen3.6 Plus",
     "released": "2026-04-02",
@@ -1228,13 +1235,6 @@
     "released": "2026-02-16",
     "context": 262144,
     "output": 65536
-   },
-   {
-    "id": "glm-5",
-    "name": "GLM-5",
-    "released": "2026-02-12",
-    "context": 204800,
-    "output": 131072
    },
    {
     "id": "minimax-m2.5",
@@ -1561,13 +1561,6 @@
     "output": 131072
    },
    {
-    "id": "glm-5.2",
-    "name": "GLM-5.2",
-    "released": "2026-06-13",
-    "context": 1000000,
-    "output": 131072
-   },
-   {
     "id": "kimi-k2.7-code",
     "name": "Kimi K2.7 Code",
     "released": "2026-06-12",
@@ -1611,6 +1604,13 @@
    }
   ],
   "openrouter": [
+   {
+    "id": "google/gemini-4-neon",
+    "name": "Gemini 4 Neon",
+    "released": "2026-11-18",
+    "context": 1048576,
+    "output": 943718
+   },
    {
     "id": "openai/gpt-6.2-astra",
     "name": "GPT-6.2 Astra",
@@ -1826,7 +1826,7 @@
     "name": "DeepSeek V4.1 Flash 1017",
     "released": "2026-10-17",
     "context": 1048576,
-    "output": 943718
+    "output": 393216
    },
    {
     "id": "elorian/glimpse",
@@ -1931,7 +1931,7 @@
     "name": "Beam 1.0 501B A23B",
     "released": "2026-10-05",
     "context": 1048576,
-    "output": 943718
+    "output": 131072
    },
    {
     "id": "unbiased/pareto-26.10-preview",
@@ -2169,7 +2169,7 @@
     "name": "DeepSeek V4.1 Flash",
     "released": "2026-09-10",
     "context": 1048576,
-    "output": 393216
+    "output": 943718
    },
    {
     "id": "inclusionai/ling-3.0-flash-vl",
@@ -2386,14 +2386,14 @@
     "name": "DeepSeek V4 Flash Latest",
     "released": "2026-08-01",
     "context": 1048576,
-    "output": 943718
+    "output": 384000
    },
    {
     "id": "deepseek/deepseek-v4-flash-0731",
     "name": "DeepSeek V4 Flash 0731",
     "released": "2026-07-31",
     "context": 1048576,
-    "output": 384000
+    "output": 943718
    },
    {
     "id": "thinkingmachines/inkling-small",
@@ -2841,7 +2841,7 @@
     "name": "GLM-5.1",
     "released": "2026-04-07",
     "context": 204800,
-    "output": 182476
+    "output": 131072
    },
    {
     "id": "google/gemma-4-26b-a4b-it",
@@ -3618,7 +3618,7 @@
     "name": "Gemma 3 27B IT",
     "released": "2025-03-12",
     "context": 131072,
-    "output": 117964
+    "output": 16384
    },
    {
     "id": "mistralai/mistral-saba",
@@ -3917,7 +3917,10 @@
    "glm-4.6",
    "glm-4.7",
    "glm-4.7-free",
+   "glm-5",
    "glm-5-free",
+   "glm-5.1",
+   "glm-5.2",
    "glm-5.3-flash-free",
    "grok-code",
    "hy3-free",
@@ -3961,6 +3964,7 @@
    "cat-jam-free",
    "crouton-alpha-free",
    "gemini-4-argon-contributor",
+   "glm-5.2",
    "longcat-2.5-preview-free",
    "minimax-m2.7",
    "minimax-m3.1-flash-free",
@@ -3979,5 +3983,5 @@
    "z-ai/glm-4.5"
   ]
  },
- "as_of": "2026-11-18T00:00:00Z"
+ "as_of": "2026-11-19T00:00:00Z"
 }
