@@ -34,6 +34,9 @@ import {
   turnInFlight,
   turnsEnded,
   unseen,
+  DismissDistance,
+  dragDismisses,
+  restoredDraft,
 } from "./steer";
 import { childIds, type Activity, type Conversation } from "./timeline";
 import { currentModel } from "./modelpick";
@@ -791,5 +794,31 @@ describe("the status bar above the box", () => {
     // Interrupt is not offered for them, and its line is not changed.
     expect(controlsNote("running", true, false, 0).map((l) => l.control)).toEqual(["Interrupt"]);
     expect(controlsNote("running", false, false, 0)).toEqual([]);
+  });
+});
+
+describe("a drag of the conversation", () => {
+  const start = { y: 300, inDock: false, focused: true };
+  // @decision(DL-155)
+  it("closes the keyboard once it has moved far enough", () => {
+    expect(dragDismisses(start, 300 - DismissDistance)).toBe(true);
+    expect(dragDismisses(start, 300 + DismissDistance + 5)).toBe(true);
+    expect(dragDismisses(start, 300 - DismissDistance + 1)).toBe(false);
+  });
+
+  // @decision(DL-155)
+  it("leaves the keyboard alone when it began in the dock or the box had no focus", () => {
+    expect(dragDismisses({ ...start, inDock: true }, 0)).toBe(false);
+    expect(dragDismisses({ ...start, focused: false }, 0)).toBe(false);
+    expect(dragDismisses(undefined, 0)).toBe(false);
+  });
+});
+
+describe("a refused send", () => {
+  // @decision(DL-155)
+  it("gives its words back ahead of anything written since", () => {
+    expect(restoredDraft("first", "")).toBe("first");
+    expect(restoredDraft("first", "  ")).toBe("first");
+    expect(restoredDraft("first", "second")).toBe("first\nsecond");
   });
 });

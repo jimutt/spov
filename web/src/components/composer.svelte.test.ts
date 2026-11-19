@@ -17,6 +17,7 @@ import { flushSync, mount, unmount } from "svelte";
  */
 const stub = vi.hoisted(() => {
   let release!: (r: Response) => void;
+  let failInFlight!: (e: unknown) => void;
   // openapi-fetch hands `fetch` a Request object and no init, so the
   // body is read off the Request rather than out of the call arguments.
   // A helper that looked at `init.body` sees nothing and every
@@ -54,8 +55,9 @@ const stub = vi.hoisted(() => {
     }
     // Never answers until the test says so, which is what makes "in
     // flight" a state an assertion can hold.
-    return new Promise<Response>((resolve) => {
+    return new Promise<Response>((resolve, reject) => {
       release = resolve;
+      failInFlight = reject;
     });
   });
   globalThis.fetch = sent as unknown as typeof globalThis.fetch;
@@ -78,6 +80,8 @@ const stub = vi.hoisted(() => {
     /** What the sandbox answers to an interrupt. */
     stopAnswers: (was: boolean) => (stopped = was),
     refuseTheResume: (status: number) => (resumeStatus = status),
+    /** The request in flight fails as a dropped connection would. */
+    fail: () => failInFlight(new TypeError("Failed to fetch")),
     answer: () =>
       release(
         new Response(JSON.stringify({ id: "msg_1", conversation: "ses_1", delivery: "steer" }), {
@@ -273,21 +277,49 @@ describe("sending from the box", () => {
   it("posts to the session it was given, and clears the box on success", async () => {
     const c = draw("running");
     const box = c.box()!;
+    box.focus();
     box.value = "hello";
     box.dispatchEvent(new Event("input", { bubbles: true }));
     flushSync();
     c.button()!.click();
     await settle();
     expect(stub.urls()).toEqual(["/api/v1/sessions/ses_1/messages"]);
+    // Cleared at once and never disabled, so the box keeps its focus
+    // through the send and a phone keeps its keyboard up.
+    //
+    // @decision(DL-155)
+    expect(c.box()!.value).toBe("");
+    expect(c.box()!.disabled).toBe(false);
+    expect(document.activeElement).toBe(c.box());
 
     stub.answer();
     await settle();
-    // Cleared, or the next Enter sends the same words again.
+    // Still cleared, or the next Enter sends the same words again.
     expect(c.box()!.value).toBe("");
-    // And the reader can carry on typing without reaching for the
-    // mouse: the box is disabled while a send is in flight, and a
-    // disabled element loses focus.
     expect(document.activeElement).toBe(c.box());
+    c.done();
+  });
+
+  // Words written while a send was in flight are kept behind the
+  // refused ones.
+  //
+  // @decision(DL-155)
+  it("gives refused words back ahead of what was written since", async () => {
+    const c = draw("running");
+    const box = c.box()!;
+    box.value = "first";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    c.button()!.click();
+    await settle();
+    box.value = "second";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    // The request already went out; its answer fails as a dropped
+    // connection would.
+    stub.fail();
+    await settle();
+    expect(c.box()!.value).toBe("first\nsecond");
     c.done();
   });
 

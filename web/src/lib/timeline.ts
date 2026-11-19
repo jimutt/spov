@@ -247,8 +247,52 @@ export function noteText(ev: { name?: string; text?: string }): string {
  *
  * @decision(DL-017)
  */
-export function shownWarnings(warnings: string[], entries: number): string[] {
-  return entries > 0 ? [] : warnings;
+export function shownWarnings(warnings: string[], entries: number, quiet = false): string[] {
+  if (entries > 0) return [];
+  // A session starting, or live with nothing in it yet, is a new one,
+  // not a fault: the page says so instead (`openingAsk`).
+  return quiet ? warnings.filter((w) => w !== NotRecorded) : warnings;
+}
+
+/**
+ * NotRecorded is the server's warning for a session with no rows
+ * (`notRecorded` in internal/server/transcript.go), word for word.
+ *
+ * @decision(DL-154)
+ */
+export const NotRecorded = "nothing has been recorded for this session";
+
+/** Opening is what an empty transcript says in place of a warning. */
+export interface Opening {
+  ask: string;
+  hint: string;
+  /** Still starting: drawn with a spinner, and nothing to write into yet. */
+  busy: boolean;
+}
+
+/**
+ * openingAsk is what an empty transcript says while its session is new.
+ * Starting: the sandbox is booting and there is no composer yet. Live
+ * (the composer is drawn for the main conversation): a question for a
+ * person's own session, a quiet line for a job's, whose goal is already
+ * on its way. Null once anything is on screen, or for any other state.
+ *
+ * @decision(DL-154)
+ */
+export function openingAsk(entries: number, phase: "starting" | "live" | "other", job: boolean): Opening | null {
+  if (entries > 0) return null;
+  switch (phase) {
+    case "starting":
+      return job
+        ? { ask: "Starting the job's sandbox", hint: "The agent starts on the goal once it is up.", busy: true }
+        : { ask: "Starting the sandbox", hint: "The message box appears once the agent is ready.", busy: true };
+    case "live":
+      return job
+        ? { ask: "The agent is starting on the job", hint: "Its work shows here as it goes.", busy: false }
+        : { ask: "What do you want to work on?", hint: "Write it below and the agent starts.", busy: false };
+    default:
+      return null;
+  }
 }
 
 /**

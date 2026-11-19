@@ -2,6 +2,8 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-155 | The composer keeps its focus through a send and a jump to the end, and a drag of the conversation closes the keyboard | accepted | web | phone-layout, session-page |
+| DL-154 | On a phone the composer sits at the foot of the screen, and a new session says it is starting, then asks what to work on | accepted | web | phone-layout, session-page |
 | DL-153 | The light theme is a bright warm paper with white raised surfaces, and a hover darkens | accepted | web | web, theme, palette |
 | DL-152 | spov init is styled on a colour terminal and plain elsewhere, with the same lines either way | accepted | cli | cli, init |
 | DL-151 | The session list and the session page lead with the title when there is one | accepted | web | session-titles, web, layout, sessions |

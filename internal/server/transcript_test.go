@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -252,5 +254,21 @@ func TestAMarkerCountsAsHavingBeenRecorded(t *testing.T) {
 		if w == notRecorded {
 			t.Errorf("a session with markers was reported as never recorded")
 		}
+	}
+}
+
+// The browser recognises a new session's empty transcript by this
+// warning's words, so the two copies must agree.
+//
+// @decision(DL-154)
+func TestTheNotRecordedWarningMatchesTheBrowser(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "web", "src", "lib", "timeline.ts"))
+	if err != nil {
+		t.Fatalf("reading the browser's copy: %v", err)
+	}
+	want := `export const NotRecorded = "` + notRecorded + `";`
+	if !strings.Contains(string(src), want) {
+		t.Fatalf("web/src/lib/timeline.ts does not declare %s; a new live session would show the warning"+
+			" in place of the question that opens it", want)
 	}
 }

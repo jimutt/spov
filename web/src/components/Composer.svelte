@@ -9,7 +9,6 @@
   // the field. The same elements make up the desktop form.
   //
   // @decision(DL-059) @decision(DL-019) @decision(DL-052) @decision(DL-106) @decision(DL-117)
-  import { tick } from 'svelte';
   import { api, unwrap } from '../lib/api/client';
   import {
     type After,
@@ -23,6 +22,7 @@
     deliveryNote,
     draftProblem,
     offersAfter,
+    restoredDraft,
     resumable,
     send,
     sendability,
@@ -197,18 +197,14 @@
   // @decision(DL-117)
   let focused = $state(false);
   // The toolbar is folded only when nothing asks for it: no focus, no
-  // words, no options, no send in flight (a disabled box loses focus, and
-  // folding for that moment would make the dock jump).
+  // words, no options, no send in flight.
   //
   // @decision(DL-117)
   const toolbar = $derived(focused || text !== '' || optionsOpen || sending);
   // Focus that left the form folds it; focus that moved inside does not.
-  // A send disables the box, which blurs it with no target, so that is
-  // not a departure either.
   //
   // @decision(DL-117)
   function onFocusOut(event: FocusEvent) {
-    if (sending) return;
     const next = event.relatedTarget;
     if (next instanceof Node && event.currentTarget instanceof Node && event.currentTarget.contains(next)) return;
     focused = false;
@@ -305,6 +301,12 @@
     replayAct = act;
     sending = true;
     failure = undefined;
+    // Cleared at once, as a chat app does, and the box is never
+    // disabled, so it keeps its focus and a phone keeps its keyboard up.
+    // The words are in the transcript as the echo meanwhile.
+    //
+    // @decision(DL-155)
+    text = '';
     try {
       await send(words, delivery, (body) => api.POST('/api/v1/sessions/{ref}/messages', {
         params: { path: { ref } },
@@ -312,21 +314,15 @@
       }), onEcho, replay, undefined, undefined, following);
       replay = '';
       after = 'continue';
-      // Cleared on success only, so a refusal leaves the reader's words
-      // in the box rather than losing them.
-      //
-      // @decision(DL-059)
-      text = '';
     } catch (err) {
       failure = err instanceof Failed ? err.cause : err;
       replay = err instanceof Failed ? err.replay : '';
+      // A refusal gives the words back, ahead of anything written since.
+      //
+      // @decision(DL-059) @decision(DL-155)
+      text = restoredDraft(words, text);
     } finally {
       sending = false;
-      // The box is disabled while a send is in flight, and a disabled
-      // element loses focus, so this restores it. `tick()` rather than
-      // a microtask, so it runs after the DOM has caught up with
-      // `sending`.
-      void tick().then(() => box?.focus());
     }
   }
 
@@ -427,7 +423,7 @@
         onkeydown={onKeydown}
         rows="1"
         enterkeyhint={touch ? 'enter' : 'send'}
-        disabled={sending}
+        aria-busy={sending}
         class="{fieldBase} resize-none px-3 py-2.5 text-read max-md:row-start-1 max-md:max-h-[40dvh] max-md:min-h-11 max-md:rounded-xl max-md:border-0 max-md:bg-transparent max-md:py-2.5 max-md:focus-visible:outline-0 {toolbar
           ? 'max-md:col-span-2'
           : 'max-md:col-start-1'} md:min-h-[5.75rem] md:resize-y"
