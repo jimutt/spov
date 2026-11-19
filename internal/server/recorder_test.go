@@ -148,6 +148,18 @@ func (f *fakeSandbox) fetch(_ context.Context, _ Connection, path string) ([]byt
 	return nil, errors.New("no such conversation")
 }
 
+// fetchBounded is fetch, refusing a body over limit as the real read
+// does.
+//
+// @decision(DL-159)
+func (f *fakeSandbox) fetchBounded(ctx context.Context, conn Connection, path string, limit int64) ([]byte, error) {
+	body, err := f.fetch(ctx, conn, path)
+	if err == nil && int64(len(body)) > limit {
+		return nil, fmt.Errorf("%w: over %d bytes", errSandboxBodyTooLarge, limit)
+	}
+	return body, err
+}
+
 // pageOfMessages answers a /message read as the pinned build does
 // (spike S-MP1): limit, order or cursor, and a next cursor even on the
 // last page. A body that is not a {data} envelope is answered whole.
@@ -313,6 +325,8 @@ func newRecorderFixture(t *testing.T) *recorderFixture {
 		f.warns = append(f.warns, s)
 	})
 	f.rec.connect, f.rec.events, f.rec.fetch = f.sb.connect, f.sb.events, f.sb.fetch
+	// @decision(DL-159)
+	f.rec.fetchBounded = f.sb.fetchBounded
 	// NewRecorder was handed a nil Service, so the production drop
 	// closure would panic rather than fail the moment a fake returned
 	// a refusal. Stubbed here; the tests that care replace it.

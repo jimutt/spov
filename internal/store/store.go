@@ -148,7 +148,8 @@ type SessionStore interface {
 	SetProxyCA(ctx context.Context, orgID, id string, ca SealedValue) error
 	ProxyCA(ctx context.Context, orgID, id string) (SealedValue, error)
 	// SetModelVariants keeps the reasoning modes each model offers in
-	// the session's sandbox, with the sandbox they were read from; a
+	// the session's sandbox, with the sandbox they were read from, only
+	// while the session runs on that sandbox (ErrNotFound otherwise); a
 	// second write replaces the first, Update keeps them and MarkStopped
 	// deletes them. ModelVariants reads them back, the zero value when
 	// none are kept, and ErrNotFound for a session that is not this

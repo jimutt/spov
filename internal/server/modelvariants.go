@@ -14,6 +14,7 @@ import (
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/modelcat"
 	"github.com/jimutt/spov/internal/redact"
+	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/store"
 )
 
@@ -23,13 +24,17 @@ import (
 //
 // @decision(DL-159) @decision(DL-160)
 
-// MaxModelListBytes bounds the model list read from a sandbox, and
-// MaxModelVariantsBytes what is kept of it, as JSON.
+// MaxModelListBytes bounds the model list read from a sandbox,
+// MaxModelVariantsBytes what is kept of it, as JSON, MaxModelVariants
+// the variants kept of one model, and MaxModelListReads the reads one
+// process makes of one run's list.
 //
 // @decision(DL-159)
 const (
 	MaxModelListBytes     = 4 << 20
 	MaxModelVariantsBytes = 256 << 10
+	MaxModelVariants      = 64
+	MaxModelListReads     = 3
 )
 
 // modelListPath is OpenCode's model list: every model the sandbox can
@@ -38,56 +43,99 @@ const (
 // @decision(DL-159)
 const modelListPath = "/api/model"
 
-// readModelVariants keeps what the sandbox says its models offer, once
-// per run: nothing is read when the store holds the list of this
-// sandbox, or when this process already tried it. A failure is logged
-// and the capture goes on without it.
+// variantsRead is how one process's reads of a session's model list
+// stand, for the sandbox it names.
 //
 // @decision(DL-159)
-func (r *Recorder) readModelVariants(ctx context.Context, c *capture) {
-	sess := c.sess
+type variantsRead struct {
+	sandbox  string
+	running  bool
+	done     bool
+	failures int
+}
+
+// startModelVariants reads the run's model list beside the attach, so
+// neither the catch-up nor a session at its storage limit waits for it
+// or loses it: one read at a time per session, none once one is kept,
+// and at most MaxModelListReads by this process, each at an attach. It
+// outlives the span, bounded by SandboxReadTimeout, and ends with Run.
+//
+// @decision(DL-159) @decision(DL-018)
+func (r *Recorder) startModelVariants(ctx context.Context, c *capture) {
+	sess, conn := c.sess, c.conn
+	r.mu.Lock()
+	st := r.variants[sess.ID]
+	if st == nil || st.sandbox != sess.SandboxID {
+		st = &variantsRead{sandbox: sess.SandboxID}
+		r.variants[sess.ID] = st
+	}
+	if st.running || st.done || st.failures >= MaxModelListReads {
+		r.mu.Unlock()
+		return
+	}
+	st.running = true
+	parent := r.runCtx
+	r.mu.Unlock()
+	if parent == nil {
+		parent = context.WithoutCancel(ctx)
+	}
+	r.wg.Go(func() {
+		rctx, cancel := context.WithTimeout(parent, SandboxReadTimeout)
+		defer cancel()
+		var err error
+		if safego.Do("recorder model list of session "+sess.ID, r.warn, func() { err = r.readModelVariants(rctx, sess, conn) }) {
+			err = errors.New("the read panicked")
+		}
+		r.mu.Lock()
+		st.running = false
+		if err == nil {
+			st.done = true
+		} else {
+			st.failures++
+		}
+		first := st.failures == 1
+		r.mu.Unlock()
+		if err != nil && first {
+			r.warn(fmt.Sprintf("recorder %s: the reasoning modes were not read: %s", sess.ID, err))
+		}
+	})
+}
+
+// readModelVariants keeps what the sandbox says its models offer,
+// unless the store holds this sandbox's list already. A session that
+// no longer runs on the sandbox is not an error: there is nothing left
+// to keep it for.
+//
+// @decision(DL-159)
+func (r *Recorder) readModelVariants(ctx context.Context, sess store.Session, conn Connection) error {
 	kept, err := r.store.Sessions().ModelVariants(ctx, sess.OrgID, sess.ID)
 	if err != nil {
-		r.warn(fmt.Sprintf("recorder %s: the reasoning modes were not read: read the store: %s", sess.ID, redact.Error(err)))
-		return
+		return fmt.Errorf("read the store: %s", redact.Error(err))
 	}
-	if kept.SandboxID == sess.SandboxID || !r.firstVariantsRead(sess) {
-		return
+	if kept.SandboxID == sess.SandboxID {
+		return nil
 	}
-	body, err := r.fetch(ctx, c.conn, modelListPath)
+	body, err := r.fetchBounded(ctx, conn, modelListPath, MaxModelListBytes)
 	if err != nil {
-		r.warn(fmt.Sprintf("recorder %s: the reasoning modes were not read: %s", sess.ID, redact.Error(err)))
-		return
+		return errors.New(redact.Error(err))
 	}
 	models, err := parseModelVariants(body)
 	if err != nil {
-		r.warn(fmt.Sprintf("recorder %s: the reasoning modes were not read: %s", sess.ID, err))
-		return
+		return err
 	}
-	if err := r.store.Sessions().SetModelVariants(ctx, sess.OrgID, sess.ID, sess.SandboxID, models); err != nil {
-		r.warn(fmt.Sprintf("recorder %s: the reasoning modes were not kept: %s", sess.ID, redact.Error(err)))
+	err = r.store.Sessions().SetModelVariants(ctx, sess.OrgID, sess.ID, sess.SandboxID, models)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("keep them: %s", redact.Error(err))
 	}
-}
-
-// firstVariantsRead reports whether this process has not yet tried to
-// read the session's sandbox's model list, and marks it tried.
-//
-// @decision(DL-159)
-func (r *Recorder) firstVariantsRead(sess store.Session) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.variantsTried[sess.ID] == sess.SandboxID {
-		return false
-	}
-	r.variantsTried[sess.ID] = sess.SandboxID
-	return true
+	return nil
 }
 
 // parseModelVariants reads OpenCode's model list into each model's
 // variant ids, in OpenCode's order, keyed provider/model. A model with
 // none, an id that is not one, a variant named default and a repeat are
-// left out; a body over MaxModelListBytes, one that is not a model list
-// and a result over MaxModelVariantsBytes are errors.
+// left out, and a model keeps at most MaxModelVariants; a body over
+// MaxModelListBytes, one that is not a model list and a result over
+// MaxModelVariantsBytes are errors, the last found as it grows.
 //
 // @decision(DL-159)
 func parseModelVariants(body []byte) (map[string][]string, error) {
@@ -107,6 +155,10 @@ func parseModelVariants(body []byte) (map[string][]string, error) {
 		return nil, errors.New("the sandbox's answer is not a model list")
 	}
 	out := map[string][]string{}
+	// size counts what the kept list's JSON takes: {} and, per model,
+	// "ref":[] and a comma, and per variant "id" and a comma.
+	size := 2
+	tooLarge := fmt.Errorf("the reasoning modes are over %d bytes", MaxModelVariantsBytes)
 	for _, m := range *list.Data {
 		if modelcat.ValidID(m.ID) != nil || modelcat.ValidID(m.ProviderID) != nil || strings.Contains(m.ProviderID, "/") {
 			continue
@@ -116,19 +168,31 @@ func parseModelVariants(body []byte) (map[string][]string, error) {
 			continue
 		}
 		var modes []string
+		seen := map[string]bool{}
 		for _, v := range m.Variants {
-			if modelcat.ValidID(v.ID) != nil || v.ID == "default" || slices.Contains(modes, v.ID) ||
-				len(ref)+1+len(v.ID) > MaxModelBytes {
+			if len(modes) == MaxModelVariants {
+				break
+			}
+			if seen[v.ID] || v.ID == "default" || modelcat.ValidID(v.ID) != nil || len(ref)+1+len(v.ID) > MaxModelBytes {
 				continue
 			}
+			seen[v.ID] = true
 			modes = append(modes, v.ID)
 		}
-		if len(modes) > 0 {
-			out[ref] = modes
+		if len(modes) == 0 {
+			continue
 		}
+		size += len(ref) + 6
+		for _, v := range modes {
+			size += len(v) + 3
+		}
+		if size > MaxModelVariantsBytes {
+			return nil, tooLarge
+		}
+		out[ref] = modes
 	}
 	if kept, _ := json.Marshal(out); len(kept) > MaxModelVariantsBytes {
-		return nil, fmt.Errorf("the reasoning modes are over %d bytes", MaxModelVariantsBytes)
+		return nil, tooLarge
 	}
 	return out, nil
 }
@@ -195,7 +259,7 @@ func (s *Service) checkVariant(ctx context.Context, sess store.Session, ref stri
 	refusal := fmt.Sprintf("%s is not a reasoning mode %s offers in this session", variant, model)
 	switch modes := models[model]; {
 	case !read:
-		return fmt.Errorf("%w: %s; this session has not listed its models' reasoning modes yet", ErrInvalidRequest, refusal)
+		return fmt.Errorf("%w: %s; this session holds no list of its models' reasoning modes", ErrInvalidRequest, refusal)
 	case len(modes) == 0:
 		return fmt.Errorf("%w: %s; it offers none", ErrInvalidRequest, refusal)
 	default:

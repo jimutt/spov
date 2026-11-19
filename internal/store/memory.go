@@ -538,12 +538,13 @@ func (s memSessions) ProxyCA(_ context.Context, orgID, id string) (SealedValue, 
 }
 
 // SetModelVariants keeps what the session's sandbox said its models
-// offer, replacing what was kept.
+// offer, replacing what was kept, while the session runs on that
+// sandbox.
 //
 // @decision(DL-159)
 func (s memSessions) SetModelVariants(_ context.Context, orgID, id, sandboxID string, models map[string][]string) error {
 	defer s.m.lock()()
-	if cur, ok := s.m.sessions[id]; !ok || cur.OrgID != orgID {
+	if cur, ok := s.m.sessions[id]; !ok || cur.OrgID != orgID || cur.State != StateRunning || cur.SandboxID != sandboxID {
 		return ErrNotFound
 	}
 	s.m.modelVariants[id] = ModelVariants{SandboxID: sandboxID, Models: cloneVariants(models)}

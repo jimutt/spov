@@ -37,6 +37,11 @@
   let failure = $state<unknown>(undefined);
 
   const modes = $derived(modesOf(variants, current));
+  // The session's own mode when the list does not offer it, drawn so the
+  // choice says what the session is on, and not choosable.
+  //
+  // @decision(DL-161)
+  const unoffered = $derived(modeOf(current) && !modes.includes(modeOf(current)) ? modeOf(current) : '');
 
   // Follows the session's model and mode until the reader picks another.
   $effect(() => {
@@ -122,6 +127,7 @@
     >
       <option value="">Default</option>
       {#each modes as m (m)}<option value={m}>{m}</option>{/each}
+      {#if unoffered}<option value={unoffered} disabled>{unoffered} (not offered)</option>{/if}
     </select>
   </label>
 {/if}

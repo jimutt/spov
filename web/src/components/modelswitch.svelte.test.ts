@@ -144,6 +144,27 @@ describe("the reasoning choice", () => {
     c.done();
   });
 
+  it("names a mode the list does not offer as the current one, and does not offer it", async () => {
+    const c = await draw("anthropic/claude-opus-5#foo");
+    const options = Array.from(c.reasoning()!.options);
+    expect(options.map((o) => [o.value, o.textContent, o.disabled])).toEqual([
+      ["", "Default", false],
+      ["low", "low", false],
+      ["medium", "medium", false],
+      ["high", "high", false],
+      ["max", "max", false],
+      ["foo", "foo (not offered)", true],
+    ]);
+    expect(c.reasoning()!.value).toBe("foo");
+    await c.choose("low");
+    expect(stub.sent).toEqual(["anthropic/claude-opus-5#low"]);
+    c.done();
+
+    const offered = await draw("anthropic/claude-opus-5#high");
+    expect(Array.from(offered.reasoning()!.options).some((o) => o.disabled)).toBe(false);
+    offered.done();
+  });
+
   it("switches at once to a mode, and to the model's default for Default", async () => {
     const c = await draw("anthropic/claude-opus-5#high");
     await c.choose("max");

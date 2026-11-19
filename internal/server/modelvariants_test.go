@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/opencode/contract"
@@ -58,10 +59,10 @@ func TestTheModelListFixtureIsThePinnedBuilds(t *testing.T) {
 	}
 }
 
-// The recorder reads a run's model list once, at its first attach, and
-// keeps each model's variants in OpenCode's order with the sandbox they
-// came from. A redial reads nothing, nor does another process attaching
-// to the same sandbox; a new run's sandbox is read again.
+// The recorder reads a run's model list once, beside its first attach,
+// and keeps each model's variants in OpenCode's order with the sandbox
+// they came from. A redial reads nothing, nor does another process
+// attaching to the same sandbox; a new run's sandbox is read again.
 //
 // @decision(DL-159)
 func TestTheRecorderReadsTheModelListOncePerRun(t *testing.T) {
@@ -98,10 +99,10 @@ func TestTheRecorderReadsTheModelListOncePerRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "the restart's catch-up", func() bool { _, _, s, _ := again.sb.counts(); return s == 1 })
+	again.rec.stopAll()
 	if n := again.sb.modelReads(); n != 0 {
 		t.Errorf("a restart read the model list %d times", n)
 	}
-	again.rec.stopAll()
 	resumed, _ := f.st.Sessions().Get(ctx, "org", f.sess.ID)
 	resumed.SandboxID = "sb-2"
 	if err := f.st.Sessions().Update(ctx, resumed); err != nil {
@@ -119,11 +120,12 @@ func TestTheRecorderReadsTheModelListOncePerRun(t *testing.T) {
 	}
 }
 
-// A model list that cannot be read is said once, writes nothing, and the
-// recording goes on; a redial does not try it again.
+// A model list that cannot be read is said once per run of failures,
+// writes nothing, and the recording goes on; each redial tries again,
+// at most MaxModelListReads times, and a later read that works keeps it.
 //
 // @decision(DL-159)
-func TestAModelListThatFailsIsLoggedOnceAndTheRecordingGoesOn(t *testing.T) {
+func TestAModelListThatFailsIsLoggedOnceAndTriedAgainAtARedial(t *testing.T) {
 	for name, set := range map[string]func(*fakeSandbox){
 		"a refused read": func(sb *fakeSandbox) { sb.modelsErr = errors.New("503 Service Unavailable") },
 		"not a list":     func(sb *fakeSandbox) { sb.models = `{"error":"nope"}` },
@@ -139,8 +141,16 @@ func TestAModelListThatFailsIsLoggedOnceAndTheRecordingGoesOn(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitFor(t, "the catch-up", func() bool { return len(f.messages()) == 2 })
-			f.sb.breakStream()
-			waitFor(t, "the second catch-up", func() bool { _, _, s, _ := f.sb.counts(); return s == 2 })
+			for n := 1; n <= MaxModelListReads; n++ {
+				waitFor(t, "a read of the model list", func() bool { return f.sb.modelReads() == n })
+				waitFor(t, "its failure", func() bool { return f.failedReads() == n })
+				f.sb.breakStream()
+				waitFor(t, "the next catch-up", func() bool { _, _, s, _ := f.sb.counts(); return s == n+1 })
+			}
+			f.rec.stopAll()
+			if n := f.sb.modelReads(); n != MaxModelListReads {
+				t.Errorf("read %d times, want %d", n, MaxModelListReads)
+			}
 			said := 0
 			for _, w := range f.warnings() {
 				if strings.Contains(w, "reasoning modes were not read") {
@@ -155,12 +165,84 @@ func TestAModelListThatFailsIsLoggedOnceAndTheRecordingGoesOn(t *testing.T) {
 			}
 		})
 	}
+	t.Run("then a read that works", func(t *testing.T) {
+		f := newRecorderFixture(t)
+		f.sb.modelsErr = errors.New("503 Service Unavailable")
+		ctx := context.Background()
+		if err := f.rec.Sync(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the failure", func() bool { return f.failedReads() == 1 })
+		f.sb.mu.Lock()
+		f.sb.modelsErr, f.sb.models = nil, readModelListFixture(t)
+		f.sb.mu.Unlock()
+		f.sb.breakStream()
+		waitFor(t, "the list", func() bool {
+			got, _ := f.st.Sessions().ModelVariants(ctx, "org", f.sess.ID)
+			return got.SandboxID == "sb-1"
+		})
+	})
+}
+
+// failedReads is how many of the session's model list reads failed.
+func (f *recorderFixture) failedReads() int {
+	f.rec.mu.Lock()
+	defer f.rec.mu.Unlock()
+	if st := f.rec.variants[f.sess.ID]; st != nil {
+		return st.failures
+	}
+	return 0
+}
+
+// The read is beside the attach: a model list that does not answer
+// keeps neither the catch-up nor the live frames waiting, and a session
+// at its storage limit, whose capture ends at once, still gets its list.
+//
+// @decision(DL-159) @decision(DL-017)
+func TestTheModelListReadKeepsNothingWaiting(t *testing.T) {
+	f := newRecorderFixture(t)
+	release := make(chan struct{})
+	fetch := f.rec.fetchBounded
+	f.rec.fetchBounded = func(ctx context.Context, conn Connection, path string, limit int64) ([]byte, error) {
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return fetch(ctx, conn, path, limit)
+	}
+	f.sb.listing = `{"data":[{"id":"ses_1","title":"first"}]}`
+	f.sb.messages["ses_1"] = twoMessages
+	ctx := context.Background()
+	if err := f.rec.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the catch-up while the list hangs", func() bool { return len(f.messages()) == 2 })
+	f.sb.send(durableFrameFor(t, "session.step.started", "ses_1", 1, ""))
+	waitFor(t, "a live frame while the list hangs", func() bool { return len(f.events()) == 1 })
+	close(release)
+	waitFor(t, "the list", func() bool {
+		got, _ := f.st.Sessions().ModelVariants(ctx, "org", f.sess.ID)
+		return got.SandboxID == "sb-1"
+	})
+
+	full := newRecorderFixture(t)
+	full.rec.maxRows = 0
+	full.sb.models = readModelListFixture(t)
+	if err := full.rec.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "a full session's list", func() bool {
+		got, _ := full.st.Sessions().ModelVariants(ctx, "org", full.sess.ID)
+		return got.SandboxID == "sb-1"
+	})
 }
 
 // What is kept of a model list: only models with variants, in
 // OpenCode's order, without a variant called default, a repeat or an id
-// that is not one; a list whose kept part is over its bound keeps
-// nothing.
+// that is not one, and at most MaxModelVariants of one model; a list
+// whose kept part is over its bound keeps nothing. A hostile list is
+// read in time linear in its size.
 //
 // @decision(DL-159)
 func TestTheModelListIsReadWithinItsBounds(t *testing.T) {
@@ -182,6 +264,24 @@ func TestTheModelListIsReadWithinItsBounds(t *testing.T) {
 	}
 	if _, err := parseModelVariants([]byte(`{"data":[` + strings.Join(many, ",") + `]}`)); err == nil {
 		t.Error("a kept list over MaxModelVariantsBytes was accepted")
+	}
+	// One model with as many distinct variants as fit in the bound.
+	var hostile strings.Builder
+	hostile.WriteString(`{"data":[{"id":"a","providerID":"p","variants":[`)
+	for i := 0; hostile.Len() < MaxModelListBytes-64; i++ {
+		if i > 0 {
+			hostile.WriteByte(',')
+		}
+		hostile.WriteString(`{"id":"v` + strconv.Itoa(i) + `"}`)
+	}
+	hostile.WriteString(`]}]}`)
+	start := time.Now()
+	capped, err := parseModelVariants([]byte(hostile.String()))
+	if took := time.Since(start); took > 5*time.Second {
+		t.Errorf("a hostile list took %s", took)
+	}
+	if err != nil || len(capped["p/a"]) != MaxModelVariants || capped["p/a"][0] != "v0" {
+		t.Errorf("a model with very many variants kept %d, %v; want the first %d", len(capped["p/a"]), err, MaxModelVariants)
 	}
 	for _, body := range []string{`[]`, `{}`, `not json`} {
 		if _, err := parseModelVariants([]byte(body)); err == nil {
@@ -230,7 +330,9 @@ func TestASessionServesItsCurrentSandboxsModelVariants(t *testing.T) {
 	if v := get(); !v.Read || !reflect.DeepEqual(v.Models, fixtureVariants) {
 		t.Errorf("after the recorder: %+v", v)
 	}
-	if err := f.store.Sessions().SetModelVariants(ctx, auth.LocalID, sess.ID, "sb-earlier", fixtureVariants); err != nil {
+	moved, _ := f.store.Sessions().Get(ctx, auth.LocalID, sess.ID)
+	moved.SandboxID = "sb-later"
+	if err := f.store.Sessions().Update(ctx, moved); err != nil {
 		t.Fatal(err)
 	}
 	if v := get(); v.Read || len(v.Models) != 0 {
@@ -254,7 +356,7 @@ func TestTheSwitchTakesOnlyAModeTheSandboxOffers(t *testing.T) {
 		}
 	}
 	refuse("anthropic/claude-opus-5#high",
-		"high is not a reasoning mode anthropic/claude-opus-5 offers in this session; this session has not listed its models' reasoning modes yet")
+		"high is not a reasoning mode anthropic/claude-opus-5 offers in this session; this session holds no list of its models' reasoning modes")
 	if err := f.svc.deps.Store.Sessions().SetModelVariants(ctx, f.sess.OrgID, f.sess.ID, f.sess.SandboxID,
 		map[string][]string{"anthropic/claude-opus-5": {"low", "high", "max"}}); err != nil {
 		t.Fatal(err)
@@ -280,9 +382,10 @@ func TestTheSwitchTakesOnlyAModeTheSandboxOffers(t *testing.T) {
 		t.Errorf("a reference without a mode sent %v", calls[1].body)
 	}
 	// Another sandbox's list is not this one's.
-	if err := f.svc.deps.Store.Sessions().SetModelVariants(ctx, f.sess.OrgID, f.sess.ID, "sb-earlier",
-		map[string][]string{"anthropic/claude-opus-5": {"max"}}); err != nil {
+	moved, _ := f.svc.deps.Store.Sessions().Get(ctx, f.sess.OrgID, f.sess.ID)
+	moved.SandboxID = "sb-later"
+	if err := f.svc.deps.Store.Sessions().Update(ctx, moved); err != nil {
 		t.Fatal(err)
 	}
-	refuse("anthropic/claude-opus-5#max", "has not listed")
+	refuse("anthropic/claude-opus-5#max", "holds no list")
 }

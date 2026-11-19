@@ -317,8 +317,8 @@ func (p pgSessions) ProxyCA(ctx context.Context, orgID, id string) (store.Sealed
 }
 
 // SetModelVariants keeps what the session's sandbox said its models
-// offer, replacing what was kept; a session that is not this org's is
-// ErrNotFound.
+// offer, replacing what was kept; a session that is not this org's, or
+// no longer runs on that sandbox, is ErrNotFound.
 //
 // @decision(DL-159)
 func (p pgSessions) SetModelVariants(ctx context.Context, orgID, id, sandboxID string, models map[string][]string) error {

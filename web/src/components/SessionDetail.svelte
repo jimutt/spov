@@ -545,13 +545,16 @@
     if (!variantsSandbox) return;
     variants = undefined;
     void readVariants();
+    // Only a read made counts: a hidden tab's ticks ask for nothing.
     let tries = 0;
     const timer = setInterval(() => {
-      if (untrack(() => variants?.read) || tries++ >= VariantsRetries) {
+      if (untrack(() => variants?.read) || tries >= VariantsRetries) {
         clearInterval(timer);
         return;
       }
-      if (document.visibilityState === 'visible') void readVariants();
+      if (document.visibilityState !== 'visible') return;
+      tries++;
+      void readVariants();
     }, VariantsRetryMs);
     return () => clearInterval(timer);
   });

@@ -153,6 +153,11 @@ type Recorder struct {
 	connect func(ctx context.Context, p auth.Principal, sess store.Session) (Connection, error)
 	events  func(ctx context.Context, conn Connection) (io.ReadCloser, error)
 	fetch   func(ctx context.Context, conn Connection, path string) ([]byte, error)
+	// fetchBounded reads one path whose body may be at most limit
+	// bytes, and refuses a longer one.
+	//
+	// @decision(DL-159)
+	fetchBounded func(ctx context.Context, conn Connection, path string, limit int64) ([]byte, error)
 	// drop releases the connection cached for a session, naming the
 	// refused token. It is its own seam because the refusal arrives on
 	// the stream connect returned.
@@ -181,13 +186,12 @@ type Recorder struct {
 	// sandbox given up on. Never retried while this process leads; a new
 	// leader starts afresh, and a resumed session's next sandbox too.
 	abandoned map[string]string
-	// variantsTried is, by session, the sandbox whose model list this
-	// process has tried to read, so a failed read is not made again on
-	// every redial.
+	// variants is, by session, how this process's reads of its current
+	// sandbox's model list stand.
 	//
 	// @decision(DL-159)
-	variantsTried map[string]string
-	wg            sync.WaitGroup
+	variants map[string]*variantsRead
+	wg       sync.WaitGroup
 }
 
 // NewRecorder builds a recorder that reaches sandboxes through svc, as
@@ -220,11 +224,14 @@ func NewRecorder(svc *Service, st store.Store, now func() time.Time, warn func(s
 		fetch: func(ctx context.Context, conn Connection, path string) ([]byte, error) {
 			return sandboxGet(ctx, conn.URL+path, conn.Token, conn.User, conn.Password)
 		},
-		backoff:       RecorderBackoff,
-		sleep:         sleepFor,
-		captures:      map[string]context.CancelFunc{},
-		abandoned:     map[string]string{},
-		variantsTried: map[string]string{},
+		fetchBounded: func(ctx context.Context, conn Connection, path string, limit int64) ([]byte, error) {
+			return sandboxGetBounded(ctx, conn.URL+path, conn.Token, conn.User, conn.Password, limit)
+		},
+		backoff:   RecorderBackoff,
+		sleep:     sleepFor,
+		captures:  map[string]context.CancelFunc{},
+		abandoned: map[string]string{},
+		variants:  map[string]*variantsRead{},
 	}
 }
 
@@ -301,9 +308,9 @@ func (r *Recorder) Sync(ctx context.Context) error {
 		}
 	}
 	// @decision(DL-159)
-	for id := range r.variantsTried {
+	for id := range r.variants {
 		if !running[id] {
-			delete(r.variantsTried, id)
+			delete(r.variants, id)
 		}
 	}
 	return nil
@@ -690,8 +697,8 @@ func (r *Recorder) spanOver(ctx context.Context, sess store.Session, conn Connec
 }
 
 // attach arms the gap check against where the store's recording of
-// each conversation stopped, reads the run's model list once, then
-// catches the store up with the sandbox's message store. A redial, a
+// each conversation stopped, starts the run's model list read beside
+// it, then catches the store up with the sandbox's message store. A redial, a
 // restart and a first attach are one rule: a session never recorded has
 // nothing stored, and its logs are judged from sequence 1.
 //
@@ -702,7 +709,7 @@ func (r *Recorder) attach(ctx context.Context, c *capture) error {
 		return fmt.Errorf("read the store: %w", err)
 	}
 	c.lastSeq = last
-	r.readModelVariants(ctx, c)
+	r.startModelVariants(ctx, c)
 	if err := r.measure(ctx, c); err != nil {
 		return err
 	}

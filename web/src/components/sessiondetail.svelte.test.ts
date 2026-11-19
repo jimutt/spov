@@ -1367,14 +1367,9 @@ describe("resuming a stopped session", () => {
   });
 });
 
-// Below `lg` the sidebar is a sheet opened from a slim title bar, and a
-// sent message always brings the page back to the end. CSS decides what is
-// drawn and jsdom has none, so these assert the state the markup carries
-// and where the page was told to scroll.
-//
-// @decision(DL-106) @decision(DL-057)
 // The page reads the sandbox's reasoning modes for the composer once per
-// sandbox while the session runs, and again when its sandbox changes.
+// sandbox while the session runs, again when its sandbox changes, and
+// while none are read, now and then a bounded number of times.
 //
 // @decision(DL-161)
 describe("the reasoning modes", () => {
@@ -1412,8 +1407,60 @@ describe("the reasoning modes", () => {
     expect(stub.variantReads()).toBe(0);
     page.done();
   });
+  it("asks again every 15 s while nothing is read, at most eight times, and never from a hidden tab", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    let hidden = false;
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => (hidden ? "hidden" : "visible"));
+    try {
+      stub.setSession({ sandbox_id: "sb-1", model: "anthropic/claude-opus-5" });
+      const page = await open();
+      expect(stub.variantReads()).toBe(1);
+      hidden = true;
+      vi.advanceTimersByTime(4 * 15_000);
+      await settle();
+      expect(stub.variantReads(), "a hidden tab asked").toBe(1);
+      hidden = false;
+      vi.advanceTimersByTime(15_000 - 1);
+      await settle();
+      expect(stub.variantReads()).toBe(1);
+      vi.advanceTimersByTime(1);
+      await settle();
+      expect(stub.variantReads()).toBe(2);
+      for (let i = 0; i < 20; i++) {
+        vi.advanceTimersByTime(15_000);
+        await settle();
+      }
+      expect(stub.variantReads(), "one read and eight more").toBe(9);
+      page.done();
+
+      // Once the list is read, nothing more is asked.
+      stub.reset();
+      stub.accept();
+      stub.setSession({ sandbox_id: "sb-1", model: "anthropic/claude-opus-5" });
+      const second = await open();
+      stub.withVariants({ read: true, models: {} });
+      vi.advanceTimersByTime(15_000);
+      await settle();
+      expect(stub.variantReads()).toBe(2);
+      for (let i = 0; i < 5; i++) {
+        vi.advanceTimersByTime(15_000);
+        await settle();
+      }
+      expect(stub.variantReads()).toBe(2);
+      second.done();
+    } finally {
+      visibility.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });
 
+// Below `lg` the sidebar is a sheet opened from a slim title bar, and a
+// sent message always brings the page back to the end. CSS decides what is
+// drawn and jsdom has none, so these assert the state the markup carries
+// and where the page was told to scroll.
+//
+// @decision(DL-106) @decision(DL-057)
 describe("the session page on a phone", () => {
   it("opens the details from the title bar and closes them with Escape", async () => {
     const page = await open();

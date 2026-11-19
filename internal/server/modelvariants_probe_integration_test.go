@@ -36,7 +36,7 @@ func TestIntegrationLocalOpenCodeProbeModelList(t *testing.T) {
 		t.Fatalf("the server never answered as healthy: %v", err)
 	}
 	contract.CheckRequest(t, "GET", modelListPath, nil)
-	body, err := sandboxGet(ctx, conn.URL+modelListPath, conn.Token, conn.User, conn.Password)
+	body, err := sandboxGetBounded(ctx, conn.URL+modelListPath, conn.Token, conn.User, conn.Password, MaxModelListBytes)
 	if err != nil {
 		t.Fatalf("reading the model list: %v", err)
 	}
