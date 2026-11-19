@@ -87,6 +87,15 @@ export const nav = {
   go(url: string): void {
     location.assign(url);
   },
+  /**
+   * replace leaves the page without keeping it in the history, so Back
+   * skips it: a create form, once what it made exists.
+   *
+   * @decision(DL-156)
+   */
+  replace(url: string): void {
+    location.replace(url);
+  },
 };
 
 /**

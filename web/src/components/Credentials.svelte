@@ -89,8 +89,12 @@
   const enabled = $derived(creds.data?.enabled ?? false);
 </script>
 
-<h2 class="{sectionTitle} mb-1.5">Credentials</h2>
-<p class="mt-0 mb-5 max-w-[64ch] text-soft">Tokens your sessions use to reach a forge or a model provider.</p>
+<h2 id="credentials" class="{sectionTitle} mb-1.5">Credentials</h2>
+<!-- @decision(DL-157) -->
+<p class="mt-0 mb-5 max-w-[64ch] text-soft">
+  Keys and tokens your sessions use to reach a git forge or a model provider. Your own sign-ins to this server are under
+  <a class="underline" href="/tokens/">Access tokens</a>.
+</p>
 
 {#if creds.error}
   <Problem error={creds.error} what="your credentials" />
