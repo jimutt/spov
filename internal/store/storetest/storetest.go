@@ -425,6 +425,71 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("a stopped session's CA is still kept: %v", err)
 		}
 	},
+	// A CA written, read and dropped inside a transaction behaves as
+	// outside one, and a rollback undoes the write and the drop.
+	//
+	// @decision(DL-034) @decision(DL-003)
+	"a session's proxy CA follows a transaction": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		in := session(store.NewID(t0), "org", "u1", "delta", store.StateRunning)
+		if err := s.Sessions().Create(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+		first := store.SealedValue{Ciphertext: []byte("c1"), Nonce: []byte("n1"), KeyVersion: 3}
+		second := store.SealedValue{Ciphertext: []byte("c2"), Nonce: []byte("n2"), KeyVersion: 4}
+		kept := func(want string) {
+			t.Helper()
+			got, err := s.Sessions().ProxyCA(ctx, "org", in.ID)
+			if want == "" {
+				if !errors.Is(err, store.ErrNotFound) {
+					t.Errorf("ProxyCA = %+v, %v; want none kept", got, err)
+				}
+				return
+			}
+			if err != nil || string(got.Ciphertext) != want {
+				t.Errorf("ProxyCA = %+v, %v; want %s", got, err, want)
+			}
+		}
+		boom := errors.New("roll back")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Sessions().SetProxyCA(ctx, "org", in.ID, first); err != nil {
+				return err
+			}
+			got, err := tx.Sessions().ProxyCA(ctx, "org", in.ID)
+			if err != nil || string(got.Ciphertext) != "c1" {
+				t.Errorf("inside the transaction ProxyCA = %+v, %v; want c1", got, err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("a committed write: %v", err)
+		}
+		kept("c1")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Sessions().SetProxyCA(ctx, "org", in.ID, second); err != nil {
+				return err
+			}
+			return boom
+		}); !errors.Is(err, boom) {
+			t.Fatalf("a rolled-back write: %v", err)
+		}
+		kept("c1")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if _, err := tx.Sessions().MarkStopped(ctx, "org", in.ID, store.StateStopped, t0, ""); err != nil {
+				return err
+			}
+			return boom
+		}); !errors.Is(err, boom) {
+			t.Fatalf("a rolled-back stop: %v", err)
+		}
+		kept("c1")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			_, err := tx.Sessions().MarkStopped(ctx, "org", in.ID, store.StateStopped, t0, "")
+			return err
+		}); err != nil {
+			t.Fatalf("a committed stop: %v", err)
+		}
+		kept("")
+	},
 	// @decision(DL-159)
 	"a session's model variants are kept for their sandbox while it runs there": func(t *testing.T, s store.Store) {
 		ctx := context.Background()
@@ -3767,6 +3832,85 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		if !found {
 			t.Errorf("a withdrawn member did not round-trip: %+v", got[j.ID])
 		}
+	},
+
+	// Deliverables and collected files written inside a transaction are
+	// kept on commit and undone by a rollback, including a write into a
+	// job that already has some.
+	//
+	// @decision(DL-051) @decision(DL-003)
+	"jobs: deliverables and collected files follow a transaction": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sess := runningSession(t, s, "org", "u1", "s1")
+		j := job(store.NewID(t0), "org", "u1", sess.ID, store.JobRunning)
+		if err := s.Jobs().Create(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		report := func(path string) store.Deliverable {
+			return store.Deliverable{JobID: j.ID, Key: store.ReportKey(path), Kind: store.DeliverableReport,
+				Status: store.DeliverableVerified, Title: path, Path: path, Size: 1}
+		}
+		file := func(path string) store.JobFile {
+			return store.JobFile{JobID: j.ID, Path: path, ContentType: "text/markdown", Size: 1, Body: []byte("x")}
+		}
+		write := func(tx store.Store, path string) error {
+			if _, err := tx.Jobs().PutDeliverable(ctx, "org", report(path)); err != nil {
+				return err
+			}
+			_, err := tx.Jobs().PutJobFile(ctx, "org", file(path))
+			return err
+		}
+		kept := func(want ...string) {
+			t.Helper()
+			all, err := s.Jobs().Deliverables(ctx, "org", []string{j.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, d := range all[j.ID] {
+				got = append(got, d.Path)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("deliverables = %v, want %v", got, want)
+			}
+			files, err := s.Jobs().JobFiles(ctx, "org", j.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = nil
+			for _, f := range files {
+				got = append(got, f.Path)
+			}
+			slices.Sort(got)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("files = %v, want %v", got, want)
+			}
+		}
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := write(tx, "a.md"); err != nil {
+				return err
+			}
+			if all, err := tx.Jobs().Deliverables(ctx, "org", []string{j.ID}); err != nil || len(all[j.ID]) != 1 {
+				t.Errorf("inside the transaction Deliverables = %v, %v; want a.md", all, err)
+			}
+			if _, err := tx.Jobs().JobFile(ctx, "org", j.ID, "a.md"); err != nil {
+				t.Errorf("inside the transaction JobFile: %v", err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("a committed write: %v", err)
+		}
+		kept("a.md")
+		boom := errors.New("roll back")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := write(tx, "b.md"); err != nil {
+				return err
+			}
+			return boom
+		}); !errors.Is(err, boom) {
+			t.Fatalf("a rolled-back write: %v", err)
+		}
+		kept("a.md")
 	},
 
 	// @decision(DL-051)
