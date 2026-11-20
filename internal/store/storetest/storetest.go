@@ -3834,6 +3834,85 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 	},
 
+	// Deliverables and collected files written inside a transaction are
+	// kept on commit and undone by a rollback, including a write into a
+	// job that already has some.
+	//
+	// @decision(DL-051) @decision(DL-003)
+	"jobs: deliverables and collected files follow a transaction": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sess := runningSession(t, s, "org", "u1", "s1")
+		j := job(store.NewID(t0), "org", "u1", sess.ID, store.JobRunning)
+		if err := s.Jobs().Create(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+		report := func(path string) store.Deliverable {
+			return store.Deliverable{JobID: j.ID, Key: store.ReportKey(path), Kind: store.DeliverableReport,
+				Status: store.DeliverableVerified, Title: path, Path: path, Size: 1}
+		}
+		file := func(path string) store.JobFile {
+			return store.JobFile{JobID: j.ID, Path: path, ContentType: "text/markdown", Size: 1, Body: []byte("x")}
+		}
+		write := func(tx store.Store, path string) error {
+			if _, err := tx.Jobs().PutDeliverable(ctx, "org", report(path)); err != nil {
+				return err
+			}
+			_, err := tx.Jobs().PutJobFile(ctx, "org", file(path))
+			return err
+		}
+		kept := func(want ...string) {
+			t.Helper()
+			all, err := s.Jobs().Deliverables(ctx, "org", []string{j.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, d := range all[j.ID] {
+				got = append(got, d.Path)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("deliverables = %v, want %v", got, want)
+			}
+			files, err := s.Jobs().JobFiles(ctx, "org", j.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = nil
+			for _, f := range files {
+				got = append(got, f.Path)
+			}
+			slices.Sort(got)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("files = %v, want %v", got, want)
+			}
+		}
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := write(tx, "a.md"); err != nil {
+				return err
+			}
+			if all, err := tx.Jobs().Deliverables(ctx, "org", []string{j.ID}); err != nil || len(all[j.ID]) != 1 {
+				t.Errorf("inside the transaction Deliverables = %v, %v; want a.md", all, err)
+			}
+			if _, err := tx.Jobs().JobFile(ctx, "org", j.ID, "a.md"); err != nil {
+				t.Errorf("inside the transaction JobFile: %v", err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("a committed write: %v", err)
+		}
+		kept("a.md")
+		boom := errors.New("roll back")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := write(tx, "b.md"); err != nil {
+				return err
+			}
+			return boom
+		}); !errors.Is(err, boom) {
+			t.Fatalf("a rolled-back write: %v", err)
+		}
+		kept("a.md")
+	},
+
 	// @decision(DL-051)
 	"jobs: a collected file is stored once": func(t *testing.T, s store.Store) {
 		ctx := context.Background()

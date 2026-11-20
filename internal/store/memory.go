@@ -221,6 +221,9 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	variants := cloneMap(m.modelVariants)
 	// @decision(DL-034)
 	cas := cloneMap(m.proxyCAs)
+	// Nested, so a write into a job's own map is undone too.
+	// @decision(DL-051)
+	delivered, files := cloneNested(m.deliverables), cloneNested(m.jobFiles)
 	var undo []func()
 	var pending []change
 	pos := m.eventPos
@@ -232,7 +235,8 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
 		messagesBySession: m.messagesBySession,
 		jobs:              m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending,
-		jobSeeds: m.jobSeeds, modelVariants: m.modelVariants, proxyCAs: m.proxyCAs}
+		jobSeeds: m.jobSeeds, modelVariants: m.modelVariants, proxyCAs: m.proxyCAs,
+		deliverables: m.deliverables, jobFiles: m.jobFiles}
 	committed := false
 	defer func() {
 		view.done = true
@@ -259,6 +263,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		m.runs = runs
 		m.modelVariants = variants
 		m.proxyCAs = cas
+		m.deliverables, m.jobFiles = delivered, files
 		m.eventPos = pos
 	}()
 	if err := fn(view); err != nil {
@@ -332,6 +337,15 @@ func cloneMap[V any](in map[string]V) map[string]V {
 	out := make(map[string]V, len(in))
 	for k, v := range in {
 		out[k] = v
+	}
+	return out
+}
+
+// cloneNested copies a map of maps two levels deep.
+func cloneNested[V any](in map[string]map[string]V) map[string]map[string]V {
+	out := make(map[string]map[string]V, len(in))
+	for k, v := range in {
+		out[k] = cloneMap(v)
 	}
 	return out
 }
