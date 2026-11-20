@@ -425,6 +425,71 @@ var cases = map[string]func(t *testing.T, s store.Store){
 			t.Errorf("a stopped session's CA is still kept: %v", err)
 		}
 	},
+	// A CA written, read and dropped inside a transaction behaves as
+	// outside one, and a rollback undoes the write and the drop.
+	//
+	// @decision(DL-034) @decision(DL-003)
+	"a session's proxy CA follows a transaction": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		in := session(store.NewID(t0), "org", "u1", "delta", store.StateRunning)
+		if err := s.Sessions().Create(ctx, in); err != nil {
+			t.Fatal(err)
+		}
+		first := store.SealedValue{Ciphertext: []byte("c1"), Nonce: []byte("n1"), KeyVersion: 3}
+		second := store.SealedValue{Ciphertext: []byte("c2"), Nonce: []byte("n2"), KeyVersion: 4}
+		kept := func(want string) {
+			t.Helper()
+			got, err := s.Sessions().ProxyCA(ctx, "org", in.ID)
+			if want == "" {
+				if !errors.Is(err, store.ErrNotFound) {
+					t.Errorf("ProxyCA = %+v, %v; want none kept", got, err)
+				}
+				return
+			}
+			if err != nil || string(got.Ciphertext) != want {
+				t.Errorf("ProxyCA = %+v, %v; want %s", got, err, want)
+			}
+		}
+		boom := errors.New("roll back")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Sessions().SetProxyCA(ctx, "org", in.ID, first); err != nil {
+				return err
+			}
+			got, err := tx.Sessions().ProxyCA(ctx, "org", in.ID)
+			if err != nil || string(got.Ciphertext) != "c1" {
+				t.Errorf("inside the transaction ProxyCA = %+v, %v; want c1", got, err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("a committed write: %v", err)
+		}
+		kept("c1")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Sessions().SetProxyCA(ctx, "org", in.ID, second); err != nil {
+				return err
+			}
+			return boom
+		}); !errors.Is(err, boom) {
+			t.Fatalf("a rolled-back write: %v", err)
+		}
+		kept("c1")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			if _, err := tx.Sessions().MarkStopped(ctx, "org", in.ID, store.StateStopped, t0, ""); err != nil {
+				return err
+			}
+			return boom
+		}); !errors.Is(err, boom) {
+			t.Fatalf("a rolled-back stop: %v", err)
+		}
+		kept("c1")
+		if err := s.Tx(ctx, func(tx store.Store) error {
+			_, err := tx.Sessions().MarkStopped(ctx, "org", in.ID, store.StateStopped, t0, "")
+			return err
+		}); err != nil {
+			t.Fatalf("a committed stop: %v", err)
+		}
+		kept("")
+	},
 	// @decision(DL-159)
 	"a session's model variants are kept for their sandbox while it runs there": func(t *testing.T, s store.Store) {
 		ctx := context.Background()

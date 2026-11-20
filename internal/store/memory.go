@@ -219,6 +219,8 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	jobs, seeds := cloneMap(m.jobs), cloneMap(m.jobSeeds)
 	runs := cloneRuns(m.runs)
 	variants := cloneMap(m.modelVariants)
+	// @decision(DL-034)
+	cas := cloneMap(m.proxyCAs)
 	var undo []func()
 	var pending []change
 	pos := m.eventPos
@@ -230,7 +232,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
 		messagesBySession: m.messagesBySession,
 		jobs:              m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending,
-		jobSeeds: m.jobSeeds, modelVariants: m.modelVariants}
+		jobSeeds: m.jobSeeds, modelVariants: m.modelVariants, proxyCAs: m.proxyCAs}
 	committed := false
 	defer func() {
 		view.done = true
@@ -256,6 +258,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		m.jobs, m.jobSeeds = jobs, seeds
 		m.runs = runs
 		m.modelVariants = variants
+		m.proxyCAs = cas
 		m.eventPos = pos
 	}()
 	if err := fn(view); err != nil {
