@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Migrate before any new container serves, so a bad migration fails the
-# deploy rather than crash-looping replicas.
+# Migrate, and publish the sandbox image, before any new container
+# serves, so a bad migration fails the deploy rather than crash-looping
+# replicas.
 #
 # @decision(DL-010)
 set -euo pipefail
@@ -12,3 +13,12 @@ kamal app exec -c deploy/kamal/config/deploy.yml \
   ${KAMAL_DESTINATION:+-d "$KAMAL_DESTINATION"} \
   --version "${KAMAL_VERSION:?KAMAL_VERSION is not set}" -- serve migrate up
 echo "spov: migrations at head"
+
+# The sandbox image for this release's OpenCode pin; a no-op when it is
+# already published in the server's Modal environment.
+#
+# @decision(DL-032)
+kamal app exec -c deploy/kamal/config/deploy.yml \
+  ${KAMAL_DESTINATION:+-d "$KAMAL_DESTINATION"} \
+  --version "${KAMAL_VERSION}" -- serve image build
+echo "spov: sandbox image published"

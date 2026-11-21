@@ -148,7 +148,7 @@ func TestSyncBackNeverLandsInPlaceOverAParentOfTheHooksDirectory(t *testing.T) {
 			}
 			runGit(t, s, "add", "-A")
 		})
-		res, err := ApplySync(ctx, dir, "s", "main", state)
+		res, err := applyState(t, ctx, dir, "s", "main", state)
 		wantFallback(t, dir, head, res, err, ".husky")
 		wantContent(t, dir, ".husky/_/h", "#!/bin/sh\n")
 		userCommits(t, dir)
@@ -158,7 +158,7 @@ func TestSyncBackNeverLandsInPlaceOverAParentOfTheHooksDirectory(t *testing.T) {
 	t.Run("an uncommitted symlink above a hooks directory not made yet", func(t *testing.T) {
 		dir, head := initTestRepo(t, "")
 		runGit(t, dir, "config", "core.hooksPath", "hooks/active")
-		res, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: head,
 			WorktreeTar: makeTar(t, tarEntry{name: "hooks", link: "tools"}, tarEntry{name: "tools/active/pre-commit", body: marker}),
 		})
@@ -179,7 +179,7 @@ func TestSyncBackNeverLandsInPlaceOverAParentOfTheHooksDirectory(t *testing.T) {
 			writeFile(t, s, "tools/pre-commit", marker, 0o755)
 			runGit(t, s, "add", "-A")
 		})
-		res, err := ApplySync(ctx, dir, "s", "main", state)
+		res, err := applyState(t, ctx, dir, "s", "main", state)
 		wantFallback(t, dir, head, res, err, "shared.gitconfig")
 		wantContent(t, dir, "shared.gitconfig", "[core]\n\tautocrlf = false\n")
 	})
@@ -190,7 +190,7 @@ func TestSyncBackNeverLandsInPlaceOverAParentOfTheHooksDirectory(t *testing.T) {
 		runGit(t, dir, "add", "scripts")
 		head := commitHead(t, dir, "filter script")
 		runGit(t, dir, "config", "filter.probe.clean", "scripts/clean.sh")
-		res, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: head,
 			WorktreeTar: makeTar(t, tarEntry{name: "scripts/clean.sh", body: marker}),
 		})
@@ -249,7 +249,7 @@ func TestSyncBackCommitsNeverReplaceAFileTheCheckoutDoesNotTrack(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir, head := setup(t)
 			state := sandboxCommits(t, dir, head, func(s string) { tc.edit(t, s) })
-			res, err := ApplySync(ctx, dir, "s", "main", state)
+			res, err := applyState(t, ctx, dir, "s", "main", state)
 			wantFallback(t, dir, head, res, err, tc.want)
 			unchanged(t, dir)
 			if got := runGit(t, dir, "status", "--porcelain"); got != "" {
@@ -275,7 +275,11 @@ func TestTheFastForwardNeverOverwritesAnIgnoredFile(t *testing.T) {
 		writeFile(t, s, ".env", "PLANTED=1\n", 0o644)
 		runGit(t, s, "add", "-f", ".env")
 	})
-	if err := unbundleCommits(ctx, dir, state.Bundle, state.HeadCommit); err != nil {
+	spool, err := SpoolExported(t.TempDir(), state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unbundleCommits(ctx, dir, spool.BundlePath, state.HeadCommit); err != nil {
 		t.Fatal(err)
 	}
 	refused, err := fastForward(ctx, dir, head, state.HeadCommit)
@@ -322,7 +326,7 @@ func TestSyncBackNeverWritesInsideASubmodule(t *testing.T) {
 
 	t.Run("an uncommitted file", func(t *testing.T) {
 		dir, head := setup(t)
-		_, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+		_, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: head,
 			WorktreeTar: makeTar(t, tarEntry{name: "sub/notes.txt", body: "x\n"}),
 		})
@@ -342,7 +346,7 @@ func TestSyncBackNeverWritesInsideASubmodule(t *testing.T) {
 			writeFile(t, s, "sub/notes.txt", "x\n", 0o644)
 			runGit(t, s, "add", "sub/notes.txt")
 		})
-		res, err := ApplySync(ctx, dir, "s", "main", state)
+		res, err := applyState(t, ctx, dir, "s", "main", state)
 		wantFallback(t, dir, head, res, err, "sub")
 		wantAbsent(t, dir, "sub/notes.txt")
 	})
@@ -358,7 +362,7 @@ func TestAnExportTheCheckoutIgnoresLandsOnTheFallbackBranch(t *testing.T) {
 	ctx := context.Background()
 	dir, head := initTestRepo(t, "")
 	writeFile(t, dir, ".git/info/exclude", "*.log\n", 0o644)
-	res, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+	res, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 		Branch: "main", BaseCommit: head, HeadCommit: head,
 		WorktreeTar: makeTar(t, tarEntry{name: "debug.log", body: "trace\n"}, tarEntry{name: "a.txt", body: "a\n"}),
 	})
@@ -390,7 +394,7 @@ func TestABadArchiveEntryIsRefusedBeforeTheCommitsLand(t *testing.T) {
 	_ = tw.Close()
 	_ = gz.Close()
 	state.WorktreeTar = buf.Bytes()
-	if _, err := ApplySync(context.Background(), dir, "s", "main", state); err == nil {
+	if _, err := applyState(t, context.Background(), dir, "s", "main", state); err == nil {
 		t.Fatal("an archive with a hard link was applied")
 	}
 	if got := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD")); got != head {
@@ -415,7 +419,7 @@ func TestSyncBackNeverLandsInPlaceWhenItChangesWhatGitReads(t *testing.T) {
 			writeFile(t, s, "a.txt", "a\n", 0o644)
 			runGit(t, s, "add", "-A")
 		})
-		res, err := ApplySync(ctx, dir, "s", "main", state)
+		res, err := applyState(t, ctx, dir, "s", "main", state)
 		wantFallback(t, dir, head, res, err, ".gitattributes")
 		wantAbsent(t, dir, "filter-ran")
 		wantAbsent(t, dir, ".gitattributes")
@@ -424,7 +428,7 @@ func TestSyncBackNeverLandsInPlaceWhenItChangesWhatGitReads(t *testing.T) {
 	for _, p := range []string{"docs/.gitattributes", ".lfsconfig", "lib/.gitmodules", ".GitAttributes"} {
 		t.Run("an uncommitted "+p, func(t *testing.T) {
 			dir, head := initTestRepo(t, "")
-			res, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+			res, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 				Branch: "main", BaseCommit: head, HeadCommit: head,
 				WorktreeTar: makeTar(t, tarEntry{name: p, body: "x\n"}),
 			})
@@ -469,7 +473,7 @@ func TestASyncThatExpandsTooFarIsRefused(t *testing.T) {
 		old := maxSyncIncomingBlobBytes
 		maxSyncIncomingBlobBytes = 1 << 20 // 1 MiB
 		t.Cleanup(func() { maxSyncIncomingBlobBytes = old })
-		_, err := ApplySync(ctx, dir, "s", "main", state)
+		_, err := applyState(t, ctx, dir, "s", "main", state)
 		unchanged(t, dir, head, err, "file")
 	})
 
@@ -479,14 +483,14 @@ func TestASyncThatExpandsTooFarIsRefused(t *testing.T) {
 		old := maxSyncIncomingBytes
 		maxSyncIncomingBytes = 1 << 20 // 1 MiB
 		t.Cleanup(func() { maxSyncIncomingBytes = old })
-		_, err := ApplySync(ctx, dir, "s", "main", state)
+		_, err := applyState(t, ctx, dir, "s", "main", state)
 		unchanged(t, dir, head, err, "expands")
 	})
 
 	t.Run("within the limits it lands", func(t *testing.T) {
 		dir, head := initTestRepo(t, "")
 		state := sandboxOf(t, dir, head)
-		res, err := ApplySync(ctx, dir, "s", "main", state)
+		res, err := applyState(t, ctx, dir, "s", "main", state)
 		if err != nil || !res.InPlace {
 			t.Fatalf("an honest export under the limit: %+v, %v", res, err)
 		}

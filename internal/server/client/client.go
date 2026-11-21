@@ -57,6 +57,11 @@ type Error struct {
 	//
 	// @decision(DL-133)
 	RetryAfter time.Duration `json:"-"`
+	// Problem says the server answered with a problem document, as every
+	// route spov registers does; a plain 404 is a path it does not serve.
+	//
+	// @decision(DL-178)
+	Problem bool `json:"-"`
 }
 
 func (e *Error) Error() string {
@@ -166,7 +171,17 @@ func problemOf(resp *http.Response) error {
 	}
 	e.Status = resp.StatusCode
 	e.RetryAfter = retryAfter(resp.Header.Get("Retry-After"), time.Now())
+	e.Problem = strings.HasPrefix(resp.Header.Get("Content-Type"), "application/problem+json")
 	return e
+}
+
+// IsUnservedRoute reports whether the server answered a 404 that no
+// route of its own wrote: a server from before the route existed.
+//
+// @decision(DL-178)
+func IsUnservedRoute(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && (e.Status == http.StatusNotFound || e.Status == http.StatusMethodNotAllowed) && !e.Problem
 }
 
 // retryAfter reads a Retry-After header, in seconds or as a date, as
@@ -645,6 +660,42 @@ func (c *Client) GetJobFile(ctx context.Context, id, path string) ([]byte, strin
 // @decision(DL-045)
 func (c *Client) CancelJob(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "jobs/"+url.PathEscape(id), nil, nil)
+}
+
+// ExportSessionSyncArchive asks for a session's sync-back as DL-176's
+// archive and returns its body, which the caller closes. The request
+// has no timeout of its own; ctx bounds it.
+//
+// @decision(DL-178)
+func (c *Client) ExportSessionSyncArchive(ctx context.Context, ref string) (io.ReadCloser, error) {
+	return c.archive(ctx, "sessions/"+url.PathEscape(ref)+"/sync-archive")
+}
+
+// ExportJobSyncArchive is ExportSessionSyncArchive for a sync job.
+//
+// @decision(DL-178)
+func (c *Client) ExportJobSyncArchive(ctx context.Context, id string) (io.ReadCloser, error) {
+	return c.archive(ctx, "jobs/"+url.PathEscape(id)+"/sync-archive")
+}
+
+func (c *Client) archive(ctx context.Context, path string) (io.ReadCloser, error) {
+	req, err := c.newRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+	transport := http.DefaultTransport
+	if c.HTTP != nil && c.HTTP.Transport != nil {
+		transport = c.HTTP.Transport
+	}
+	resp, err := (&http.Client{Transport: transport}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("client: POST %s: %w", path, redactURL(err))
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer func() { _ = resp.Body.Close() }()
+		return nil, problemOf(resp)
+	}
+	return resp.Body, nil
 }
 
 // ExportJobSync exports a sync job's state from its sandbox.

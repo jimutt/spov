@@ -132,6 +132,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{id}/sync-archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stream a sync job's git commits and working-tree changes from its sandbox, up to 1 GiB */
+        post: operations["export-job-sync-archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{id}/sync-export": {
         parameters: {
             query?: never;
@@ -141,7 +158,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Export a sync job's git commits and working-tree changes from its sandbox */
+        /**
+         * Export a sync job's git commits and working-tree changes from its sandbox, up to 32 MiB
+         * @deprecated
+         * @description Deprecated: kept for clients from before sync-archive, which streams up to 1 GiB.
+         */
         post: operations["export-job-sync"];
         delete?: never;
         options?: never;
@@ -799,6 +820,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{ref}/sync-archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stream a running single-repository session's git commits and working-tree changes, up to 1 GiB */
+        post: operations["export-session-sync-archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{ref}/sync-export": {
         parameters: {
             query?: never;
@@ -808,7 +846,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Export a running single-repository session's git commits and working-tree changes */
+        /**
+         * Export a running single-repository session's git commits and working-tree changes, up to 32 MiB
+         * @deprecated
+         * @description Deprecated: kept for clients from before sync-archive, which streams up to 1 GiB.
+         */
         post: operations["export-session-sync"];
         delete?: never;
         options?: never;
@@ -3059,6 +3101,74 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "export-job-sync-archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Job ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DL-176's archive: an uncompressed tar of spov-sync.json, any spov-sync-keepalive entries, state.bundle and worktree.tar.gz as the metadata declares them, and spov-sync-end.json */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-tar": string;
+                };
             };
             /** @description Unauthorized */
             401: {
@@ -6697,6 +6807,74 @@ export interface operations {
             };
             /** @description Forbidden */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "export-session-sync-archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session ID or name */
+                ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description DL-176's archive: an uncompressed tar of spov-sync.json, any spov-sync-keepalive entries, state.bundle and worktree.tar.gz as the metadata declares them, and spov-sync-end.json */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-tar": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

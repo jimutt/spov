@@ -1096,6 +1096,7 @@ func (s *Server) registerSessions() {
 
 	// @decision(DL-027)
 	s.registerSyncExport()
+	s.registerSyncArchive()
 	// @decision(DL-102)
 	s.registerSyncJobs()
 

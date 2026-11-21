@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -159,6 +160,43 @@ func (LocalShellExec) ExecBounded(ctx context.Context, command []string, stdin [
 	return sandbox.BoundOutput(sandbox.ExecResult{ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String()}, maxOutput)
 }
 
+// ExecStream runs the command locally with its stdout written to w.
+func (LocalShellExec) ExecStream(ctx context.Context, command []string, w io.Writer, maxStdout int64) (sandbox.ExecResult, error) {
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	bounded := &boundedWriter{w: w, left: maxStdout}
+	var stderr bytes.Buffer
+	cmd.Stdout = bounded
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if bounded.over {
+		return sandbox.ExecResult{}, sandbox.ErrOutputTooLarge
+	}
+	code := 0
+	if err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) {
+			return sandbox.ExecResult{}, err
+		}
+		code = exit.ExitCode()
+	}
+	return sandbox.ExecResult{ExitCode: code, Stderr: stderr.String()}, nil
+}
+
+type boundedWriter struct {
+	w    io.Writer
+	left int64
+	over bool
+}
+
+func (b *boundedWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > b.left {
+		b.over = true
+		return 0, sandbox.ErrOutputTooLarge
+	}
+	b.left -= int64(len(p))
+	return b.w.Write(p)
+}
+
 // @decision(DL-027)
 func TestSyncSeedAndExportScriptsEndToEnd(t *testing.T) {
 	ctx := context.Background()
@@ -263,12 +301,35 @@ func TestSyncSeedAndExportScriptsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InspectSync: %v", err)
 	}
-	if want := int64(len(exported.Bundle) + len(exported.WorktreeTar)); summary.Branch != "feat/e2e-sync" ||
-		summary.HeadCommit != exported.HeadCommit || summary.Commits != 1 || summary.Files != 4 ||
-		summary.Rewritten || summary.Bytes < want-64 || summary.Bytes > want+64 {
-		t.Errorf("InspectSync = %+v, want branch feat/e2e-sync, 1 commit, 4 files, about %d bytes", summary, want)
+	// The changed files' own sizes: the edit, the untracked file and the
+	// nested one.
+	wantTree := int64(len("unpushed local work + uncommitted edit\n") + len("brand new untracked\n") + len("nested untracked\n"))
+	if summary.Branch != "feat/e2e-sync" || summary.HeadCommit != exported.HeadCommit || summary.Commits != 1 ||
+		summary.Files != 4 || summary.Rewritten || summary.WorktreeBytes != wantTree || summary.ObjectBytes == 0 ||
+		summary.Bytes != summary.ObjectBytes+summary.WorktreeBytes || summary.Over != "" {
+		t.Errorf("InspectSync = %+v, want branch feat/e2e-sync, 1 commit, 4 files, %d bytes of files", summary, wantTree)
 	}
-	syncRes, err := git.ApplySync(ctx, localDir, "spov-e2e", checkout.Branch, exported)
+	// The streamed archive carries the same state, and is what lands.
+	//
+	// @decision(DL-176) @decision(DL-178)
+	archiveDir := useArchiveDir(t, defaultSyncBounds())
+	var archive bytes.Buffer
+	res, err := StreamSync(ctx, LocalShellExec{}, relFromWorkspace, checkout.HeadCommit, &archive)
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("StreamSync = %+v, %v", res, err)
+	}
+	spool, err := git.SpoolSyncArchive(&archive, t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("SpoolSyncArchive: %v", err)
+	}
+	if spool.HeadCommit != exported.HeadCommit || spool.Branch != exported.Branch || spool.BaseCommit != exported.BaseCommit ||
+		strings.Join(spool.Deleted, ",") != strings.Join(exported.Deleted, ",") || spool.BundlePath == "" || spool.WorktreeTarPath == "" {
+		t.Errorf("the archive = %+v, the JSON export = %+v", spool, exported)
+	}
+	if left, _ := os.ReadDir(archiveDir); len(left) != 0 {
+		t.Errorf("the archive left %v behind", left)
+	}
+	syncRes, err := git.ApplySync(ctx, localDir, "spov-e2e", checkout.Branch, spool)
 	if err != nil {
 		t.Fatalf("ApplySync: %v", err)
 	}
@@ -562,4 +623,99 @@ func TestALocalOnlySyncedSessionListsTheGuide(t *testing.T) {
 	if !strings.Contains(script, "You are working inside `/workspace/notes`") {
 		t.Errorf("the guide does not say where the session works:\n%s", script)
 	}
+}
+
+// TestAnArchiveOverTheBoundsIsRefusedBeforeAByte: the script measures
+// what the landing would, refuses before it writes anything, and names
+// the largest files; inspect reports the same reason.
+//
+// @decision(DL-177) @decision(DL-176)
+func TestAnArchiveOverTheBoundsIsRefusedBeforeAByte(t *testing.T) {
+	useArchiveDir(t, syncBounds{JSON: 1 << 20, Export: 4000, Packed: 1 << 20, Blob: 3000, Meta: 1 << 20, Entries: 100})
+
+	ctx := context.Background()
+	repo := filepath.Join(t.TempDir(), "repo")
+	runSyncGit(t, filepath.Dir(repo), "init", "-b", "main", repo)
+	runSyncGit(t, repo, "config", "user.name", "Agent")
+	runSyncGit(t, repo, "config", "user.email", "agent@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runSyncGit(t, repo, "add", "a.txt")
+	runSyncGit(t, repo, "commit", "-m", "base")
+	base := strings.TrimSpace(runSyncGit(t, repo, "rev-parse", "HEAD"))
+	rel, err := filepath.Rel("/workspace", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "dataset.bin"), bytes.Repeat([]byte("x"), 3500), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "small.txt"), []byte("ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	res, err := StreamSync(ctx, LocalShellExec{}, rel, base, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode == 0 || out.Len() != 0 {
+		t.Fatalf("exit %d after %d bytes, want a refusal before any", res.ExitCode, out.Len())
+	}
+	for _, want := range []string{"dataset.bin is 3500 bytes, over the 3000 bytes one file may be", "The largest files:", ".gitignore"} {
+		if !strings.Contains(res.Stderr, want) {
+			t.Errorf("the refusal says %q, want it to say %q", res.Stderr, want)
+		}
+	}
+	got, err := InspectSync(ctx, LocalShellExec{}, rel, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Over, "dataset.bin") || got.WorktreeBytes != 3503 {
+		t.Errorf("inspect = %+v", got)
+	}
+
+	// A commit that adds more than the objects bound is refused too.
+	runSyncGit(t, repo, "add", "-A")
+	runSyncGit(t, repo, "commit", "-m", "add the data")
+	out.Reset()
+	if res, err = StreamSync(ctx, LocalShellExec{}, rel, base, &out); err != nil || res.ExitCode == 0 || out.Len() != 0 {
+		t.Fatalf("a large commit = %+v, %v, %d bytes", res, err, out.Len())
+	}
+	if !strings.Contains(res.Stderr, "dataset.bin is 3500 bytes") {
+		t.Errorf("the refusal of a commit says %q", res.Stderr)
+	}
+
+	// More changed files than a sync takes is refused before a byte too.
+	runSyncGit(t, repo, "reset", "-q", "--hard", base)
+	for i := range 101 {
+		if err := os.WriteFile(filepath.Join(repo, fmt.Sprintf("gen%d.txt", i)), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out.Reset()
+	if res, err = StreamSync(ctx, LocalShellExec{}, rel, base, &out); err != nil || res.ExitCode == 0 || out.Len() != 0 ||
+		!strings.Contains(res.Stderr, "101 changed files, over the 100 a sync can take") {
+		t.Errorf("too many files = %+v, %v, %d bytes", res, err, out.Len())
+	}
+}
+
+// defaultSyncBounds are the script's production bounds.
+func defaultSyncBounds() syncBounds {
+	return syncBounds{
+		JSON: git.MaxSyncJSONExportBytes, Export: git.MaxSyncExportBytes, Packed: git.MaxSyncPackedBytes,
+		Blob: git.MaxSyncIncomingBlobBytes, Meta: git.MaxSyncMetaBytes, Entries: git.MaxSyncEntries,
+	}
+}
+
+// useArchiveDir builds the export script with bounds and a work
+// directory of the test's own, so runs on one machine never meet.
+func useArchiveDir(t *testing.T, b syncBounds) string {
+	t.Helper()
+	old := syncStateScript
+	t.Cleanup(func() { syncStateScript = old })
+	b.WorkDir = filepath.Join(t.TempDir(), "archive")
+	syncStateScript = buildSyncScript(b)
+	return b.WorkDir
 }

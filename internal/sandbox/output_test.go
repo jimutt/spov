@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -68,3 +69,50 @@ func TestTheFakeRefusesOutputOverTheBound(t *testing.T) {
 		t.Errorf("stderr over the bound: err = %v", err)
 	}
 }
+
+// TestAStreamedExecWritesUpToItsBoundAndNoFurther: ExecStream hands the
+// writer everything within the bound, and one byte more is an error
+// with nothing past the bound written.
+//
+// @decision(DL-175)
+func TestAStreamedExecWritesUpToItsBoundAndNoFurther(t *testing.T) {
+	f := NewFake()
+	h, err := f.Create(execCtx(t), validSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.ExecResults = map[string]ExecResult{
+		"pack": {ExitCode: 3, Stdout: strings.Repeat("a", 1000), Stderr: "why"},
+	}
+	var got bytes.Buffer
+	res, err := h.ExecStream(execCtx(t), []string{"pack"}, &got, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Len() != 1000 || res.Stdout != "" || res.ExitCode != 3 || res.Stderr != "why" {
+		t.Errorf("wrote %d bytes, result %+v", got.Len(), res)
+	}
+	got.Reset()
+	if _, err := h.ExecStream(execCtx(t), []string{"pack"}, &got, 999); !errors.Is(err, ErrOutputTooLarge) {
+		t.Errorf("over the bound: %v, want ErrOutputTooLarge", err)
+	}
+	if got.Len() != 999 {
+		t.Errorf("over the bound wrote %d bytes, want the 999 within it", got.Len())
+	}
+}
+
+// TestAWriterThatFailsEndsTheStream: a client that went away is the
+// writer's error, not a success.
+//
+// @decision(DL-175)
+func TestAWriterThatFailsEndsTheStream(t *testing.T) {
+	gone := errors.New("client went away")
+	n, err := copyBounded(failingWriter{gone}, strings.NewReader("abc"), 10)
+	if !errors.Is(err, gone) || n != 0 {
+		t.Errorf("copyBounded = %d, %v; want the writer's error", n, err)
+	}
+}
+
+type failingWriter struct{ err error }
+
+func (f failingWriter) Write([]byte) (int, error) { return 0, f.err }

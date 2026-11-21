@@ -106,22 +106,6 @@ export function repoUnreachable(repo: Repo, platforms: PlatformTier[] | null | u
   return `Only ${via.map(tierNoun).join(" and ")} reaches this, and a launch from the browser uses ${tierNoun(tier)}.`;
 }
 
-/**
- * repoReadNote is the note on a repository a browser launch would reach
- * through the person's own fine-grained token only because it is public:
- * the token can read it and can push only if it was given it, which
- * GitHub does not say. "" otherwise, including when the browser's launch
- * uses the organisation's credential.
- *
- * @decision(DL-042)
- */
-export function repoReadNote(repo: Repo, platforms: PlatformTier[] | null | undefined): string {
-  if (!repo.maybe_read_only) return "";
-  const tier = (platforms ?? []).find((p) => p.platform === repo.platform)?.tier;
-  if (tier !== "user") return "";
-  return "Public: your token can read it, and can push only if you gave it this repository.";
-}
-
 /** isSelected and toggleRepo hold the selection by value, not by key. */
 export function isSelected(selected: RepoRef[], r: RepoRef): boolean {
   return selected.some((s) => repoKey(s) === repoKey(r));

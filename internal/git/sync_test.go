@@ -245,7 +245,7 @@ func TestApplySyncInPlaceAndFallback(t *testing.T) {
 	})
 
 	t.Run("no changes leaves repo untouched", func(t *testing.T) {
-		res, err := ApplySync(ctx, localDir, "spov-1", "main", ExportedState{
+		res, err := applyState(t, ctx, localDir, "spov-1", "main", ExportedState{
 			Branch:     "main",
 			BaseCommit: baseHead,
 			HeadCommit: baseHead,
@@ -259,7 +259,7 @@ func TestApplySyncInPlaceAndFallback(t *testing.T) {
 	})
 
 	t.Run("clean checkout at base updates branch and working tree in place", func(t *testing.T) {
-		res, err := ApplySync(ctx, localDir, "spov-1", "main", ExportedState{
+		res, err := applyState(t, ctx, localDir, "spov-1", "main", ExportedState{
 			Branch:      "main",
 			BaseCommit:  baseHead,
 			HeadCommit:  sandboxHead,
@@ -290,7 +290,7 @@ func TestApplySyncInPlaceAndFallback(t *testing.T) {
 
 	t.Run("diverged or dirty local checkout lands on fallback branch spov/<session>", func(t *testing.T) {
 		// Dirty local checkout still exists from the previous subtest's uncommitted files.
-		res, err := ApplySync(ctx, localDir, "spov-diverged", "main", ExportedState{
+		res, err := applyState(t, ctx, localDir, "spov-diverged", "main", ExportedState{
 			Branch:      "main",
 			BaseCommit:  baseHead,
 			HeadCommit:  sandboxHead,
@@ -318,7 +318,7 @@ func TestApplySyncInPlaceAndFallback(t *testing.T) {
 		cleanDir, head := initTestRepo(t, "https://codefloe.com/alice/spov.git")
 		for _, badPath := range []string{"../escape.txt", ".git/config", ".Git/hooks/post-checkout", "/abs/path"} {
 			badTar := makeWorktreeTar(t, map[string]string{badPath: "bad"})
-			if _, err := ApplySync(ctx, cleanDir, "spov-bad", "main", ExportedState{
+			if _, err := applyState(t, ctx, cleanDir, "spov-bad", "main", ExportedState{
 				Branch:      "main",
 				BaseCommit:  head,
 				HeadCommit:  head,
@@ -350,7 +350,7 @@ func TestApplySyncInPlaceAndFallback(t *testing.T) {
 		_, _ = symTw.Write([]byte(hookBody))
 		_ = symTw.Close()
 		_ = symGz.Close()
-		if _, err := ApplySync(ctx, cleanDir, "spov-sym", "main", ExportedState{
+		if _, err := applyState(t, ctx, cleanDir, "spov-sym", "main", ExportedState{
 			Branch:      "main",
 			BaseCommit:  head,
 			HeadCommit:  head,
@@ -376,7 +376,7 @@ func TestApplySyncInPlaceAndFallback(t *testing.T) {
 		_, _ = symTw2.Write([]byte("bad\n"))
 		_ = symTw2.Close()
 		_ = symGz2.Close()
-		if _, err := ApplySync(ctx, cleanDir, "spov-sym2", "main", ExportedState{
+		if _, err := applyState(t, ctx, cleanDir, "spov-sym2", "main", ExportedState{
 			Branch:      "main",
 			BaseCommit:  head,
 			HeadCommit:  head,
@@ -384,14 +384,14 @@ func TestApplySyncInPlaceAndFallback(t *testing.T) {
 		}); err == nil {
 			t.Error("expected write through symlinked parent directory to be rejected")
 		}
-		if _, err := ApplySync(ctx, cleanDir, "spov-bad-sha", "main", ExportedState{
+		if _, err := applyState(t, ctx, cleanDir, "spov-bad-sha", "main", ExportedState{
 			Branch:     "main",
 			BaseCommit: head,
 			HeadCommit: "invalid",
 		}); err == nil {
 			t.Error("expected invalid HeadCommit to be rejected")
 		}
-		if _, err := ApplySync(ctx, cleanDir, "spov-bad-del", "main", ExportedState{
+		if _, err := applyState(t, ctx, cleanDir, "spov-bad-del", "main", ExportedState{
 			Branch:     "main",
 			BaseCommit: head,
 			HeadCommit: head,
@@ -411,7 +411,7 @@ func TestApplySyncInPlaceAndFallback(t *testing.T) {
 		})
 		_ = okSymTw.Close()
 		_ = okSymGz.Close()
-		if res, err := ApplySync(ctx, cleanDir, "spov-ok-sym", "main", ExportedState{
+		if res, err := applyState(t, ctx, cleanDir, "spov-ok-sym", "main", ExportedState{
 			Branch:      "main",
 			BaseCommit:  head,
 			HeadCommit:  head,
@@ -482,7 +482,7 @@ func TestASyncThatDoesNotDescendFromTheCheckoutIsNotAppliedInPlace(t *testing.T)
 		t.Fatal(err)
 	}
 
-	res, err := ApplySync(ctx, localDir, "resumed", "main", ExportedState{Branch: "main", BaseCommit: base, HeadCommit: head, Bundle: bundle})
+	res, err := applyState(t, ctx, localDir, "resumed", "main", ExportedState{Branch: "main", BaseCommit: base, HeadCommit: head, Bundle: bundle})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,7 +563,7 @@ func TestSyncBackNeverTouchesAPathGitStatusHides(t *testing.T) {
 		return s
 	}
 
-	ignoredRes, err := ApplySync(ctx, dir, "s", "main", state(map[string]string{
+	ignoredRes, err := applyState(t, ctx, dir, "s", "main", state(map[string]string{
 		"a.txt": "fine\n", "node_modules/.bin/tsc": "#!/bin/sh\necho planted\n",
 	}))
 	if err != nil || ignoredRes.InPlace || !strings.Contains(ignoredRes.Reason, "node_modules/.bin/tsc") {
@@ -576,7 +576,7 @@ func TestSyncBackNeverTouchesAPathGitStatusHides(t *testing.T) {
 		t.Error("a refused apply still wrote a file")
 	}
 
-	if _, err := ApplySync(ctx, dir, "s", "main", state(nil, ".env")); err == nil {
+	if _, err := applyState(t, ctx, dir, "s", "main", state(nil, ".env")); err == nil {
 		t.Fatal("a deletion of an untracked, ignored file was applied")
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".env")); err != nil {
@@ -585,7 +585,7 @@ func TestSyncBackNeverTouchesAPathGitStatusHides(t *testing.T) {
 
 	// A tracked file may match an ignore rule; an edit to it is shown by
 	// git status, so it lands.
-	res, err := ApplySync(ctx, dir, "s", "main", state(map[string]string{"forced/.env": "edited\n", "new.txt": "n\n"}))
+	res, err := applyState(t, ctx, dir, "s", "main", state(map[string]string{"forced/.env": "edited\n", "new.txt": "n\n"}))
 	if err != nil || !res.InPlace {
 		t.Fatalf("an honest export: %+v, %v", res, err)
 	}
@@ -618,7 +618,7 @@ func TestSyncBackNeverLandsInPlaceOverAHooksDirectory(t *testing.T) {
 
 	t.Run("an uncommitted hook", func(t *testing.T) {
 		dir, head := setup(t)
-		res, err := ApplySync(ctx, dir, "s1", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s1", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: head,
 			WorktreeTar: makeWorktreeTar(t, map[string]string{".githooks/post-index-change": "#!/bin/sh\ntouch ran\n"}),
 		})
@@ -651,7 +651,7 @@ func TestSyncBackNeverLandsInPlaceOverAHooksDirectory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		res, err := ApplySync(ctx, dir, "s2", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s2", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: sandboxHead, Bundle: raw,
 		})
 		if err != nil {
@@ -667,7 +667,7 @@ func TestSyncBackNeverLandsInPlaceOverAHooksDirectory(t *testing.T) {
 
 	t.Run("a session that leaves the hooks alone", func(t *testing.T) {
 		dir, head := setup(t)
-		res, err := ApplySync(ctx, dir, "s3", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s3", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: head,
 			WorktreeTar: makeWorktreeTar(t, map[string]string{"a.txt": "x\n"}),
 		})
@@ -696,4 +696,20 @@ func TestSyncBackRefusesEveryNameOfTheGitDirectory(t *testing.T) {
 			t.Errorf("cleanRepoRelPath(%q): %v", p, err)
 		}
 	}
+}
+
+// applyState spools an in-memory export where the CLI does, under the
+// checkout's git directory, lands it and removes the spool.
+func applyState(t testing.TB, ctx context.Context, root, sessionName, startBranch string, st ExportedState) (SyncResult, error) {
+	t.Helper()
+	dir, err := NewSyncSpool(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spool, err := SpoolExported(dir, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer spool.Remove()
+	return ApplySync(ctx, root, sessionName, startBranch, spool)
 }

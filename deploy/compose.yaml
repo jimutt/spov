@@ -71,20 +71,24 @@ services:
       SPOV_CREDENTIAL_KEY_OLD: "${SPOV_CREDENTIAL_KEY_OLD:-}"
       # The deployment's own git credentials, used by any user who has
       # not stored their own. The GitHub App is one credential for the
-      # whole org; a Forgejo bot token is named after its platform.
+      # whole org; another platform's bot token is
+      # SPOV_PLATFORM_TOKEN_<NAME>, after a platform server-config.yaml
+      # declares (the shipped file declares only github).
       #
       # @decision(DL-042)
       SPOV_GITHUB_APP_ID: "${SPOV_GITHUB_APP_ID:-}"
       SPOV_GITHUB_APP_PRIVATE_KEY: "${SPOV_GITHUB_APP_PRIVATE_KEY:-}"
-      SPOV_PLATFORM_TOKEN_CODEFLOE: "${SPOV_PLATFORM_TOKEN_CODEFLOE:-}"
       # Per-user limits, checked before anything billable. Unset uses
-      # the built-in defaults (5 sessions, 8h, 4 CPU, 16 GiB) rather
+      # the built-in defaults (5 sessions, 4 jobs, 4h a job, 8h, 4 CPU,
+      # 16 GiB) rather
       # than no limit — an unbounded default is how a hosted server
       # gets a surprise bill. Admins raise or lower them per user
       # through PATCH /api/v1/users/{id}.
       #
       # @decision(DL-009)
       SPOV_QUOTAS_MAX_CONCURRENT_SESSIONS: "${SPOV_QUOTAS_MAX_CONCURRENT_SESSIONS:-}"
+      SPOV_QUOTAS_MAX_CONCURRENT_JOBS: "${SPOV_QUOTAS_MAX_CONCURRENT_JOBS:-}"
+      SPOV_QUOTAS_MAX_JOB_DURATION: "${SPOV_QUOTAS_MAX_JOB_DURATION:-}"
       SPOV_QUOTAS_MAX_TIMEOUT: "${SPOV_QUOTAS_MAX_TIMEOUT:-}"
       SPOV_QUOTAS_MAX_CPU: "${SPOV_QUOTAS_MAX_CPU:-}"
       SPOV_QUOTAS_MAX_MEMORY_MIB: "${SPOV_QUOTAS_MAX_MEMORY_MIB:-}"
@@ -121,7 +125,7 @@ services:
     # curl and no wget, and the binary has no self-probe subcommand. A
     # `/spov version` check would prove only that the file is
     # executable. Use /readyz from outside the container — that is what
-    # Kamal's proxy and the Kubernetes probes below do.
+    # Kamal's proxy and the probes in deploy/k8s/deployment.yaml do.
 
 volumes:
   pgdata:

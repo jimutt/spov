@@ -178,8 +178,10 @@ push a long unpushed history first.
 The job lands in the repository's directory, so `--check ./scripts/check.sh`
 runs the repository's own script. When it ends, spov stops the agent and reads
 the repository: commits since your branch, or uncommitted changes, are the
-deliverable. Nothing changed is a failure, and so is a change over the 32 MiB
-a sync can bring back.
+deliverable. Nothing changed is a failure, and so is a change over what a
+sync can bring back: 1 GiB of commits and uncommitted files together, or
+one file over 256 MiB. An older spov applies at most 32 MiB; update it to take
+more.
 
 The job then finishes, and its sandbox is **held** so you can take the work:
 

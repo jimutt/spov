@@ -64,6 +64,12 @@ COPY --from=build /spov /spov
 # @decision(DL-010)
 ENV HOME=/home/nonroot
 
+# Kamal refuses an image without its service label; the release workflow
+# sets it too, and this keeps an image built from this file deployable.
+#
+# @decision(DL-105)
+LABEL service="spov"
+
 EXPOSE 8080
 # The entrypoint is the binary alone and the subcommand is the command,
 # so a Kubernetes `args:` (which replaces CMD, not ENTRYPOINT) reads as

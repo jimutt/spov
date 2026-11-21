@@ -53,3 +53,27 @@ func BoundOutput(res ExecResult, limit int) (ExecResult, error) {
 	}
 	return res, nil
 }
+
+// copyBounded copies r to w as it arrives, at most limit bytes. A
+// stream with more answers ErrOutputTooLarge, with the first limit
+// bytes already written and none past them.
+//
+// @decision(DL-175)
+func copyBounded(w io.Writer, r io.Reader, limit int64) (int64, error) {
+	if r == nil {
+		return 0, nil
+	}
+	n, err := io.CopyBuffer(w, io.LimitReader(r, limit), make([]byte, streamChunk))
+	if err != nil {
+		return n, err
+	}
+	if extra, _ := io.ReadFull(r, make([]byte, 1)); extra > 0 {
+		return n, fmt.Errorf("%w (%d bytes)", ErrOutputTooLarge, limit)
+	}
+	return n, nil
+}
+
+// streamChunk is the most ExecStream holds of a stream at once.
+//
+// @decision(DL-175)
+const streamChunk = 64 << 10

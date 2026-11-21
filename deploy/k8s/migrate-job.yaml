@@ -1,5 +1,7 @@
 # Migrations run as a Job before the Deployment is updated, so a bad
-# migration fails visibly rather than crash-looping replicas.
+# migration fails visibly rather than crash-looping replicas. A Job's
+# pod template cannot change: delete it before applying it for the next
+# upgrade (deploy/README.md#kubernetes).
 #
 # @decision(DL-010)
 apiVersion: batch/v1
@@ -8,6 +10,7 @@ metadata:
   name: spov-migrate
 spec:
   backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
   template:
     spec:
       restartPolicy: Never

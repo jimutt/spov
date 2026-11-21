@@ -141,9 +141,18 @@ quit.
   `.git`-lookalike names on, whatever your config says. A sparse checkout, or
   a checkout whose work tree is set elsewhere (`core.worktree`), takes the
   work on a `spov/<session>` branch rather than in place.
-- **A very large result is refused.** A sync that would bring in more than
-  1 GiB of git objects, or a single file over 256 MiB, stops with an error
-  and changes nothing; push the branch to the forge instead.
+- **Up to 1 GiB comes back.** What the sandbox's commits add and its
+  uncommitted files may come to 1 GiB together, with no one file over
+  256 MiB and at most 200,000 changed files. The sandbox measures that before it sends anything, so a larger
+  result is refused at once, with the largest files named: add generated
+  output to `.gitignore`, or remove the files in the sandbox, and quit
+  again, or push the branch to the forge from the sandbox. A sync-back over
+  16 MiB says how large it is and, on a terminal, shows what has arrived.
+- **Ctrl-C during the transfer stops it** and changes nothing; the session
+  keeps running, and syncing again is safe. Once spov is writing into your
+  checkout, Ctrl-C waits until that is done. While it lands, the transfer
+  sits in a directory under your checkout's `.git`, so a sync-back of the
+  largest size needs a few GiB free there.
 - **Nothing is lost.** The sandbox is terminated only after the work is
   back; a sync that fails leaves it running and tells you how to retry.
 - **The checkout must be clean and on a branch**, or the launch stops and
@@ -152,7 +161,10 @@ quit.
   checkout of its own counts as inside any checkout above it, such as a home
   directory kept in git.
 - **A checkout whose remote is on no platform you configured** is sent along
-  from your machine, and its sandbox cannot push.
+  from your machine, and its sandbox cannot push. So is one with no remote,
+  or whose platform has no credential. What is sent this way is at most
+  16 MiB; over it the launch says which of those to fix, so that the
+  sandbox clones the repository instead.
 
 `sandbox.sync: false` turns this off, and `true` makes every `spov fly` sync
 (as `--sync` does), failing outside a checkout. `--sync` also syncs a `--repo`

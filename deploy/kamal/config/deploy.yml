@@ -19,6 +19,13 @@ proxy:
   ssl: true
   host: spov.example.com
   app_port: 8080
+  # A sync-back streams for minutes (DL-176): pass it through as it
+  # comes, and let it run longer than the server's 45-minute bound.
+  #
+  # @decision(DL-176)
+  response_timeout: 3600
+  buffering:
+    responses: false
   healthcheck:
     # Readiness, not liveness: the proxy must not send traffic to a
     # replica whose migrations are behind.
@@ -43,7 +50,9 @@ env:
     MODAL_ENVIRONMENT: "spov-hosted"
     SPOV_ALLOWLIST_FILE: "/etc/spov/allowlist"
   secret:
-    # Clients authenticate with it; the server refuses to start without one.
+    # Clients authenticate with it; the server refuses to start without
+    # one, or with one under 32 characters (openssl rand -hex 32). Every
+    # name listed here must be in .kamal/secrets: see secrets.example.
     - SPOV_SERVER_TOKEN
     - SPOV_DATABASE_URL
     - SPOV_CREDENTIAL_KEY

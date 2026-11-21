@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -116,6 +117,9 @@ type apiFixture struct {
 	// adjustDeps, when set, changes the server's deps after they are
 	// wired and before it starts.
 	adjustDeps func(*server.Deps)
+	// wrapHandler, when set, stands in front of the server's handler,
+	// as an older server's would.
+	wrapHandler func(http.Handler) http.Handler
 	// closeStore releases the server's store, the local journal's lock
 	// included, before a restart opens it again.
 	closeStore func()
@@ -268,7 +272,11 @@ func (f *apiFixture) startServer() {
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	f.http = httptest.NewUnstartedServer(f.srv.Handler())
+	handler := f.srv.Handler()
+	if f.wrapHandler != nil {
+		handler = f.wrapHandler(handler)
+	}
+	f.http = httptest.NewUnstartedServer(handler)
 	f.http.Listener = ln
 	f.http.Start()
 	f.t.Cleanup(func() { f.http.Close(); f.srv.Close() })

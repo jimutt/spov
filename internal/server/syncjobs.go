@@ -128,7 +128,7 @@ func (s *Service) InspectJobSync(ctx context.Context, job store.Job) (jobs.SyncS
 	}
 	return jobs.SyncState{
 		Branch: sum.Branch, HeadCommit: sum.HeadCommit, Commits: sum.Commits,
-		Files: sum.Files, Bytes: sum.Bytes, Rewritten: sum.Rewritten,
+		Files: sum.Files, Bytes: sum.Bytes, Rewritten: sum.Rewritten, Over: sum.Over,
 	}, nil
 }
 
@@ -137,30 +137,42 @@ func (s *Service) InspectJobSync(ctx context.Context, job store.Job) (jobs.SyncS
 //
 // @decision(DL-102)
 func (s *Service) ExportJobSync(ctx context.Context, p auth.Principal, id string) (git.ExportedState, error) {
-	job, sess, err := s.syncJob(ctx, p, id)
+	t, err := s.jobSyncTarget(ctx, p, id)
 	if err != nil {
 		return git.ExportedState{}, err
+	}
+	return session.ExportSync(ctx, t.h, t.dir, t.base)
+}
+
+// jobSyncTarget checks a sync job's state can be taken and finds its
+// repository.
+//
+// @decision(DL-102) @decision(DL-176)
+func (s *Service) jobSyncTarget(ctx context.Context, p auth.Principal, id string) (syncTarget, error) {
+	job, sess, err := s.syncJob(ctx, p, id)
+	if err != nil {
+		return syncTarget{}, err
 	}
 	live := sess.State == store.StateRunning && sess.SandboxID != ""
 	switch {
 	case store.SyncHeld(job, sess):
 	case live && (job.State == store.JobRunning || job.State == store.JobBlocked || job.State == store.JobSteered):
 	case job.State.Terminal() || (job.State != store.JobQueued && job.State != store.JobProvisioning && !live):
-		return git.ExportedState{}, fmt.Errorf("%w: job %s is %s and its sandbox has ended", ErrSyncUnavailable, job.ID, job.State)
+		return syncTarget{}, fmt.Errorf("%w: job %s is %s and its sandbox has ended", ErrSyncUnavailable, job.ID, job.State)
 	case job.State == store.JobDelivering:
-		return git.ExportedState{}, fmt.Errorf("%w: job %s is being judged; try again once it has finished", ErrSyncUnavailable, job.ID)
+		return syncTarget{}, fmt.Errorf("%w: job %s is being judged; try again once it has finished", ErrSyncUnavailable, job.ID)
 	default:
-		return git.ExportedState{}, fmt.Errorf("%w: job %s is %s; try again once it is running", ErrSyncUnavailable, job.ID, job.State)
+		return syncTarget{}, fmt.Errorf("%w: job %s is %s; try again once it is running", ErrSyncUnavailable, job.ID, job.State)
 	}
 	owner, name, ok := singleSessionRepo(sess)
 	if !ok {
-		return git.ExportedState{}, fmt.Errorf("%w: a sync job has one repository", ErrSyncUnavailable)
+		return syncTarget{}, fmt.Errorf("%w: a sync job has one repository", ErrSyncUnavailable)
 	}
 	h, err := s.handle(ctx, sess)
 	if err != nil {
-		return git.ExportedState{}, err
+		return syncTarget{}, err
 	}
-	return session.ExportSync(ctx, h, syncDir(sess, owner, name), syncBase(sess))
+	return syncTarget{h: h, dir: syncDir(sess, owner, name), base: syncBase(sess), what: "job " + job.ID}, nil
 }
 
 // ReleaseJob ends a held sync job's sandbox, recording an apply when
@@ -210,7 +222,9 @@ type ReleaseJobRequest struct {
 func (s *Server) registerSyncJobs() {
 	register(s.api, huma.Operation{
 		OperationID: "export-job-sync", Method: http.MethodPost, Path: "/api/v1/jobs/{id}/sync-export",
-		Summary: "Export a sync job's git commits and working-tree changes from its sandbox", Tags: []string{"jobs"},
+		Summary:     "Export a sync job's git commits and working-tree changes from its sandbox, up to 32 MiB",
+		Description: "Deprecated: kept for clients from before sync-archive, which streams up to 1 GiB.",
+		Tags:        []string{"jobs"}, Deprecated: true,
 		Errors: []int{http.StatusConflict},
 	}, func(ctx context.Context, in *jobIDInput) (*syncExportOutput, error) {
 		state, err := s.svc.ExportJobSync(ctx, principal(ctx), in.ID)

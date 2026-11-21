@@ -32,7 +32,6 @@ import {
   type ModelGroup,
   type ModelProvider,
   type Repo,
-  repoReadNote,
   repoUnreachable,
 } from "./jobform";
 
@@ -678,12 +677,3 @@ describe("a repository the browser's credential cannot reach", () => {
   });
 });
 
-// @decision(DL-042)
-describe("a public repository a fine-grained token lists", () => {
-  const repo = { platform: "gh", owner: "o", name: "r", private: false, archived: false, via: ["user" as const, "org" as const], maybe_read_only: true };
-  it("says the token may only read it when the browser's launch uses that token", () => {
-    expect(repoReadNote(repo, [{ platform: "gh", tier: "user" as const }])).toMatch(/can push only if you gave it this repository/);
-    expect(repoReadNote(repo, [{ platform: "gh", tier: "org" as const }])).toBe("");
-    expect(repoReadNote({ ...repo, maybe_read_only: false }, [{ platform: "gh", tier: "user" as const }])).toBe("");
-  });
-});

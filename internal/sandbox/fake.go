@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -39,6 +40,9 @@ type Fake struct {
 	SetEgressErr error
 	// ExecResults maps a joined command to its canned result.
 	ExecResults map[string]ExecResult
+	// ExecMatch, when set, answers a command before ExecResults: a
+	// result and true for one it knows.
+	ExecMatch func(command []string) (ExecResult, bool)
 	// Now supplies creation timestamps; defaults to time.Now.
 	Now func() time.Time
 	// BaseURL is the tunnel host handed out to created sandboxes.
@@ -592,11 +596,38 @@ func (h *FakeHandle) ExecInput(ctx context.Context, command []string, stdin []by
 	return h.ExecBounded(ctx, command, stdin, MaxExecOutput)
 }
 
+// ExecStream writes a canned result's stdout to w under maxStdout, as
+// a real sandbox streams it.
+//
+// @decision(DL-175)
+func (h *FakeHandle) ExecStream(ctx context.Context, command []string, w io.Writer, maxStdout int64) (ExecResult, error) {
+	res, err := h.canned(ctx, command, nil)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	if _, err := copyBounded(w, strings.NewReader(res.Stdout), maxStdout); err != nil {
+		return ExecResult{}, err
+	}
+	if _, err := BoundOutput(ExecResult{Stderr: res.Stderr}, MaxExecOutput); err != nil {
+		return ExecResult{}, err
+	}
+	return ExecResult{ExitCode: res.ExitCode, Stderr: res.Stderr}, nil
+}
+
 // ExecBounded answers a canned result over maxOutput as a real sandbox
 // does.
 //
 // @decision(DL-130)
 func (h *FakeHandle) ExecBounded(ctx context.Context, command []string, stdin []byte, maxOutput int) (ExecResult, error) {
+	res, err := h.canned(ctx, command, stdin)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	return BoundOutput(res, maxOutput)
+}
+
+// canned records an exec and answers its canned result, unbounded.
+func (h *FakeHandle) canned(ctx context.Context, command []string, stdin []byte) (ExecResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ExecResult{}, err
 	}
@@ -614,10 +645,12 @@ func (h *FakeHandle) ExecBounded(ctx context.Context, command []string, stdin []
 	if h.provider.ExecErr != nil {
 		return ExecResult{}, h.provider.ExecErr
 	}
-	if res, ok := h.provider.ExecResults[strings.Join(command, " ")]; ok {
-		return BoundOutput(res, maxOutput)
+	if h.provider.ExecMatch != nil {
+		if res, ok := h.provider.ExecMatch(command); ok {
+			return res, nil
+		}
 	}
-	return ExecResult{}, nil
+	return h.provider.ExecResults[strings.Join(command, " ")], nil
 }
 
 func (h *FakeHandle) Terminate(ctx context.Context) error {

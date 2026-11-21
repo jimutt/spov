@@ -2,6 +2,11 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-179 | The browser's repository picker draws no note on a public repository a fine-grained token may only read | accepted | web | repo-picker, github-access, wording |
+| DL-178 | The CLI spools a sync archive to disk and lands it from files | accepted | cli | sync-streaming, sync, cli |
+| DL-177 | A sync-back carries up to 1 GiB, and the seed keeps its 16 MiB | accepted | git | sync-streaming, sync, limits |
+| DL-176 | Sync-back is a streamed archive on its own routes, and the JSON export stays for older clients | accepted | server | sync-streaming, sync, api, limits |
+| DL-175 | A sandbox exec can stream its stdout to a writer under a byte bound | accepted | sandbox | sync-streaming, sandbox, exec, limits |
 | DL-174 | A session that starts inside a repository lists spov's guide in its OpenCode config | accepted | opencode | workspace, landing |
 | DL-173 | In a session without a job, a synthetic message is drawn as added by OpenCode or a plugin, folded | accepted | web | session-page, transcript, plugins |
 | DL-172 | A session with plugins reaches the npm registry under the agent egress preset | accepted | sandbox | egress, plugins |

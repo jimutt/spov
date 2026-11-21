@@ -5,17 +5,24 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/sandbox"
+	"github.com/jimutt/spov/internal/server"
+	"github.com/jimutt/spov/internal/server/client"
 	"github.com/jimutt/spov/internal/session"
 )
 
@@ -144,7 +151,56 @@ func sessionExportProbe(h *sandbox.FakeHandle, dir, base, stdout string, p *sand
 	}
 	key := strings.Join(execs[len(execs)-1], " ")
 	p.ExecResults[key] = sandbox.ExecResult{ExitCode: 0, Stdout: stdout}
+	// The archive route's command carries its deadline, so it is
+	// answered by mode: the same state as DL-176's archive.
+	archive, err := archiveOfExport(stdout)
+	if err != nil {
+		return "", err
+	}
+	p.ExecMatch = func(command []string) (sandbox.ExecResult, bool) {
+		if slices.Contains(command, "archive") {
+			return sandbox.ExecResult{Stdout: archive}, true
+		}
+		return sandbox.ExecResult{}, false
+	}
 	return key, nil
+}
+
+// archiveOfExport is the JSON export's state as the export script's
+// archive mode writes it.
+func archiveOfExport(exportJSON string) (string, error) {
+	var v server.SyncExportView
+	if err := json.Unmarshal([]byte(exportJSON), &v); err != nil {
+		return "", err
+	}
+	bundle, err := base64.StdEncoding.DecodeString(v.Bundle)
+	if err != nil {
+		return "", err
+	}
+	tree, err := base64.StdEncoding.DecodeString(v.WorktreeTar)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	add := func(name string, body []byte) {
+		_ = tw.WriteHeader(&tar.Header{Name: name, Size: int64(len(body)), Mode: 0o600, Typeflag: tar.TypeReg})
+		_, _ = tw.Write(body)
+	}
+	meta, _ := json.Marshal(git.SyncMeta{Format: 1, Branch: v.Branch, BaseCommit: v.BaseCommit, HeadCommit: v.HeadCommit,
+		Deleted: v.Deleted, Bundle: len(bundle) > 0, Worktree: len(tree) > 0})
+	add("spov-sync.json", meta)
+	add("spov-sync-keepalive", nil)
+	if len(bundle) > 0 {
+		add("state.bundle", bundle)
+	}
+	if len(tree) > 0 {
+		add("worktree.tar.gz", tree)
+	}
+	end, _ := json.Marshal(map[string]int{"bundle_bytes": len(bundle), "worktree_bytes": len(tree)})
+	add("spov-sync-end.json", end)
+	_ = tw.Close()
+	return buf.String(), nil
 }
 
 // @decision(DL-027)
@@ -325,4 +381,96 @@ repos:
 			t.Fatalf("expected account disambiguation to succeed, got %v", err)
 		}
 	})
+}
+
+// TestASyncBackFromAnOlderServerUsesTheJSONRoute: a server from before
+// the archive route answers it with a plain 404, and the sync-back
+// takes the JSON route instead, landing the same way.
+//
+// @decision(DL-178)
+func TestASyncBackFromAnOlderServerUsesTheJSONRoute(t *testing.T) {
+	f := newAPIFixtureWithConfig(t, platformOnlyConfig)
+	f.http.Close()
+	f.srv.Close()
+	var archiveAsks atomic.Int32
+	f.wrapHandler = func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/sync-archive") {
+				archiveAsks.Add(1)
+				http.NotFound(w, r)
+				return
+			}
+			h.ServeHTTP(w, r)
+		})
+	}
+	f.startServer()
+	f.env.Client = client.New(f.http.URL, f.token)
+	baseHead := initCLIGitRepo(t, f.wd, "git@codefloe.com:alice/spov.git")
+	if _, stderr, err := runWith(t, f.env, "fly", "--sync", "--no-attach", "--name", "old-server"); err != nil {
+		t.Fatalf("fly: %v\n%s", err, stderr)
+	}
+	outJSON, _ := json.Marshal(map[string]any{
+		"branch": "main", "base_commit": baseHead, "head_commit": baseHead,
+		"worktree_tar": cliWorktreeTar(t, map[string]string{"from-old.txt": "an older server\n"}),
+	})
+	for _, h := range f.provider.Handles() {
+		_, _ = sessionExportProbe(h, "spov", baseHead, string(outJSON), f.provider)
+	}
+	if _, stderr, err := runWith(t, f.env, "attach", "old-server", "--no-tui", "--sync"); err != nil {
+		t.Fatalf("attach --sync: %v\n%s", err, stderr)
+	}
+	if b, err := os.ReadFile(filepath.Join(f.wd, "from-old.txt")); err != nil || string(b) != "an older server\n" {
+		t.Errorf("from-old.txt = %q, %v", b, err)
+	}
+	if n := archiveAsks.Load(); n != 1 {
+		t.Errorf("the archive route was asked %d times, want once before the fallback", n)
+	}
+}
+
+// TestASeedTooLargeSaysWhatWouldLetTheSandboxCloneIt: one remedy per
+// reason the history had to be sent whole.
+//
+// @decision(DL-177)
+func TestASeedTooLargeSaysWhatWouldLetTheSandboxCloneIt(t *testing.T) {
+	big := &git.SeedTooLargeError{Root: "/src/app", Size: 40 << 20}
+	for _, c := range []struct {
+		checkout git.LocalCheckout
+		platform string
+		says     string
+	}{
+		{git.LocalCheckout{}, "", "add a remote on a configured forge and push"},
+		{git.LocalCheckout{Remote: "origin", Host: "git.example.com"}, "", "add a platform for git.example.com"},
+		{git.LocalCheckout{Remote: "origin", Host: "codefloe.com"}, "codefloe", "spov credentials add codefloe"},
+	} {
+		err := seedTooLarge(big, c.checkout, c.platform)
+		if !strings.Contains(err.Error(), c.says) || !strings.Contains(err.Error(), "40 MiB, over the 16 MiB") {
+			t.Errorf("%+v: %v", c.checkout, err)
+		}
+	}
+}
+
+// TestALocalOnlyCheckoutTooLargeToSendSaysToAddARemote: the history of
+// a checkout with no remote is sent whole, and over the bound the
+// launch says how the sandbox could clone it instead.
+//
+// @decision(DL-177)
+func TestALocalOnlyCheckoutTooLargeToSendSaysToAddARemote(t *testing.T) {
+	f := newAPIFixtureWithConfig(t, platformOnlyConfig)
+	initCLIGitRepo(t, f.wd, "")
+	big := make([]byte, git.MaxSyncBundleBytes+(1<<20))
+	if _, err := rand.Read(big); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.wd, "big.bin"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runCLIGit(t, f.wd, "add", "big.bin")
+	runCLIGit(t, f.wd, "commit", "-m", "big")
+	_, _, err := runWith(t, f.env, "fly", "--sync", "--no-attach", "--name", "too-big")
+	if err == nil || !strings.Contains(err.Error(), "add a remote on a configured forge and push") {
+		t.Errorf("err = %v", err)
+	}
+	if f.provider.Running() != 0 {
+		t.Errorf("a sandbox was started: %d", f.provider.Running())
+	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/git"
+	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/session"
 	"github.com/jimutt/spov/internal/store"
 )
@@ -45,7 +46,9 @@ type syncExportOutput struct {
 func (s *Server) registerSyncExport() {
 	register(s.api, huma.Operation{
 		OperationID: "export-session-sync", Method: http.MethodPost, Path: "/api/v1/sessions/{ref}/sync-export",
-		Summary: "Export a running single-repository session's git commits and working-tree changes", Tags: []string{"sessions"},
+		Summary:     "Export a running single-repository session's git commits and working-tree changes, up to 32 MiB",
+		Description: "Deprecated: kept for clients from before sync-archive, which streams up to 1 GiB.",
+		Tags:        []string{"sessions"}, Deprecated: true,
 	}, func(ctx context.Context, in *refInput) (*syncExportOutput, error) {
 		state, err := s.svc.ExportSync(ctx, principal(ctx), in.Ref)
 		if err != nil {
@@ -60,27 +63,47 @@ func (s *Server) registerSyncExport() {
 //
 // @decision(DL-027)
 func (s *Service) ExportSync(ctx context.Context, p auth.Principal, ref string) (git.ExportedState, error) {
-	sess, err := s.Get(ctx, p, ref)
+	t, err := s.sessionSyncTarget(ctx, p, ref)
 	if err != nil {
 		return git.ExportedState{}, err
 	}
+	return session.ExportSync(ctx, t.h, t.dir, t.base)
+}
+
+// syncTarget is the sandbox repository a sync-back reads.
+type syncTarget struct {
+	h         sandbox.Handle
+	dir, base string
+	// what names it in a log line.
+	what string
+}
+
+// sessionSyncTarget checks a session can be synced back and finds its
+// repository: a running single-repository session that is not a job's.
+//
+// @decision(DL-027) @decision(DL-176)
+func (s *Service) sessionSyncTarget(ctx context.Context, p auth.Principal, ref string) (syncTarget, error) {
+	sess, err := s.Get(ctx, p, ref)
+	if err != nil {
+		return syncTarget{}, err
+	}
 	if sess.State != store.StateRunning || sess.SandboxID == "" {
-		return git.ExportedState{}, fmt.Errorf("%w (state %s)", ErrSessionNotRunning, sess.State)
+		return syncTarget{}, fmt.Errorf("%w (state %s)", ErrSessionNotRunning, sess.State)
 	}
 	owner, name, ok := singleSessionRepo(sess)
 	if !ok {
-		return git.ExportedState{}, fmt.Errorf("%w: sync is only supported for sessions with a single repository", ErrInvalidRequest)
+		return syncTarget{}, fmt.Errorf("%w: sync is only supported for sessions with a single repository", ErrInvalidRequest)
 	}
 	if _, err := s.deps.Store.Jobs().BySession(ctx, sess.OrgID, sess.ID); err == nil {
-		return git.ExportedState{}, fmt.Errorf("%w: sync is for interactive sessions, not autonomous jobs", ErrInvalidRequest)
+		return syncTarget{}, fmt.Errorf("%w: sync is for interactive sessions, not autonomous jobs", ErrInvalidRequest)
 	} else if !errors.Is(err, store.ErrNotFound) {
-		return git.ExportedState{}, err
+		return syncTarget{}, err
 	}
 	h, err := s.handle(ctx, sess)
 	if err != nil {
-		return git.ExportedState{}, err
+		return syncTarget{}, err
 	}
-	return session.ExportSync(ctx, h, syncDir(sess, owner, name), syncBase(sess))
+	return syncTarget{h: h, dir: syncDir(sess, owner, name), base: syncBase(sess), what: "session " + sess.ID}, nil
 }
 
 func singleSessionRepo(sess store.Session) (owner, name string, ok bool) {

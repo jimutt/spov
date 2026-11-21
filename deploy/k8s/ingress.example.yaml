@@ -1,0 +1,32 @@
+# An Ingress for the nginx ingress controller. A sync-back streams up to
+# 1 GiB for up to 45 minutes, the live views hold their streams open, and
+# a synced launch sends a body of up to 24 MiB, so responses pass through
+# unbuffered, idle and total timeouts are long, and bodies may be 25 MiB
+# (deploy/README.md#long-responses-through-a-proxy). Set
+# server.trusted_proxies to the controller's pod network.
+#
+# @decision(DL-176)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: spov
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "25m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [spov.example.com]
+      secretName: spov-tls
+  rules:
+    - host: spov.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: spov
+                port: { number: 80 }

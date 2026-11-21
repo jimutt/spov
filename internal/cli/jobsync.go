@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/spf13/cobra"
@@ -105,17 +106,26 @@ func applyJob(ctx context.Context, env *Env, id string, keep, asJSON bool) error
 	if err != nil {
 		return sessionError(job.SessionID, err)
 	}
-	syncCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncTimeout)
-	defer cancel()
-	checkout, err := env.verifyCheckoutOf(syncCtx, res.Config, view)
+	detached := context.WithoutCancel(ctx)
+	verifyCtx, cancel := context.WithTimeout(detached, syncTimeout)
+	checkout, err := env.verifyCheckoutOf(verifyCtx, res.Config, view)
+	cancel()
 	if err != nil {
+		return err
+	}
+	// A Ctrl-C during the checkout check means the transfer should not
+	// start.
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	keptHint := func() {
 		_, _ = fmt.Fprintf(env.Err, "\nNothing was released; the job's sandbox still holds its work.\n"+
 			"  retry:   spov jobs apply %s\n  discard: spov jobs release %s\n", job.ID, job.ID)
 	}
-	exported, err := c.ExportJobSync(syncCtx, job.ID)
+	spool, err := env.fetchSync(detached, checkout.Root, syncSource{
+		archive: func(ctx context.Context) (io.ReadCloser, error) { return c.ExportJobSyncArchive(ctx, job.ID) },
+		export:  func(ctx context.Context) (server.SyncExportView, error) { return c.ExportJobSync(ctx, job.ID) },
+	})
 	if err != nil {
 		// A 409 or 404 is a job with nothing to take, not a hold kept.
 		if st := client.StatusOf(err); st != http.StatusConflict && st != http.StatusNotFound {
@@ -123,11 +133,13 @@ func applyJob(ctx context.Context, env *Env, id string, keep, asJSON bool) error
 		}
 		return fmt.Errorf("exporting job %s's state: %w", job.ID, jobError(err))
 	}
-	landed, err := landExport(syncCtx, checkout, view, exported)
+	landed, err := env.landSpool(detached, checkout, view, spool)
 	if err != nil {
 		keptHint()
 		return err
 	}
+	syncCtx, cancel := context.WithTimeout(detached, syncTimeout)
+	defer cancel()
 	printSyncResult(env, landed)
 	held := job.Sync != nil && job.Sync.Held
 	switch {
