@@ -102,7 +102,7 @@ func TestSyncBackOnAWindowsDriveNeverWritesThroughAShortName(t *testing.T) {
 		{{name: "NODE_M~1/.bin/tsc", body: "planted\n"}},
 		{{name: ".GITHOOKS/post-index-change", body: "#!/bin/sh\necho ran > hook-ran\n"}},
 	} {
-		res, err := ApplySync(context.Background(), dir, "s", "main", ExportedState{
+		res, err := applyState(t, context.Background(), dir, "s", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: head, WorktreeTar: makeTar(t, entries...),
 		})
 		wantFallback(t, dir, head, res, err, entries[0].name)
@@ -114,7 +114,7 @@ func TestSyncBackOnAWindowsDriveNeverWritesThroughAShortName(t *testing.T) {
 		writeFile(t, s, "GITHOO~1/post-index-change", "#!/bin/sh\necho ran > hook-ran\n", 0o755)
 		runGit(t, s, "add", "-A")
 	})
-	res, err := ApplySync(context.Background(), dir, "s2", "main", state)
+	res, err := applyState(t, context.Background(), dir, "s2", "main", state)
 	wantFallback(t, dir, head, res, err, "GITHOO~1/post-index-change")
 	wantAbsent(t, dir, ".githooks/post-index-change")
 	userCommits(t, dir)

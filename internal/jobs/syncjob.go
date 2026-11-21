@@ -25,6 +25,11 @@ type SyncState struct {
 	Bytes      int64
 	// Rewritten says the base is no longer an ancestor of HEAD.
 	Rewritten bool
+	// Over is why the state is over the landing's bounds, as the
+	// sandbox measured it, or empty.
+	//
+	// @decision(DL-177)
+	Over string
 }
 
 // DefaultSyncHold is how long a finished sync job's sandbox is kept for
@@ -104,20 +109,23 @@ func (s *Supervisor) collectSync(ctx context.Context, job store.Job) error {
 }
 
 // syncMember is the member a measured repository makes: verified when
-// something changed within the export's bound, over_limit past it, and
-// missing when nothing changed.
+// something changed within the landing's bounds, over_limit past them,
+// and missing when nothing changed.
 //
-// @decision(DL-101)
+// @decision(DL-101) @decision(DL-177)
 func syncMember(m store.Deliverable, st SyncState) store.Deliverable {
 	m.Branch, m.HeadCommit = st.Branch, st.HeadCommit
 	m.Commits, m.Files, m.Size = st.Commits, st.Files, st.Bytes
 	switch {
 	case st.Commits == 0 && st.Files == 0 && !st.Rewritten:
 		m.Status, m.Detail = store.DeliverableMissing, "the repository is unchanged since the job started"
-	case st.Bytes > git.MaxSyncExportBytes:
+	// @decision(DL-177)
+	case st.Over != "":
+		m.Status, m.Detail = store.DeliverableOverLimit, st.Over
+	case st.Bytes > git.MaxSyncIncomingBytes:
 		m.Status = store.DeliverableOverLimit
-		m.Detail = fmt.Sprintf("the changes are %s, over the %d MiB a sync can take",
-			mebibytes(st.Bytes), git.MaxSyncExportBytes>>20)
+		m.Detail = fmt.Sprintf("the changes are %s, over the %d GiB a sync can take",
+			mebibytes(st.Bytes), git.MaxSyncIncomingBytes>>30)
 	default:
 		m.Status, m.Detail = store.DeliverableVerified, syncChange(st)
 	}

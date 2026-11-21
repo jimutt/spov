@@ -137,7 +137,7 @@ func TestAFullSyncBackRunsNoHookNoMonitorAndNoAlias(t *testing.T) {
 		if _, err := InspectCommandOutput(ctx, dir, "rev-parse", "--show-toplevel"); err != nil {
 			t.Fatal(err)
 		}
-		res, err := ApplySync(ctx, dir, "s1", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s1", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: sandboxHead, Bundle: bundle,
 			WorktreeTar: makeWorktreeTar(t, map[string]string{"dirty.txt": "x\n"}),
 		})
@@ -152,7 +152,7 @@ func TestAFullSyncBackRunsNoHookNoMonitorAndNoAlias(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "local.txt"), []byte("dirty\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		res, err := ApplySync(ctx, dir, "s2", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s2", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: sandboxHead, Bundle: bundle,
 			WorktreeTar: makeWorktreeTar(t, map[string]string{"dirty.txt": "x\n"}),
 		})

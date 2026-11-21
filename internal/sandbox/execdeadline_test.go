@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 	"time"
 )
@@ -37,6 +38,9 @@ func TestTheFakeRefusesAnExecWithNoDeadline(t *testing.T) {
 	}
 	if _, err := h.ExecBounded(context.Background(), []string{"cat"}, nil, MaxExecOutput); !errors.Is(err, ErrExecNoDeadline) {
 		t.Errorf("ExecBounded with no deadline = %v, want ErrExecNoDeadline", err)
+	}
+	if _, err := h.ExecStream(context.Background(), []string{"cat"}, io.Discard, 1); !errors.Is(err, ErrExecNoDeadline) {
+		t.Errorf("ExecStream with no deadline = %v, want ErrExecNoDeadline", err)
 	}
 	if _, err := h.SidecarExecInput(context.Background(), "proxy", []string{"set-token", "gh"}, nil); !errors.Is(err, ErrExecNoDeadline) {
 		t.Errorf("SidecarExecInput with no deadline = %v, want ErrExecNoDeadline", err)

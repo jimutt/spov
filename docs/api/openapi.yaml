@@ -3583,8 +3583,65 @@ paths:
       summary: Hand a suspended job back to its loop
       tags:
         - jobs
+  /api/v1/jobs/{id}/sync-archive:
+    post:
+      operationId: export-job-sync-archive
+      parameters:
+        - description: Job ID
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Job ID
+            type: string
+      responses:
+        "200":
+          content:
+            application/x-tar:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: "DL-176's archive: an uncompressed tar of spov-sync.json, any spov-sync-keepalive entries, state.bundle and worktree.tar.gz as the metadata declares them, and spov-sync-end.json"
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: Stream a sync job's git commits and working-tree changes from its sandbox, up to 1 GiB
+      tags:
+        - jobs
   /api/v1/jobs/{id}/sync-export:
     post:
+      deprecated: true
+      description: "Deprecated: kept for clients from before sync-archive, which streams up to 1 GiB."
       operationId: export-job-sync
       parameters:
         - description: Job ID
@@ -3633,7 +3690,7 @@ paths:
           description: Internal Server Error
       security:
         - bearer: []
-      summary: Export a sync job's git commits and working-tree changes from its sandbox
+      summary: Export a sync job's git commits and working-tree changes from its sandbox, up to 32 MiB
       tags:
         - jobs
   /api/v1/me:
@@ -6556,8 +6613,65 @@ paths:
       summary: Reopen a stopped session in a new sandbox
       tags:
         - sessions
+  /api/v1/sessions/{ref}/sync-archive:
+    post:
+      operationId: export-session-sync-archive
+      parameters:
+        - description: Session ID or name
+          in: path
+          name: ref
+          required: true
+          schema:
+            description: Session ID or name
+            type: string
+      responses:
+        "200":
+          content:
+            application/x-tar:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: "DL-176's archive: an uncompressed tar of spov-sync.json, any spov-sync-keepalive entries, state.bundle and worktree.tar.gz as the metadata declares them, and spov-sync-end.json"
+        "401":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unauthorized
+        "403":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Forbidden
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Conflict
+        "422":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Internal Server Error
+      security:
+        - bearer: []
+      summary: Stream a running single-repository session's git commits and working-tree changes, up to 1 GiB
+      tags:
+        - sessions
   /api/v1/sessions/{ref}/sync-export:
     post:
+      deprecated: true
+      description: "Deprecated: kept for clients from before sync-archive, which streams up to 1 GiB."
       operationId: export-session-sync
       parameters:
         - description: Session ID or name
@@ -6600,7 +6714,7 @@ paths:
           description: Internal Server Error
       security:
         - bearer: []
-      summary: Export a running single-repository session's git commits and working-tree changes
+      summary: Export a running single-repository session's git commits and working-tree changes, up to 32 MiB
       tags:
         - sessions
   /api/v1/users:

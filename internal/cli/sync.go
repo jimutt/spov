@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,7 @@ import (
 	"github.com/jimutt/spov/internal/server/client"
 )
 
-// syncTimeout bounds exporting and applying a sandbox's repository
+// syncTimeout bounds checking the checkout before a sandbox's repository
 // state when a session closes.
 //
 // @decision(DL-027)
@@ -146,12 +147,16 @@ func (e *Env) resolveSyncLaunch(ctx context.Context, c *client.Client, cfg confi
 	// the server, pack a full bundle of HEAD so the sandbox can initialize
 	// the repository without cloning from the forge.
 	needFullBundle := platformName == ""
+	matched := platformName
 	if !needFullBundle && !e.hasPlatformCredential(ctx, c, cfg, platformName) {
 		platformName = ""
 		needFullBundle = true
 	}
 	if needFullBundle {
 		fullBundle, err := git.BundleHEAD(ctx, checkout.Root)
+		if tooLarge := (*git.SeedTooLargeError)(nil); errors.As(err, &tooLarge) {
+			return server.RepoRef{}, nil, git.LocalCheckout{}, seedTooLarge(tooLarge, checkout, matched)
+		}
 		if err != nil {
 			return server.RepoRef{}, nil, git.LocalCheckout{}, err
 		}
@@ -171,6 +176,21 @@ func (e *Env) resolveSyncLaunch(ctx context.Context, c *client.Client, cfg confi
 		req.Bundle = base64.StdEncoding.EncodeToString(checkout.Bundle)
 	}
 	return ref, req, checkout, nil
+}
+
+// seedTooLarge says what would let a whole history that is too large to
+// send reach the sandbox another way.
+//
+// @decision(DL-177)
+func seedTooLarge(err *git.SeedTooLargeError, checkout git.LocalCheckout, platform string) error {
+	switch {
+	case checkout.Remote == "":
+		return fmt.Errorf("%w; add a remote on a configured forge and push, and the sandbox clones it instead", err)
+	case platform == "":
+		return fmt.Errorf("%w; add a platform for %s to your user file, and the sandbox clones it instead", err, checkout.Host)
+	default:
+		return fmt.Errorf("%w; add a credential for %s (spov credentials add %s), and the sandbox clones it instead", err, platform, platform)
+	}
 }
 
 // hasPlatformCredential reports whether a credential is available for
@@ -289,36 +309,58 @@ func (e *Env) verifyCheckoutOf(ctx context.Context, cfg config.Config, view serv
 	}, nil
 }
 
-// syncSessionBack exports the repository state from the running session
-// and applies it to the local checkout. It runs under a detached
-// context bounded by syncTimeout so an interrupt that closed the TUI
-// does not abort the sync.
+// syncSessionBack takes the repository state from the running session
+// and applies it to the local checkout. It runs detached from ctx, so
+// an interrupt that closed the TUI does not abort it: the checkout check
+// is bounded by syncTimeout, the transfer by its own deadline and a
+// Ctrl-C, and the landing by nothing once it writes.
 //
-// @decision(DL-027)
+// @decision(DL-027) @decision(DL-178)
 func (e *Env) syncSessionBack(ctx context.Context, c *client.Client, cfg config.Config, view server.SessionView) error {
-	syncCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), syncTimeout)
-	defer cancel()
-
-	checkout, err := e.verifySyncCheckout(syncCtx, cfg, view)
+	detached := context.WithoutCancel(ctx)
+	verifyCtx, cancel := context.WithTimeout(detached, syncTimeout)
+	checkout, err := e.verifySyncCheckout(verifyCtx, cfg, view)
+	cancel()
 	if err != nil {
 		return err
 	}
 	repoRef, _ := singleViewRepo(view)
 	_, _ = fmt.Fprintf(e.Err, "Syncing %s/%s from the sandbox...\n", repoRef.Owner, repoRef.Name)
 
-	exportedView, err := c.ExportSessionSync(syncCtx, view.ID)
-	if lostServer(syncCtx, err) && view.Name != "" {
-		if fresh, rerr := e.reconnect(syncCtx, c); rerr == nil {
-			exportedView, err = fresh.ExportSessionSync(syncCtx, view.Name)
+	// The ID first, then after a lost server a fresh client, then the
+	// name, which survives a restart that gave the session a new ID.
+	try := func(ctx context.Context, ask func(*client.Client, string) error) error {
+		err := ask(c, view.ID)
+		if lostServer(ctx, err) && view.Name != "" {
+			if fresh, rerr := e.reconnect(ctx, c); rerr == nil {
+				err = ask(fresh, view.Name)
+			}
 		}
+		if client.IsNotFound(err) && !client.IsUnservedRoute(err) && view.Name != "" {
+			err = ask(c, view.Name)
+		}
+		return err
 	}
-	if client.IsNotFound(err) && view.Name != "" {
-		exportedView, err = c.ExportSessionSync(syncCtx, view.Name)
-	}
+	spool, err := e.fetchSync(detached, checkout.Root, syncSource{
+		archive: func(ctx context.Context) (body io.ReadCloser, err error) {
+			err = try(ctx, func(c *client.Client, ref string) (err error) {
+				body, err = c.ExportSessionSyncArchive(ctx, ref)
+				return err
+			})
+			return body, err
+		},
+		export: func(ctx context.Context) (view server.SyncExportView, err error) {
+			err = try(ctx, func(c *client.Client, ref string) (err error) {
+				view, err = c.ExportSessionSync(ctx, ref)
+				return err
+			})
+			return view, err
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("exporting sandbox state: %w", err)
 	}
-	res, err := landExport(syncCtx, checkout, view, exportedView)
+	res, err := e.landSpool(detached, checkout, view, spool)
 	if err != nil {
 		return err
 	}
@@ -326,52 +368,31 @@ func (e *Env) syncSessionBack(ctx context.Context, c *client.Client, cfg config.
 	return nil
 }
 
-// landExport applies an exported state to the local checkout, in place
+// landSpool applies a spooled sync-back to the local checkout, in place
 // when it is still where the session started, else on a branch named
-// for the session.
+// for the session, and removes the spool. Ctrl-C is held while it runs.
 //
-// @decision(DL-027)
-func landExport(ctx context.Context, checkout git.LocalCheckout, view server.SessionView, exportedView server.SyncExportView) (git.SyncResult, error) {
-	syncCtx := ctx
-	var err error
-	var bundleBytes, tarBytes []byte
-	if exportedView.Bundle != "" {
-		bundleBytes, err = base64.StdEncoding.DecodeString(exportedView.Bundle)
-		if err != nil {
-			return git.SyncResult{}, fmt.Errorf("decoding exported bundle: %w", err)
-		}
-	}
-	if exportedView.WorktreeTar != "" {
-		tarBytes, err = base64.StdEncoding.DecodeString(exportedView.WorktreeTar)
-		if err != nil {
-			return git.SyncResult{}, fmt.Errorf("decoding exported worktree archive: %w", err)
-		}
-	}
-	baseCommit := exportedView.BaseCommit
+// @decision(DL-027) @decision(DL-178)
+func (e *Env) landSpool(ctx context.Context, checkout git.LocalCheckout, view server.SessionView, spool git.SpooledSync) (git.SyncResult, error) {
+	defer spool.Remove()
+	release := e.holdInterrupts()
+	defer release()
 	startBranch := ""
 	if view.Sync != nil {
-		if baseCommit == "" {
-			baseCommit = view.Sync.BaseCommit
+		if spool.BaseCommit == "" {
+			spool.BaseCommit = view.Sync.BaseCommit
 		}
 		startBranch = view.Sync.Branch
 	}
 	if startBranch == "" {
-		startBranch = exportedView.Branch
+		startBranch = spool.Branch
 	}
-	if baseCommit == "" && startBranch != "" && checkout.Branch == startBranch {
-		if localHead, herr := gitCommandIn(syncCtx, checkout.Root, "rev-parse", "--verify", "HEAD"); herr == nil && git.ValidCommitSHA(localHead) {
-			baseCommit = strings.ToLower(localHead)
+	if spool.BaseCommit == "" && startBranch != "" && checkout.Branch == startBranch {
+		if localHead, herr := gitCommandIn(ctx, checkout.Root, "rev-parse", "--verify", "HEAD"); herr == nil && git.ValidCommitSHA(localHead) {
+			spool.BaseCommit = strings.ToLower(localHead)
 		}
 	}
-
-	return git.ApplySync(syncCtx, checkout.Root, displayName(view), startBranch, git.ExportedState{
-		Branch:      exportedView.Branch,
-		BaseCommit:  baseCommit,
-		HeadCommit:  exportedView.HeadCommit,
-		Bundle:      bundleBytes,
-		WorktreeTar: tarBytes,
-		Deleted:     exportedView.Deleted,
-	})
+	return git.ApplySync(ctx, checkout.Root, displayName(view), startBranch, spool)
 }
 
 // printSyncResult reports how the sandbox's repository state landed

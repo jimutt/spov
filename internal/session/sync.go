@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,12 +129,93 @@ const (
 	InspectTimeout = 5 * time.Minute
 )
 
+// ArchiveTimeout bounds a streamed sync-back from the first measure to
+// the last byte.
+//
+// @decision(DL-176)
+const ArchiveTimeout = 45 * time.Minute
+
+// maxArchiveOutput is what a streamed sync-back may write: the packed
+// parts at their bound, the metadata at its, and the tar's framing and
+// keep-alive entries.
+//
+// @decision(DL-176) @decision(DL-177)
+const maxArchiveOutput = int64(git.MaxSyncExportBytes) + git.MaxSyncMetaBytes + 1<<20
+
+// StreamSync writes the repository's state as DL-176's archive to w as
+// the sandbox produces it. A refusal (over the bounds, no repository)
+// ends the exec with a non-zero exit before anything is written; the
+// caller tells the two apart by whether w saw a byte.
+//
+// @decision(DL-176)
+func StreamSync(ctx context.Context, h sandbox.Handle, dir, baseCommit string, w io.Writer) (sandbox.ExecResult, error) {
+	base := strings.ToLower(strings.TrimSpace(baseCommit))
+	if base != "" && !git.ValidCommitSHA(base) {
+		return sandbox.ExecResult{}, fmt.Errorf("session: invalid base commit %q", baseCommit)
+	}
+	ctx, cancel := context.WithTimeout(ctx, ArchiveTimeout)
+	defer cancel()
+	secs := int(ArchiveTimeout / time.Second)
+	if dl, ok := ctx.Deadline(); ok {
+		secs = max(int(time.Until(dl)/time.Second)-5, 1)
+	}
+	stop := keepAwake(ctx, h)
+	res, err := h.ExecStream(ctx, []string{"bash", "-c", syncStateScript, "spov-archive",
+		path.Join(opencode.WorkspaceRoot, dir), base, "archive", strconv.Itoa(secs)}, w, maxArchiveOutput)
+	stop()
+	if err != nil {
+		return sandbox.ExecResult{}, fmt.Errorf("session: stream sandbox repository state: %w", err)
+	}
+	return res, nil
+}
+
+// keepAwakeEvery is how often a streaming export runs a short exec,
+// which resets the sandbox's idle clock (S-R1), while it streams.
+//
+// @decision(DL-175)
+var keepAwakeEvery = 30 * time.Second
+
+// keepAwake runs `true` in the sandbox every keepAwakeEvery until the
+// returned func is called.
+//
+// @decision(DL-175)
+func keepAwake(ctx context.Context, h sandbox.Handle) func() {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tick := time.NewTicker(keepAwakeEvery)
+		defer tick.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				execCtx, execCancel := context.WithTimeout(ctx, 10*time.Second)
+				_, _ = h.Exec(execCtx, []string{"true"})
+				execCancel()
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+// ExecFailure is a failed exec's message as ExportSync words it.
+//
+// @decision(DL-176)
+func ExecFailure(res sandbox.ExecResult) error {
+	return fmt.Errorf("session: export sandbox repository state: %s", execDetail(res))
+}
+
 // maxExportOutput is how much an export may print: the state at its
 // limit in base64, and room for the JSON around it and the deleted
 // paths.
 //
 // @decision(DL-130)
-const maxExportOutput = git.MaxSyncExportBytes/3*4 + 1<<20
+const maxExportOutput = git.MaxSyncJSONExportBytes/3*4 + 1<<20
 
 // ExportSync packages the current git commits and uncommitted
 // working-tree changes from a running sandbox's repository at
@@ -178,8 +261,8 @@ func ExportSync(ctx context.Context, h sandbox.Handle, dir, baseCommit string) (
 			return git.ExportedState{}, fmt.Errorf("session: decode exported worktree archive: %w", err)
 		}
 	}
-	if len(bundleBytes)+len(tarBytes) > git.MaxSyncExportBytes {
-		return git.ExportedState{}, fmt.Errorf("session: exported sandbox state exceeds %d MiB limit", git.MaxSyncExportBytes>>20)
+	if len(bundleBytes)+len(tarBytes) > git.MaxSyncJSONExportBytes {
+		return git.ExportedState{}, fmt.Errorf("session: exported sandbox state exceeds %d MiB limit", git.MaxSyncJSONExportBytes>>20)
 	}
 	return git.ExportedState{
 		Branch:      wire.Branch,
@@ -203,17 +286,22 @@ type SyncSummary struct {
 	Commits int
 	// Files counts the changed, added and deleted paths.
 	Files int
-	// Bytes is the size ExportSync's bundle and archive would have.
+	// Bytes is the larger of ObjectBytes and WorktreeBytes.
 	Bytes int64
+	// ObjectBytes is what the commits add, inflated; WorktreeBytes the
+	// changed files' own sizes.
+	ObjectBytes   int64
+	WorktreeBytes int64
+	// Over is why the state is over DL-177's bounds, or empty.
+	Over string
 	// Rewritten says the base is no longer an ancestor of HEAD.
 	Rewritten bool
 }
 
-// InspectSync measures a sandbox repository's state as ExportSync would
-// package it, in one exec, building the bundle and archive only to take
-// their sizes.
+// InspectSync measures a sandbox repository's state with the landing's
+// measures, in one exec, packing nothing.
 //
-// @decision(DL-101)
+// @decision(DL-101) @decision(DL-177)
 func InspectSync(ctx context.Context, h sandbox.Handle, dir, baseCommit string) (SyncSummary, error) {
 	base := strings.ToLower(strings.TrimSpace(baseCommit))
 	if base != "" && !git.ValidCommitSHA(base) {
@@ -230,12 +318,15 @@ func InspectSync(ctx context.Context, h sandbox.Handle, dir, baseCommit string) 
 		return SyncSummary{}, fmt.Errorf("session: inspect sandbox repository state: %s", execDetail(res))
 	}
 	var wire struct {
-		Branch     string `json:"branch"`
-		HeadCommit string `json:"head_commit"`
-		Commits    int    `json:"commits"`
-		Files      int    `json:"files"`
-		Bytes      int64  `json:"bytes"`
-		Rewritten  bool   `json:"rewritten"`
+		Branch        string `json:"branch"`
+		HeadCommit    string `json:"head_commit"`
+		Commits       int    `json:"commits"`
+		Files         int    `json:"files"`
+		Bytes         int64  `json:"bytes"`
+		ObjectBytes   int64  `json:"object_bytes"`
+		WorktreeBytes int64  `json:"worktree_bytes"`
+		Over          string `json:"over"`
+		Rewritten     bool   `json:"rewritten"`
 	}
 	if err := json.Unmarshal([]byte(res.Stdout), &wire); err != nil {
 		return SyncSummary{}, fmt.Errorf("session: decode inspected sandbox state: %w", err)
@@ -254,159 +345,6 @@ func execDetail(res sandbox.ExecResult) string {
 	}
 	return git.RedactAll(detail)
 }
-
-// syncStateScript reads the repository at $1 against the base $2. In
-// the mode "export" ($3) it prints the state ExportSync decodes and
-// fails over the bound; in "inspect" it prints only the counts and the
-// sizes, whatever they are.
-//
-// @decision(DL-027) @decision(DL-101)
-const syncStateScript = `set -e
-cd "$1"
-python3 - "$2" "$3" <<'PY'
-import base64, json, os, subprocess, sys, tempfile
-
-MAX_BYTES = 32 * 1024 * 1024
-base = sys.argv[1].strip().lower()
-inspect = sys.argv[2] == "inspect"
-
-def run(*args, check=True):
-    r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if check and r.returncode != 0:
-        msg = r.stderr.decode("utf-8", errors="replace").strip() or f"{args[0]} exited with {r.returncode}"
-        sys.stderr.write(msg + "\n")
-        sys.exit(r.returncode)
-    return r
-
-head = run("git", "rev-parse", "--verify", "HEAD").stdout.decode().strip().lower()
-branch_res = run("git", "symbolic-ref", "-q", "--short", "HEAD", check=False)
-branch = branch_res.stdout.decode().strip() if branch_res.returncode == 0 else ""
-
-given_base = base
-if not base:
-    origin_head = run("git", "rev-parse", "--verify", "-q", "refs/remotes/origin/HEAD", check=False)
-    if origin_head.returncode == 0:
-        cand = origin_head.stdout.decode().strip().lower()
-        if cand and run("git", "merge-base", "--is-ancestor", cand, head, check=False).returncode == 0:
-            base = cand
-
-bundle_b64 = ""
-total_bytes = 0
-if head and head != base:
-    with tempfile.NamedTemporaryFile(suffix=".bundle", delete=False) as tf:
-        bpath = tf.name
-    try:
-        # From the base when the sandbox's history holds it, else from the
-        # remote's default branch, which the local checkout has too.
-        range_base = ""
-        if base and run("git", "merge-base", "--is-ancestor", base, head, check=False).returncode == 0:
-            range_base = base
-        else:
-            oh = run("git", "rev-parse", "--verify", "-q", "refs/remotes/origin/HEAD", check=False)
-            cand = oh.stdout.decode().strip().lower() if oh.returncode == 0 else ""
-            if cand and run("git", "merge-base", "--is-ancestor", cand, head, check=False).returncode == 0:
-                range_base = cand
-        rev_arg = f"{range_base}..HEAD" if range_base else "HEAD"
-        run("git", "bundle", "create", bpath, rev_arg)
-        bsize = os.path.getsize(bpath)
-        total_bytes += bsize
-        if total_bytes > MAX_BYTES and not inspect:
-            sys.stderr.write(f"exported sandbox state exceeds {MAX_BYTES // (1024 * 1024)} MiB limit\n")
-            sys.exit(1)
-        if not inspect:
-            with open(bpath, "rb") as f:
-                bundle_b64 = base64.b64encode(f.read()).decode("ascii")
-    finally:
-        if os.path.exists(bpath):
-            os.remove(bpath)
-
-status = run("git", "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout
-entries = status.split(b"\x00")
-to_pack = []
-deleted = []
-seen_pack = set()
-seen_del = set()
-i = 0
-while i < len(entries):
-    item = entries[i]
-    i += 1
-    if not item or len(item) < 4:
-        continue
-    xy = item[:2].decode("latin1", errors="replace")
-    path_bytes = item[3:]
-    if "R" in xy or "C" in xy:
-        if i < len(entries):
-            orig = entries[i].decode("utf-8", errors="surrogateescape")
-            i += 1
-            if "R" in xy and orig and not os.path.lexists(orig) and orig not in seen_del:
-                seen_del.add(orig)
-                deleted.append(orig)
-    rel = path_bytes.decode("utf-8", errors="surrogateescape")
-    if not rel:
-        continue
-    if os.path.lexists(rel):
-        if os.path.isdir(rel) and not os.path.islink(rel):
-            continue
-        if rel not in seen_pack:
-            seen_pack.add(rel)
-            to_pack.append(rel)
-    else:
-        if rel not in seen_del:
-            seen_del.add(rel)
-            deleted.append(rel)
-
-deleted = [p for p in deleted if p not in seen_pack]
-
-tar_b64 = ""
-if to_pack:
-    with tempfile.NamedTemporaryFile(suffix=".list", delete=False) as lf, \
-         tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tf:
-        lpath, tpath = lf.name, tf.name
-        for p in to_pack:
-            lf.write(p.encode("utf-8") + b"\x00")
-    try:
-        run("tar", "-czf", tpath, "--null", "--no-recursion", "-T", lpath)
-        tsize = os.path.getsize(tpath)
-        total_bytes += tsize
-        if total_bytes > MAX_BYTES and not inspect:
-            sys.stderr.write(f"exported sandbox state exceeds {MAX_BYTES // (1024 * 1024)} MiB limit\n")
-            sys.exit(1)
-        if not inspect:
-            with open(tpath, "rb") as f:
-                tar_b64 = base64.b64encode(f.read()).decode("ascii")
-    finally:
-        for p in (lpath, tpath):
-            if os.path.exists(p):
-                os.remove(p)
-
-if inspect:
-    commits, rewritten = 0, False
-    if given_base and head != given_base:
-        if run("git", "merge-base", "--is-ancestor", given_base, head, check=False).returncode == 0:
-            commits = int(run("git", "rev-list", "--count", f"{given_base}..HEAD").stdout.decode().strip() or "0")
-        else:
-            rewritten = True
-    sys.stdout.write(json.dumps({
-        "branch": branch,
-        "head_commit": head,
-        "commits": commits,
-        "files": len(to_pack) + len(deleted),
-        "bytes": total_bytes,
-        "rewritten": rewritten,
-    }))
-    sys.exit(0)
-
-out = {
-    "branch": branch,
-    "base_commit": base,
-    "head_commit": head,
-    "bundle": bundle_b64,
-    "worktree_tar": tar_b64,
-    "deleted": deleted,
-}
-sys.stdout.write(json.dumps(out))
-PY
-`
 
 // shortCommit is a commit as a person reads it.
 func shortCommit(sha string) string {

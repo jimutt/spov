@@ -711,6 +711,36 @@ Set the orchestrator's grace period above 20 s: Kubernetes'
 `terminationGracePeriodSeconds: 30` and Kamal's `drain_timeout: 25`
 both do.
 
+## Long responses through a proxy
+
+A sync-back (`spov fly` in a checkout, `spov jobs apply`) streams up to
+1 GiB from the sandbox through the server, and may take minutes. Whatever
+stands in front of `spov serve` must pass that response through as it
+comes and let it run:
+
+- **no response buffering**, or the client sees nothing until the proxy
+  holds the whole archive;
+- **an idle read timeout over 10 seconds**: the server sends a keep-alive
+  every 10 s while the sandbox packs;
+- **a response timeout over 45 minutes**, the server's own bound on one
+  sync-back.
+
+The Kamal config sets `proxy.response_timeout: 3600` and
+`proxy.buffering.responses: false`. Behind the nginx ingress controller,
+annotate the Ingress with:
+
+```yaml
+nginx.ingress.kubernetes.io/proxy-buffering: "off"
+nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+```
+
+A deploy's drain (`drain_timeout: 25`) cuts a sync-back in flight; the
+CLI says the transfer was cut short and nothing was applied, and syncing
+again is safe.
+
+@decision(DL-176)
+
 ## The published image
 
 Each release publishes `ghcr.io/jimutt/spov:<version>` for `linux/amd64`

@@ -555,6 +555,7 @@ func (w *tenantWorld) byRef() []route {
 		// @decision(DL-160)
 		{op: "GET /api/v1/sessions/{ref}/model-variants", refs: sess},
 		{op: "POST /api/v1/sessions/{ref}/sync-export", refs: sess},
+		{op: "POST /api/v1/sessions/{ref}/sync-archive", refs: sess},
 		{op: "POST /api/v1/sessions/{ref}/connect", refs: sess},
 		{op: "POST /api/v1/sessions/{ref}/resume", refs: sess, body: map[string]any{}, ownerRef: w.stopped.ID},
 
@@ -563,6 +564,7 @@ func (w *tenantWorld) byRef() []route {
 		{op: "GET /api/v1/jobs/{id}/file", refs: jobIDs, query: "path=report.md&download=true"},
 		{op: "POST /api/v1/jobs/{id}/resume", refs: jobIDs},
 		{op: "POST /api/v1/jobs/{id}/sync-export", refs: jobIDs, ownerRef: w.syncJob.ID},
+		{op: "POST /api/v1/jobs/{id}/sync-archive", refs: jobIDs, ownerRef: w.syncJob.ID},
 		{op: "POST /api/v1/jobs/{id}/release", refs: jobIDs, ownerRef: w.syncJob.ID, body: map[string]any{}},
 
 		// The destructive ones last, so the owner's control requests

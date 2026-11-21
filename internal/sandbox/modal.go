@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"strings"
@@ -586,6 +587,47 @@ func (h *modalHandle) ExecBounded(ctx context.Context, command []string, stdin [
 		return ExecResult{}, fmt.Errorf("sandbox: exec: %w", err)
 	}
 	return runProcess(ctx, proc, stdin, maxOutput)
+}
+
+// ExecStream passes the caller's remaining deadline to Modal as the
+// program's timeout, since closing the streams does not end it.
+//
+// @decision(DL-175) @decision(DL-135)
+func (h *modalHandle) ExecStream(ctx context.Context, command []string, w io.Writer, maxStdout int64) (ExecResult, error) {
+	ctx, cancel := execContext(ctx)
+	defer cancel()
+	params := &modal.SandboxExecParams{Timeout: wholeSecondsLeft(ctx)}
+	proc, err := h.sb.Exec(ctx, command, params)
+	if err != nil {
+		return ExecResult{}, fmt.Errorf("sandbox: exec: %w", err)
+	}
+	defer func() {
+		_ = proc.Stdout.Close()
+		_ = proc.Stderr.Close()
+	}()
+	if err := proc.Stdin.Close(); err != nil {
+		return ExecResult{}, fmt.Errorf("sandbox: exec stdin close: %w", err)
+	}
+	if _, err := copyBounded(w, proc.Stdout, maxStdout); err != nil {
+		return ExecResult{}, fmt.Errorf("sandbox: exec stdout: %w", err)
+	}
+	code, err := proc.Wait(ctx, nil)
+	if err != nil {
+		return ExecResult{}, fmt.Errorf("sandbox: exec wait: %w", err)
+	}
+	stderr, err := readBounded(proc.Stderr, MaxExecOutput)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	return ExecResult{ExitCode: code, Stderr: stderr}, nil
+}
+
+// wholeSecondsLeft is ctx's remaining time in whole seconds, at least
+// one, as Modal takes an exec's timeout.
+func wholeSecondsLeft(ctx context.Context) time.Duration {
+	dl, _ := ctx.Deadline()
+	left := time.Until(dl).Truncate(time.Second)
+	return max(left, time.Second)
 }
 
 // DefaultExecTimeout bounds an exec whose caller set no deadline. Every

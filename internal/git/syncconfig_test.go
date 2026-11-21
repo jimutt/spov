@@ -39,7 +39,7 @@ func TestTheUsersConfigCannotWeakenTheInPlaceRules(t *testing.T) {
 	t.Run("core.symlinks=false does not let a committed symlink plant a hook", func(t *testing.T) {
 		dir, head, state := husky(t)
 		runGit(t, dir, "config", "core.symlinks", "false")
-		res, err := ApplySync(ctx, dir, "s", "main", state)
+		res, err := applyState(t, ctx, dir, "s", "main", state)
 		wantFallback(t, dir, head, res, err, ".husky")
 		userCommits(t, dir)
 		wantAbsent(t, dir, "hook-ran")
@@ -56,14 +56,14 @@ func TestTheUsersConfigCannotWeakenTheInPlaceRules(t *testing.T) {
 			// protections off, as an attacker would.
 			runGit(t, s, "-c", "core.protectNTFS=false", "-c", "core.protectHFS=false", "add", "-A")
 		})
-		res, err := ApplySync(ctx, dir, "s", "main", state)
+		res, err := applyState(t, ctx, dir, "s", "main", state)
 		wantFallback(t, dir, head, res, err, "git~1/config")
 	})
 
 	t.Run("a sparse checkout falls back", func(t *testing.T) {
 		dir, head := initTestRepo(t, "")
 		runGit(t, dir, "config", "core.sparseCheckout", "true")
-		res, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: head,
 			WorktreeTar: makeTar(t, tarEntry{name: "a.txt", body: "x\n"}),
 		})
@@ -74,7 +74,7 @@ func TestTheUsersConfigCannotWeakenTheInPlaceRules(t *testing.T) {
 	t.Run("a relocated work tree falls back", func(t *testing.T) {
 		dir, head := initTestRepo(t, "")
 		runGit(t, dir, "config", "core.worktree", t.TempDir())
-		res, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: head,
 			WorktreeTar: makeTar(t, tarEntry{name: "a.txt", body: "x\n"}),
 		})
@@ -89,7 +89,7 @@ func TestTheUsersConfigCannotWeakenTheInPlaceRules(t *testing.T) {
 			writeFile(t, s, "added.txt", "x\n", 0o644)
 			runGit(t, s, "add", "added.txt")
 		})
-		res, err := ApplySync(ctx, dir, "s", "main", state)
+		res, err := applyState(t, ctx, dir, "s", "main", state)
 		if err != nil || !res.InPlace {
 			t.Fatalf("an honest fast-forward with merge.ff=false: %+v, %v", res, err)
 		}

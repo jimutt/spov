@@ -27,11 +27,23 @@ import (
 // @decision(DL-027)
 const MaxSyncBundleBytes = 16 << 20
 
-// MaxSyncExportBytes bounds the total decoded sync-export payload
-// (bundle + working-tree archive).
+// MaxSyncExportBytes bounds a streamed sync-back as packed: the bundle
+// plus the gzipped working-tree archive. The landing's own bounds
+// (MaxSyncIncomingBytes, MaxSyncIncomingBlobBytes) are measured first.
 //
-// @decision(DL-027)
-const MaxSyncExportBytes = 32 << 20
+// @decision(DL-027) @decision(DL-177)
+const MaxSyncExportBytes = 1 << 30
+
+// MaxSyncJSONExportBytes bounds the deprecated JSON export, which
+// carries the same parts in base64.
+//
+// @decision(DL-177)
+const MaxSyncJSONExportBytes = 32 << 20
+
+// MaxSyncMetaBytes bounds a sync archive's metadata entry.
+//
+// @decision(DL-176)
+const MaxSyncMetaBytes = 1 << 20
 
 // MaxSyncIncomingBytes bounds the total size of the git objects a sync
 // brings in, and MaxSyncIncomingBlobBytes any single blob. The bundle's
@@ -323,10 +335,23 @@ func BundleHEAD(ctx context.Context, root string) ([]byte, error) {
 		return nil, err
 	}
 	if len(data) > MaxSyncBundleBytes {
-		return nil, fmt.Errorf("repository history in %s is %d MiB (limit %d MiB for local bundle seeding)",
-			root, len(data)>>20, MaxSyncBundleBytes>>20)
+		return nil, &SeedTooLargeError{Root: root, Size: len(data)}
 	}
 	return data, nil
+}
+
+// SeedTooLargeError is a whole history over MaxSyncBundleBytes, which a
+// launch would have to send because the sandbox cannot clone it.
+//
+// @decision(DL-177)
+type SeedTooLargeError struct {
+	Root string
+	Size int
+}
+
+func (e *SeedTooLargeError) Error() string {
+	return fmt.Sprintf("repository history in %s is %d MiB, over the %d MiB a launch can send when the sandbox cannot clone it",
+		e.Root, e.Size>>20, MaxSyncBundleBytes>>20)
 }
 
 // ParseRemoteURL extracts the normalized host, optional forge base path,
@@ -529,29 +554,28 @@ func isAncestor(ctx context.Context, dir, ancestor, descendant string) bool {
 // `refs/heads/spov/<sessionName>` without touching the working tree.
 //
 // @decision(DL-027)
-func ApplySync(ctx context.Context, root, sessionName, startBranch string, state ExportedState) (SyncResult, error) {
+//
+// @decision(DL-178)
+func ApplySync(ctx context.Context, root, sessionName, startBranch string, state SpooledSync) (SyncResult, error) {
 	if !ValidCommitSHA(state.HeadCommit) {
 		return SyncResult{}, fmt.Errorf("git: invalid sandbox HEAD commit %q", state.HeadCommit)
 	}
 	state.HeadCommit = strings.ToLower(state.HeadCommit)
 	state.BaseCommit = strings.ToLower(state.BaseCommit)
-	if len(state.Bundle)+len(state.WorktreeTar) > MaxSyncExportBytes {
-		return SyncResult{}, fmt.Errorf("git: exported sandbox state exceeds %d MiB limit", MaxSyncExportBytes>>20)
-	}
 	for _, d := range state.Deleted {
 		if _, err := cleanRepoRelPath(d); err != nil {
 			return SyncResult{}, fmt.Errorf("git: deleted path %q: %w", d, err)
 		}
 	}
 
-	if state.HeadCommit == state.BaseCommit && len(state.Bundle) == 0 && len(state.WorktreeTar) == 0 && len(state.Deleted) == 0 {
+	if state.HeadCommit == state.BaseCommit && state.BundlePath == "" && state.WorktreeTarPath == "" && len(state.Deleted) == 0 {
 		return SyncResult{NoChanges: true, Branch: startBranch, HeadCommit: state.HeadCommit}, nil
 	}
 
 	// Bring any new commits from the bundle into the local object store
 	// first, without touching the working tree or branch refs.
-	if len(state.Bundle) > 0 {
-		if err := unbundleCommits(ctx, root, state.Bundle, state.HeadCommit); err != nil {
+	if state.BundlePath != "" {
+		if err := unbundleCommits(ctx, root, state.BundlePath, state.HeadCommit); err != nil {
 			return SyncResult{}, err
 		}
 	}
@@ -570,7 +594,7 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 		return SyncResult{}, err
 	}
 
-	packed, err := archivePaths(state.WorktreeTar)
+	packed, err := archivePaths(state.WorktreeTarPath)
 	if err != nil {
 		return SyncResult{}, err
 	}
@@ -622,7 +646,7 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 	}
 	if inPlace {
 		before := trackedAt(ctx, root, curHead)
-		changed, err := applyWorktreeInPlace(root, state.WorktreeTar, state.Deleted)
+		changed, err := applyWorktreeInPlace(root, state.WorktreeTarPath, state.Deleted)
 		if err != nil {
 			return SyncResult{}, err
 		}
@@ -638,7 +662,7 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 			FilesChanged: changed,
 			RangeFrom:    shortRange(commits, from),
 			RangeTo:      shortRange(commits, state.HeadCommit),
-			Changes:      inPlaceChanges(ctx, root, curHead, state.HeadCommit, before, state.WorktreeTar, state.Deleted),
+			Changes:      inPlaceChanges(ctx, root, curHead, state.HeadCommit, before, state.WorktreeTarPath, state.Deleted),
 		}, nil
 	}
 
@@ -646,9 +670,9 @@ func ApplySync(ctx context.Context, root, sessionName, startBranch string, state
 	targetCommit := state.HeadCommit
 	dirtyCommitted := false
 	filesChanged := 0
-	if len(state.WorktreeTar) > 0 || len(state.Deleted) > 0 {
+	if state.WorktreeTarPath != "" || len(state.Deleted) > 0 {
 		var err error
-		targetCommit, filesChanged, err = commitWorktreeOnFallback(ctx, root, sessionName, state.HeadCommit, state.WorktreeTar, state.Deleted)
+		targetCommit, filesChanged, err = commitWorktreeOnFallback(ctx, root, state.Dir, sessionName, state.HeadCommit, state.WorktreeTarPath, state.Deleted)
 		if err != nil {
 			return SyncResult{}, err
 		}
@@ -680,20 +704,7 @@ func fallbackBranchName(sessionName string) string {
 	return "spov/" + name
 }
 
-func unbundleCommits(ctx context.Context, root string, bundle []byte, wantCommit string) error {
-	tmp, err := os.CreateTemp("", "spov-recv-*.bundle")
-	if err != nil {
-		return err
-	}
-	bundlePath := tmp.Name()
-	if _, err := tmp.Write(bundle); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(bundlePath)
-		return err
-	}
-	_ = tmp.Close()
-	defer func() { _ = os.Remove(bundlePath) }()
-
+func unbundleCommits(ctx context.Context, root, bundlePath, wantCommit string) error {
 	tempRef := "refs/spov-sync/head"
 	defer func() { _, _ = gitOutput(ctx, root, "update-ref", "-d", tempRef) }()
 
@@ -778,7 +789,7 @@ func SingleRepoDir(owner, name string) string {
 // a symlinked parent directory, or write into .git.
 //
 // @decision(DL-027)
-func applyWorktreeInPlace(root string, worktreeTar []byte, deleted []string) (int, error) {
+func applyWorktreeInPlace(root, worktreeTar string, deleted []string) (int, error) {
 	changed := map[string]bool{}
 	for _, rel := range deleted {
 		clean, err := cleanRepoRelPath(rel)
@@ -794,7 +805,7 @@ func applyWorktreeInPlace(root string, worktreeTar []byte, deleted []string) (in
 		}
 		changed[clean] = true
 	}
-	if len(worktreeTar) > 0 {
+	if worktreeTar != "" {
 		if _, err := unpackWorktreeTar(root, worktreeTar, changed); err != nil {
 			return 0, err
 		}
@@ -802,14 +813,24 @@ func applyWorktreeInPlace(root string, worktreeTar []byte, deleted []string) (in
 	return len(changed), nil
 }
 
-func unpackWorktreeTar(root string, archive []byte, changed map[string]bool) (int, error) {
-	gz, err := gzip.NewReader(bytes.NewReader(archive))
+// The unpacked tree is bounded like the objects; archivePaths checks
+// the same bounds from the headers before anything lands, and these are
+// the backstop.
+//
+// @decision(DL-177)
+func unpackWorktreeTar(root, archive string, changed map[string]bool) (int, error) {
+	af, err := os.Open(archive)
+	if err != nil {
+		return 0, fmt.Errorf("git: read worktree archive: %w", err)
+	}
+	defer func() { _ = af.Close() }()
+	gz, err := gzip.NewReader(af)
 	if err != nil {
 		return 0, fmt.Errorf("git: read worktree archive: %w", err)
 	}
 	defer func() { _ = gz.Close() }()
 
-	tr := tar.NewReader(io.LimitReader(gz, MaxSyncExportBytes+(4<<20)))
+	tr := tar.NewReader(io.LimitReader(gz, maxSyncIncomingBytes+(64<<20)))
 	var totalBytes int64
 	for {
 		hdr, err := tr.Next()
@@ -833,8 +854,8 @@ func unpackWorktreeTar(root string, archive []byte, changed map[string]bool) (in
 		switch hdr.Typeflag {
 		case tar.TypeReg, '\x00':
 			totalBytes += hdr.Size
-			if totalBytes > MaxSyncExportBytes {
-				return 0, fmt.Errorf("git: unpacked worktree exceeds %d MiB limit", MaxSyncExportBytes>>20)
+			if totalBytes > maxSyncIncomingBytes || hdr.Size > maxSyncIncomingBlobBytes {
+				return 0, fmt.Errorf("git: unpacked worktree exceeds its limit (%d MiB, %d MiB a file)", maxSyncIncomingBytes>>20, maxSyncIncomingBlobBytes>>20)
 			}
 			_ = os.Remove(target)
 			mode := os.FileMode(0o644)
@@ -845,7 +866,7 @@ func unpackWorktreeTar(root string, archive []byte, changed map[string]bool) (in
 			if err != nil {
 				return 0, err
 			}
-			_, copyErr := io.Copy(f, io.LimitReader(tr, MaxSyncExportBytes+1))
+			_, copyErr := io.Copy(f, io.LimitReader(tr, maxSyncIncomingBlobBytes+1))
 			closeErr := f.Close()
 			if copyErr != nil {
 				return 0, copyErr
@@ -880,8 +901,8 @@ func unpackWorktreeTar(root string, archive []byte, changed map[string]bool) (in
 // developer's local index and working tree are untouched.
 //
 // @decision(DL-027)
-func commitWorktreeOnFallback(ctx context.Context, root, sessionName, headCommit string, worktreeTar []byte, deleted []string) (string, int, error) {
-	tmpDir, err := os.MkdirTemp("", "spov-sync-tree-*")
+func commitWorktreeOnFallback(ctx context.Context, root, spoolDir, sessionName, headCommit, worktreeTar string, deleted []string) (string, int, error) {
+	tmpDir, err := os.MkdirTemp(spoolDir, "spov-sync-tree-*")
 	if err != nil {
 		return "", 0, err
 	}
@@ -917,7 +938,7 @@ func commitWorktreeOnFallback(ctx context.Context, root, sessionName, headCommit
 		changed[clean] = true
 	}
 
-	if len(worktreeTar) > 0 {
+	if worktreeTar != "" {
 		unpacked := map[string]bool{}
 		if _, err := unpackWorktreeTar(workDir, worktreeTar, unpacked); err != nil {
 			return "", 0, err
@@ -1034,18 +1055,28 @@ func cutStream(seg string) string {
 	return seg
 }
 
-// archivePaths lists the cleaned paths a worktree archive would write.
-func archivePaths(archive []byte) ([]string, error) {
-	if len(archive) == 0 {
+// archivePaths lists the cleaned paths a worktree archive would write,
+// and refuses one whose files, by their headers, are over the landing's
+// bounds.
+//
+// @decision(DL-177)
+func archivePaths(archive string) ([]string, error) {
+	if archive == "" {
 		return nil, nil
 	}
-	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	af, err := os.Open(archive)
+	if err != nil {
+		return nil, fmt.Errorf("git: read worktree archive: %w", err)
+	}
+	defer func() { _ = af.Close() }()
+	gz, err := gzip.NewReader(af)
 	if err != nil {
 		return nil, fmt.Errorf("git: read worktree archive: %w", err)
 	}
 	defer func() { _ = gz.Close() }()
-	tr := tar.NewReader(io.LimitReader(gz, MaxSyncExportBytes+(4<<20)))
+	tr := tar.NewReader(gz)
 	var paths []string
+	var total int64
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -1067,6 +1098,13 @@ func archivePaths(archive []byte) ([]string, error) {
 		// @decision(DL-126)
 		switch hdr.Typeflag {
 		case tar.TypeReg, '\x00':
+			if hdr.Size > maxSyncIncomingBlobBytes {
+				return nil, fmt.Errorf("git: the sandbox's export holds %s of %d MiB (limit %d MiB); nothing was applied",
+					clean, hdr.Size>>20, maxSyncIncomingBlobBytes>>20)
+			}
+			if total += hdr.Size; total > maxSyncIncomingBytes {
+				return nil, fmt.Errorf("git: the sandbox's changed files are over %d MiB; nothing was applied", maxSyncIncomingBytes>>20)
+			}
 		case tar.TypeSymlink:
 			resolved := path.Clean(path.Join(path.Dir(clean), filepath.ToSlash(hdr.Linkname)))
 			if _, err := cleanRepoRelPath(resolved); err != nil || filepath.IsAbs(hdr.Linkname) {
@@ -1221,7 +1259,7 @@ func commitChanges(ctx context.Context, root, from, to string) []PathChange {
 // track and no commit added is an added file.
 //
 // @decision(DL-136)
-func inPlaceChanges(ctx context.Context, root, oldHead, newHead string, before map[string]bool, worktreeTar []byte, deleted []string) []PathChange {
+func inPlaceChanges(ctx context.Context, root, oldHead, newHead string, before map[string]bool, worktreeTar string, deleted []string) []PathChange {
 	byPath := map[string]byte{}
 	if oldHead != newHead {
 		for _, c := range commitChanges(ctx, root, oldHead, newHead) {

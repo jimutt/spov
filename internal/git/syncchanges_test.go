@@ -28,7 +28,7 @@ func TestASyncResultNamesEveryPathItChanged(t *testing.T) {
 		runGit(t, dir, "commit", "-q", "-m", "old")
 		head := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
 		_, sandboxHead, bundle := sandboxCommit(t, dir, head, "committed.txt")
-		res, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: sandboxHead, Bundle: bundle,
 			WorktreeTar: makeWorktreeTar(t, map[string]string{"README.md": "edited\n", "fresh.txt": "new\n"}),
 			Deleted:     []string{"old.txt"},
@@ -59,7 +59,7 @@ func TestASyncResultNamesEveryPathItChanged(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "local.txt"), []byte("dirty\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		res, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: sandboxHead, Bundle: bundle,
 			WorktreeTar: makeWorktreeTar(t, map[string]string{"fresh.txt": "new\n"}),
 		})
@@ -76,7 +76,7 @@ func TestASyncResultNamesEveryPathItChanged(t *testing.T) {
 	})
 	t.Run("nothing committed has no range", func(t *testing.T) {
 		dir, head := initTestRepo(t, "https://codefloe.com/alice/spov.git")
-		res, err := ApplySync(ctx, dir, "s", "main", ExportedState{
+		res, err := applyState(t, ctx, dir, "s", "main", ExportedState{
 			Branch: "main", BaseCommit: head, HeadCommit: head,
 			WorktreeTar: makeWorktreeTar(t, map[string]string{"fresh.txt": "new\n"}),
 		})

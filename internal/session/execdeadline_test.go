@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -30,13 +31,14 @@ func TestEverySandboxExecThisPackageMakesIsBounded(t *testing.T) {
 	}
 	_, checks["export"] = ExportSync(ctx, h, "app", base)
 	_, checks["inspect"] = InspectSync(ctx, h, "app", base)
+	_, checks["archive"] = StreamSync(ctx, h, "app", base, io.Discard)
 	_, checks["password"] = PasswordFromSandbox(ctx, h)
 	for name, err := range checks {
 		if errors.Is(err, sandbox.ErrExecNoDeadline) {
 			t.Errorf("the %s exec ran without a deadline: %v", name, err)
 		}
 	}
-	if len(h.(*sandbox.FakeHandle).ExecLog()) < 4 {
-		t.Errorf("the fake saw %d execs, want all four", len(h.(*sandbox.FakeHandle).ExecLog()))
+	if len(h.(*sandbox.FakeHandle).ExecLog()) < 5 {
+		t.Errorf("the fake saw %d execs, want all five", len(h.(*sandbox.FakeHandle).ExecLog()))
 	}
 }

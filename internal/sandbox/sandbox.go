@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -313,6 +314,14 @@ type Handle interface {
 	//
 	// @decision(DL-130)
 	ExecBounded(ctx context.Context, command []string, stdin []byte, maxOutput int) (ExecResult, error)
+	// ExecStream writes the command's stdout to w as it arrives, at
+	// most maxStdout bytes of it; over that the answer is
+	// ErrOutputTooLarge. The result's Stdout is empty. Stopping the read
+	// does not stop the program: it runs until it exits or the
+	// caller's deadline, which is its Modal timeout.
+	//
+	// @decision(DL-175)
+	ExecStream(ctx context.Context, command []string, w io.Writer, maxStdout int64) (ExecResult, error)
 	// SidecarExecInput is ExecInput in the named sidecar. A sandbox
 	// without that sidecar answers ErrNoSidecar.
 	//
