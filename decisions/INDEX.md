@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-179 | The browser's repository picker draws no note on a public repository a fine-grained token may only read | accepted | web | repo-picker, github-access, wording |
 | DL-178 | The CLI spools a sync archive to disk and lands it from files | accepted | cli | sync-streaming, sync, cli |
 | DL-177 | A sync-back carries up to 1 GiB, and the seed keeps its 16 MiB | accepted | git | sync-streaming, sync, limits |
 | DL-176 | Sync-back is a streamed archive on its own routes, and the JSON export stays for older clients | accepted | server | sync-streaming, sync, api, limits |

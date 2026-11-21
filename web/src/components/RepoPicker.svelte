@@ -12,7 +12,6 @@
     refOf,
     repoKey,
     repoMatches,
-    repoReadNote,
     repoUnreachable,
     suppressImplicitSubmit,
     toggleRepo,
@@ -57,9 +56,9 @@
   <div class="max-h-[13rem] overflow-y-auto">
     {#each matching as repo (repoKey(repo))}
       <!-- A repository the browser's credential cannot reach is shown,
-           disabled, with why. @decision(DL-042) -->
+           disabled, with why; a public one a fine-grained token may only
+           read carries no note. @decision(DL-042) @decision(DL-179) -->
       {@const why = repoUnreachable(repo, platforms)}
-      {@const readNote = why ? '' : repoReadNote(repo, platforms)}
       <label
         class="grid grid-cols-[auto_1fr_auto] items-baseline gap-2.5 px-2.5 py-[7px] {why
           ? 'cursor-default opacity-70'
@@ -74,8 +73,7 @@
           onchange={() => (selected = toggleRepo(selected, refOf(repo)))}
         />
         <span class="font-mono text-md [overflow-wrap:anywhere]"
-          >{repo.owner}/{repo.name}{#if why}<span class="mt-0.5 block font-sans text-sm text-soft">{why}</span
-            >{:else if readNote}<span class="mt-0.5 block font-sans text-sm text-soft">{readNote}</span>{/if}</span
+          >{repo.owner}/{repo.name}{#if why}<span class="mt-0.5 block font-sans text-sm text-soft">{why}</span>{/if}</span
         >
         <span class="text-sm text-soft">
           {#if repo.archived}<span class="text-gold-t">Archived</span>,{/if}
