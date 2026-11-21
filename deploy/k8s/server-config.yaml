@@ -29,10 +29,42 @@ data:
     #   allow_all: true
 
     # Keep sandboxes near the deployment; broad (us, eu, ap) or narrow (eu-west, ...).
+    # And OpenCode 2 plugins every interactive session gets (docs/plugins.md).
     # sandbox:
     #   regions: [eu]
+    #   plugins: [envsitter-guard@0.1.1]
 
     # Behind a reverse proxy: the proxy's address or range, so the per-address
     # sign-in limits count each client rather than the proxy (docs/server.md#limits).
+    # Behind Kamal, the subnet `docker network inspect kamal` reports (usually
+    # inside 172.16.0.0/12); on Kubernetes, the ingress controller's pod network.
     # server:
-    #   trusted_proxies: [10.0.0.0/8]
+    #   trusted_proxies: [172.16.0.0/12]
+
+    # A deployment open to people you do not know: build no add-on image on a
+    # launch, and prebuild the ones you want with `spov serve image build`.
+    # modal:
+    #   build_on_demand: false
+
+    # Per-user limits; these are the defaults (deploy/README.md#quotas).
+    # quotas:
+    #   max_concurrent_sessions: 5
+    #   max_concurrent_jobs: 4
+    #   max_job_duration: 4h
+
+    # Exit snapshots, which keep a stopped session resumable and cost Modal
+    # storage; these are the defaults.
+    # snapshots:
+    #   enabled: true
+    #   retention: 168h
+    #   max_per_user: 20
+
+    # How much one session's events and messages may occupy before its
+    # recording stops (the default).
+    # history:
+    #   max_session_mib: 1024
+
+    # A Prometheus listener for the metrics in docs/metrics.md, apart from the
+    # API's port; expose it only to your scraper.
+    # metrics:
+    #   prometheus_listen: 127.0.0.1:9464

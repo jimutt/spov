@@ -61,7 +61,8 @@ func TestASyncArchiveStreamsAndAFailureAfterItsFirstByteBreaksIt(t *testing.T) {
 	whole := archiveOf(t, head)
 	answer = sandbox.ExecResult{Stdout: string(whole)}
 	res, body := f.do(http.MethodPost, path, nil)
-	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "application/x-tar" || !bytes.Equal(body, whole) {
+	if res.StatusCode != http.StatusOK || res.Header.Get("Content-Type") != "application/x-tar" ||
+		res.Header.Get("X-Accel-Buffering") != "no" || !bytes.Equal(body, whole) {
 		t.Fatalf("archive = %d %q, %d bytes", res.StatusCode, res.Header.Get("Content-Type"), len(body))
 	}
 	if got, err := git.SpoolSyncArchive(bytes.NewReader(body), t.TempDir(), nil); err != nil || got.HeadCommit != head {

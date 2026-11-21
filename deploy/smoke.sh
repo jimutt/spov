@@ -128,11 +128,21 @@ pass "the API refuses an unauthenticated request"
   || fail "the API refused a valid token"
 pass "the API accepts the token"
 
-# The guard runs before authentication, so a foreign Host is 403 rather
-# than 401. This is what breaks when SPOV_PUBLIC_URL is wrong.
-[ "$(code "${auth[@]}" -H "Host: attacker.example.com" "$url/api/v1/sessions")" = "403" ] \
-  || fail "a request for another host was not refused"
-pass "the browser guard refuses a foreign Host"
+# The guard runs before authentication, so a refusal is 403 rather than
+# 401. A cross-site request on the right Host must be refused wherever the
+# server runs.
+[ "$(code "${auth[@]}" -H "Sec-Fetch-Site: cross-site" -H "Origin: https://attacker.example.com" "$url/api/v1/sessions")" = "403" ] \
+  || fail "a cross-site request was not refused"
+pass "the browser guard refuses a cross-site request"
+
+# A foreign Host is what breaks when SPOV_PUBLIC_URL is wrong. Checked
+# only against the compose run: a proxy that routes by host (kamal-proxy,
+# an Ingress rule) answers it before spov sees it.
+if [ "$own_compose" = 1 ]; then
+  [ "$(code "${auth[@]}" -H "Host: attacker.example.com" "$url/api/v1/sessions")" = "403" ] \
+    || fail "a request for another host was not refused"
+  pass "the browser guard refuses a foreign Host"
+fi
 
 # ---------------------------------------------------------------- login
 

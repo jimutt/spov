@@ -98,6 +98,7 @@ func (a *archiveWriter) Write(p []byte) (int, error) {
 		a.hc.SetHeader("Content-Type", "application/x-tar")
 		a.hc.SetHeader("Cache-Control", "no-store")
 		a.hc.SetHeader("X-Content-Type-Options", "nosniff")
+		a.hc.SetHeader("X-Accel-Buffering", "no")
 		a.hc.SetStatus(http.StatusOK)
 	}
 	n, err := a.hc.BodyWriter().Write(p)

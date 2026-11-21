@@ -1,0 +1,35 @@
+# Publishes the sandbox base image for this release's OpenCode pin in the
+# server's Modal environment. It returns at once when the image is already
+# there, so it runs with every upgrade, after the migrate Job and before
+# the Deployment (deploy/README.md#the-sandbox-image). Delete it before
+# applying it for the next upgrade.
+#
+# @decision(DL-010) @decision(DL-032)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: spov-image-build
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: image-build
+          image: ghcr.io/jimutt/spov:<version>@sha256:<digest> # the same digest as the Deployment
+          args: ["serve", "image", "build"]
+          env:
+            - name: MODAL_ENVIRONMENT
+              value: "spov-hosted" # the Deployment's
+          envFrom:
+            - secretRef: { name: spov-secrets }
+          volumeMounts:
+            - name: server-config
+              mountPath: /home/nonroot/.config/spov
+              readOnly: true
+      volumes:
+        - name: server-config
+          configMap: { name: spov-server-config }

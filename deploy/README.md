@@ -55,7 +55,10 @@ Dockerfile always has the proxy.
 A launch never builds the base image. After the first deploy, and again after
 every OpenCode pin bump, run `spov serve image build` once with the server's
 Modal environment; it returns at once when the image is already published, so
-it is safe before every deploy. Add-on variants are built on first use unless
+it is safe before every deploy. The Kamal `pre-deploy` hook runs it after the
+migrations, and `deploy/k8s/image-build-job.yaml` is the Job that does it on
+Kubernetes; a release that raises the pin otherwise leaves launches failing
+until someone does. Add-on variants are built on first use unless
 `modal.build_on_demand` is false. See
 [`docs/configuration.md`](../docs/configuration.md#add-ons).
 
@@ -559,8 +562,8 @@ hosted server gets a surprise bill.
 
 | Variable | Default | Bounds |
 |---|---|---|
-| `SPOV_QUOTAS_MAX_CONCURRENT_SESSIONS` | 3 | starting + running sessions per user, **excluding a job's own session** |
-| `SPOV_QUOTAS_MAX_CONCURRENT_JOBS` | 2 | unfinished autonomous jobs per user ([DL-045](../decisions/records/jobs/DL-045.md)) |
+| `SPOV_QUOTAS_MAX_CONCURRENT_SESSIONS` | 5 | starting + running sessions per user, **excluding a job's own session** |
+| `SPOV_QUOTAS_MAX_CONCURRENT_JOBS` | 4 | unfinished autonomous jobs per user ([DL-045](../decisions/records/jobs/DL-045.md), [DL-162](../decisions/records/server/DL-162.md)) |
 | `SPOV_QUOTAS_MAX_JOB_DURATION` | 4h | the longest wall clock one job may ask for ([DL-049](../decisions/records/jobs/DL-049.md)) |
 | `SPOV_QUOTAS_MAX_TIMEOUT` | 8h | a session's lifetime, itself capped at the 12 h of DL-029 |
 | `SPOV_QUOTAS_MAX_CPU` | 4 | the request **and** any `cpu_limit` burst ceiling |
@@ -672,10 +675,12 @@ nothing is tracking. Modal's own `Timeout` remains the last resort.
 
 | Path | Checks | Use |
 |---|---|---|
-| `/livez` | Nothing. Returns 200 whenever the process can answer. | Liveness. It never touches Postgres: a database blip that failed this would restart every replica at once. |
+| `/livez` | Nothing. Answers 204 whenever the process can answer. | Liveness. It never touches Postgres: a database blip that failed this would restart every replica at once. |
 | `/readyz` | Store ping, migrations at head. | Readiness, and the load balancer's check. |
 | `/startupz` | The same, with a longer budget. | Startup, while a cold database is still waking. |
 
+All three answer 204 No Content when healthy, so a load balancer's health
+matcher must accept 204 (or any 2xx; an AWS ALB matches only 200 by default).
 All three are unauthenticated: a load balancer has no credential.
 
 ## Metrics
@@ -720,20 +725,34 @@ comes and let it run:
 
 - **no response buffering**, or the client sees nothing until the proxy
   holds the whole archive;
-- **an idle read timeout over 10 seconds**: the server sends a keep-alive
-  every 10 s while the sandbox packs;
+- **an idle read timeout over 20 seconds**: the live views (a session's log,
+  the session list) send a heartbeat every 20 s and reopen every five
+  minutes, and a sync-back sends a keep-alive every 10 s while the sandbox
+  packs;
 - **a response timeout over 45 minutes**, the server's own bound on one
-  sync-back.
+  sync-back;
+- **request bodies up to 25 MiB**: a synced launch, a sync job's create and a
+  transcript resume carry a git bundle of up to 16 MiB, base64 in a 24 MiB
+  body.
 
 The Kamal config sets `proxy.response_timeout: 3600` and
-`proxy.buffering.responses: false`. Behind the nginx ingress controller,
-annotate the Ingress with:
+`proxy.buffering.responses: false`; kamal-proxy's request bodies are
+unlimited by default. Behind the nginx ingress controller (which allows 1 MiB
+bodies by default), annotate the Ingress as `deploy/k8s/ingress.example.yaml`
+does:
 
 ```yaml
 nginx.ingress.kubernetes.io/proxy-buffering: "off"
 nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
 nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+nginx.ingress.kubernetes.io/proxy-body-size: "25m"
 ```
+
+Behind any proxy, also set `server.trusted_proxies` in the server's user file
+to the proxy's addresses, or every sign-in counts against the proxy's one
+address ([`docs/server.md`](../docs/server.md#limits)): for Kamal, the subnet `docker
+network inspect kamal` reports (usually inside `172.16.0.0/12`); for
+Kubernetes, the ingress controller's pod network.
 
 A deploy's drain (`drain_timeout: 25`) cuts a sync-back in flight; the
 CLI says the transfer was cut short and nothing was applied, and syncing
@@ -855,8 +874,17 @@ instead of the repository:
 scp deploy/server-config.yaml <user>@<host>:/etc/spov/server-config.yaml
 ```
 
-To run a published release instead of building, pull it and name its tag —
-nothing else in the config changes, and the builder section is unused:
+To run a published release instead of building, point the config at the
+published image and name its tag; the builder section is then unused:
+
+```yaml
+image: ghcr.io/jimutt/spov
+registry:
+  server: ghcr.io
+  username: <your-github-user>
+  password:
+    - KAMAL_REGISTRY_PASSWORD   # a token that can read packages
+```
 
 ```sh
 kamal deploy -c deploy/kamal/config/deploy.yml --skip-push --version 0.2.1
@@ -864,7 +892,13 @@ kamal deploy -c deploy/kamal/config/deploy.yml --skip-push --version 0.2.1
 
 Images carry the `service=spov` label Kamal inspects from v0.2.1; older
 tags are refused with Kamal's own "missing the 'service' label" error.
-`:latest` is available but a version tag is reproducible, so prefer it.
+`:latest` is available but a version tag is reproducible, so prefer it. Kamal
+deploys by tag, not by digest; verify the tag's digest (below, "The published
+image") before you deploy it.
+
+Copy `deploy/kamal/secrets.example` to `deploy/kamal/.kamal/secrets` and fill
+it in: Kamal refuses to deploy while a secret `deploy.yml` lists is missing
+from that file, so it names every one, and the optional ones may stay empty.
 
 @decision(DL-105)
 
@@ -874,4 +908,19 @@ tags are refused with Kamal's own "missing the 'service' label" error.
 Service, a migrate Job to run before rolling the Deployment, a ConfigMap
 for the allowlist seed, a ConfigMap for the server's user file, and a
 Secret template. Pin the image by digest. Helm is not adopted until
-someone needs it.
+someone needs it. `ingress.example.yaml` shows the annotations a long
+sync-back needs (above), and `image-build-job.yaml` publishes the sandbox
+image.
+
+A Job's pod template cannot change, so the migrate Job and the image Job are
+run afresh for each upgrade, after setting the new digest in them:
+
+```sh
+kubectl delete job spov-migrate spov-image-build --ignore-not-found
+kubectl apply -f deploy/k8s/migrate-job.yaml
+kubectl wait --for=condition=complete job/spov-migrate --timeout=5m
+kubectl apply -f deploy/k8s/image-build-job.yaml
+kubectl apply -f deploy/k8s/deployment.yaml
+```
+
+Both Jobs are removed an hour after they finish (`ttlSecondsAfterFinished`).
