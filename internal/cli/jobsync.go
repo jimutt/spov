@@ -113,8 +113,11 @@ func applyJob(ctx context.Context, env *Env, id string, keep, asJSON bool) error
 	if err != nil {
 		return err
 	}
-	syncCtx, cancel := context.WithTimeout(detached, syncTimeout)
-	defer cancel()
+	// A Ctrl-C during the checkout check means the transfer should not
+	// start.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	keptHint := func() {
 		_, _ = fmt.Fprintf(env.Err, "\nNothing was released; the job's sandbox still holds its work.\n"+
 			"  retry:   spov jobs apply %s\n  discard: spov jobs release %s\n", job.ID, job.ID)
@@ -135,6 +138,8 @@ func applyJob(ctx context.Context, env *Env, id string, keep, asJSON bool) error
 		keptHint()
 		return err
 	}
+	syncCtx, cancel := context.WithTimeout(detached, syncTimeout)
+	defer cancel()
 	printSyncResult(env, landed)
 	held := job.Sync != nil && job.Sync.Held
 	switch {

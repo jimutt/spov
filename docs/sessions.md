@@ -141,9 +141,9 @@ quit.
   `.git`-lookalike names on, whatever your config says. A sparse checkout, or
   a checkout whose work tree is set elsewhere (`core.worktree`), takes the
   work on a `spov/<session>` branch rather than in place.
-- **Up to 1 GiB comes back.** The sandbox's commits may add up to 1 GiB of
-  git objects and its uncommitted files up to 1 GiB, with no one file over
-  256 MiB. The sandbox measures that before it sends anything, so a larger
+- **Up to 1 GiB comes back.** What the sandbox's commits add and its
+  uncommitted files may come to 1 GiB together, with no one file over
+  256 MiB and at most 200,000 changed files. The sandbox measures that before it sends anything, so a larger
   result is refused at once, with the largest files named: add generated
   output to `.gitignore`, or remove the files in the sandbox, and quit
   again, or push the branch to the forge from the sandbox. A sync-back over

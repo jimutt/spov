@@ -27,12 +27,45 @@ import (
 // @decision(DL-027)
 const MaxSyncBundleBytes = 16 << 20
 
-// MaxSyncExportBytes bounds a streamed sync-back as packed: the bundle
-// plus the gzipped working-tree archive. The landing's own bounds
-// (MaxSyncIncomingBytes, MaxSyncIncomingBlobBytes) are measured first.
+// MaxSyncExportBytes bounds a streamed sync-back as the sandbox
+// measures it before packing: the objects its commits add plus its
+// changed files, together. MaxSyncPackedBytes bounds the packed parts
+// in transit, with room for the archives' own framing; MaxSyncEntries
+// bounds the changed files.
 //
 // @decision(DL-027) @decision(DL-177)
-const MaxSyncExportBytes = 1 << 30
+const (
+	MaxSyncExportBytes = 1 << 30
+	MaxSyncPackedBytes = MaxSyncExportBytes + 256<<20
+	MaxSyncEntries     = 200_000
+)
+
+// maxSyncTreeStream bounds a worktree archive once decompressed: its
+// files' contents and a header and padding for each entry.
+func maxSyncTreeStream() int64 {
+	return maxSyncIncomingBytes + int64(maxSyncEntries)*1024 + 1<<20
+}
+
+// errorAfter is a reader that fails, rather than ending, once more than
+// n bytes have been read through it.
+type errorAfter struct {
+	r    io.Reader
+	left int64
+}
+
+// errTreeTooLarge is a worktree archive over maxSyncTreeStream.
+var errTreeTooLarge = errors.New("git: the sandbox's worktree archive is over its limit; nothing was applied")
+
+func (e *errorAfter) Read(p []byte) (int, error) {
+	if e.left < 0 {
+		return 0, errTreeTooLarge
+	}
+	n, err := e.r.Read(p)
+	if e.left -= int64(n); e.left < 0 {
+		return n, errTreeTooLarge
+	}
+	return n, err
+}
 
 // MaxSyncJSONExportBytes bounds the deprecated JSON export, which
 // carries the same parts in base64.
@@ -60,6 +93,7 @@ const (
 var (
 	maxSyncIncomingBytes     int64 = MaxSyncIncomingBytes
 	maxSyncIncomingBlobBytes int64 = MaxSyncIncomingBlobBytes
+	maxSyncEntries                 = MaxSyncEntries
 )
 
 // LocalCheckout describes a clean local git checkout ready to seed a
@@ -536,6 +570,13 @@ func bundleAhead(ctx context.Context, root, remote, branch, head, tip string) ([
 		return nil, err
 	}
 	if len(data) > MaxSyncBundleBytes {
+		// With no remote to push to, the bundle is the whole history,
+		// as a launch's is.
+		//
+		// @decision(DL-177)
+		if remote == "" {
+			return nil, &SeedTooLargeError{Root: root, Size: len(data)}
+		}
 		return nil, fmt.Errorf("unpushed commits in %s are %d MiB (limit %d MiB); push the branch to %s first",
 			root, len(data)>>20, MaxSyncBundleBytes>>20, remote)
 	}
@@ -830,7 +871,7 @@ func unpackWorktreeTar(root, archive string, changed map[string]bool) (int, erro
 	}
 	defer func() { _ = gz.Close() }()
 
-	tr := tar.NewReader(io.LimitReader(gz, maxSyncIncomingBytes+(64<<20)))
+	tr := tar.NewReader(&errorAfter{r: gz, left: maxSyncTreeStream()})
 	var totalBytes int64
 	for {
 		hdr, err := tr.Next()
@@ -1074,9 +1115,10 @@ func archivePaths(archive string) ([]string, error) {
 		return nil, fmt.Errorf("git: read worktree archive: %w", err)
 	}
 	defer func() { _ = gz.Close() }()
-	tr := tar.NewReader(gz)
+	tr := tar.NewReader(&errorAfter{r: gz, left: maxSyncTreeStream()})
 	var paths []string
 	var total int64
+	entries := 0
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -1087,6 +1129,9 @@ func archivePaths(archive string) ([]string, error) {
 		}
 		if hdr.Typeflag == tar.TypeXGlobalHeader || hdr.Typeflag == tar.TypeXHeader || hdr.Typeflag == tar.TypeDir {
 			continue
+		}
+		if entries++; entries > maxSyncEntries {
+			return nil, fmt.Errorf("git: the sandbox's export holds over %d files; nothing was applied", maxSyncEntries)
 		}
 		clean, err := cleanRepoRelPath(hdr.Name)
 		if err != nil {

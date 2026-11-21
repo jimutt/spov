@@ -662,9 +662,6 @@ func (c *Client) CancelJob(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "jobs/"+url.PathEscape(id), nil, nil)
 }
 
-// ExportJobSync exports a sync job's state from its sandbox.
-//
-// @decision(DL-102)
 // ExportSessionSyncArchive asks for a session's sync-back as DL-176's
 // archive and returns its body, which the caller closes. The request
 // has no timeout of its own; ctx bounds it.
@@ -701,6 +698,9 @@ func (c *Client) archive(ctx context.Context, path string) (io.ReadCloser, error
 	return resp.Body, nil
 }
 
+// ExportJobSync exports a sync job's state from its sandbox.
+//
+// @decision(DL-102)
 func (c *Client) ExportJobSync(ctx context.Context, id string) (server.SyncExportView, error) {
 	var out server.SyncExportView
 	err := c.do(ctx, http.MethodPost, "jobs/"+url.PathEscape(id)+"/sync-export", nil, &out)

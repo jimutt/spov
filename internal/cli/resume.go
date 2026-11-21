@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -269,6 +270,10 @@ func (e *Env) resumeSeed(ctx context.Context, view server.SessionView, checkout 
 		var bundle []byte
 		if bundle, err = git.BundleCommit(ctx, checkout.Root, remote, view.Sync.BaseCommit); err == nil {
 			return base64.StdEncoding.EncodeToString(bundle)
+		}
+		// @decision(DL-177)
+		if tooLarge := (*git.SeedTooLargeError)(nil); errors.As(err, &tooLarge) {
+			err = seedTooLarge(tooLarge, git.LocalCheckout{}, "")
 		}
 	}
 	_, _ = fmt.Fprintf(e.Err, "note: the session's starting commit is not sent (%v); unless it was pushed, the resumed workspace"+

@@ -8,8 +8,10 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/jimutt/spov/internal/git"
@@ -40,7 +42,8 @@ const progressFrom = 16 << 20
 var errSyncInterrupted = errors.New("the sync-back was interrupted before it was applied; nothing was changed")
 
 // fetchSync takes a sync-back into a spool under the checkout's git
-// directory. A Ctrl-C during the transfer ends it and removes the spool.
+// directory. A Ctrl-C or SIGTERM during the transfer ends it and
+// removes the spool.
 // The caller lands the spool and removes it.
 //
 // @decision(DL-178)
@@ -53,7 +56,7 @@ func (e *Env) fetchSync(ctx context.Context, root string, src syncSource) (git.S
 	defer cancel()
 	interrupted := atomic.Bool{}
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigs)
 	go func() {
 		select {
@@ -122,7 +125,7 @@ func (e *Env) fetchJSON(ctx context.Context, dir string, src syncSource) (git.Sp
 // @decision(DL-178)
 func (e *Env) holdInterrupts() func() {
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	done := make(chan struct{})
 	go func() {
 		said := false
@@ -169,8 +172,14 @@ func (p *syncProgress) start(m git.SyncMeta) {
 	if total <= progressFrom {
 		return
 	}
-	_, _ = fmt.Fprintf(p.env.Err, "Syncing %s and %s (%s) from the sandbox...\n",
-		plural(m.Commits, "commit"), plural(m.Files, "file"), mebibytesText(total))
+	var parts []string
+	if m.Commits > 0 {
+		parts = append(parts, plural(m.Commits, "commit"))
+	}
+	if m.Files > 0 {
+		parts = append(parts, plural(m.Files, "file"))
+	}
+	_, _ = fmt.Fprintf(p.env.Err, "Receiving %s (%s)...\n", strings.Join(parts, " and "), mebibytesText(total))
 	if !p.env.stderrIsTerminal() {
 		return
 	}

@@ -122,10 +122,10 @@ func syncMember(m store.Deliverable, st SyncState) store.Deliverable {
 	// @decision(DL-177)
 	case st.Over != "":
 		m.Status, m.Detail = store.DeliverableOverLimit, st.Over
-	case st.Bytes > git.MaxSyncIncomingBytes:
+	case st.Bytes > git.MaxSyncExportBytes:
 		m.Status = store.DeliverableOverLimit
 		m.Detail = fmt.Sprintf("the changes are %s, over the %d GiB a sync can take",
-			mebibytes(st.Bytes), git.MaxSyncIncomingBytes>>30)
+			mebibytes(st.Bytes), git.MaxSyncExportBytes>>30)
 	default:
 		m.Status, m.Detail = store.DeliverableVerified, syncChange(st)
 	}

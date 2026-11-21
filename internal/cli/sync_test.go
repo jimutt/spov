@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -445,5 +446,31 @@ func TestASeedTooLargeSaysWhatWouldLetTheSandboxCloneIt(t *testing.T) {
 		if !strings.Contains(err.Error(), c.says) || !strings.Contains(err.Error(), "40 MiB, over the 16 MiB") {
 			t.Errorf("%+v: %v", c.checkout, err)
 		}
+	}
+}
+
+// TestALocalOnlyCheckoutTooLargeToSendSaysToAddARemote: the history of
+// a checkout with no remote is sent whole, and over the bound the
+// launch says how the sandbox could clone it instead.
+//
+// @decision(DL-177)
+func TestALocalOnlyCheckoutTooLargeToSendSaysToAddARemote(t *testing.T) {
+	f := newAPIFixtureWithConfig(t, platformOnlyConfig)
+	initCLIGitRepo(t, f.wd, "")
+	big := make([]byte, git.MaxSyncBundleBytes+(1<<20))
+	if _, err := rand.Read(big); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.wd, "big.bin"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runCLIGit(t, f.wd, "add", "big.bin")
+	runCLIGit(t, f.wd, "commit", "-m", "big")
+	_, _, err := runWith(t, f.env, "fly", "--sync", "--no-attach", "--name", "too-big")
+	if err == nil || !strings.Contains(err.Error(), "add a remote on a configured forge and push") {
+		t.Errorf("err = %v", err)
+	}
+	if f.provider.Running() != 0 {
+		t.Errorf("a sandbox was started: %d", f.provider.Running())
 	}
 }

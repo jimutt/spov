@@ -140,7 +140,7 @@ const ArchiveTimeout = 45 * time.Minute
 // keep-alive entries.
 //
 // @decision(DL-176) @decision(DL-177)
-const maxArchiveOutput = int64(git.MaxSyncExportBytes) + git.MaxSyncMetaBytes + 1<<20
+const maxArchiveOutput = int64(git.MaxSyncPackedBytes) + git.MaxSyncMetaBytes + 1<<20
 
 // StreamSync writes the repository's state as DL-176's archive to w as
 // the sandbox produces it. A refusal (over the bounds, no repository)
@@ -286,7 +286,7 @@ type SyncSummary struct {
 	Commits int
 	// Files counts the changed, added and deleted paths.
 	Files int
-	// Bytes is the larger of ObjectBytes and WorktreeBytes.
+	// Bytes is ObjectBytes and WorktreeBytes together.
 	Bytes int64
 	// ObjectBytes is what the commits add, inflated; WorktreeBytes the
 	// changed files' own sizes.

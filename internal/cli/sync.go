@@ -113,6 +113,12 @@ func (e *Env) resolveSyncLaunch(ctx context.Context, c *client.Client, cfg confi
 		return server.RepoRef{}, nil, git.LocalCheckout{}, fmt.Errorf("--sync supports a single repository only; drop the extra --repo flags or pass --no-sync")
 	}
 	checkout, err := git.InspectLocalCheckout(ctx, e.Workdir, platformKindsByHost(cfg), true)
+	// A checkout with no remote sends its whole history from here.
+	//
+	// @decision(DL-177)
+	if tooLarge := (*git.SeedTooLargeError)(nil); errors.As(err, &tooLarge) {
+		return server.RepoRef{}, nil, git.LocalCheckout{}, seedTooLarge(tooLarge, git.LocalCheckout{}, "")
+	}
 	if err != nil {
 		return server.RepoRef{}, nil, git.LocalCheckout{}, err
 	}

@@ -219,3 +219,42 @@ func TestTheWorktreeBoundsAreReadBeforeAnythingLands(t *testing.T) {
 		t.Errorf("the total over: %v", err)
 	}
 }
+
+// TestAWorktreeArchiveOverItsStreamOrFileCountIsRefused: the bound on
+// the decompressed stream is an error, never an early end, and too many
+// entries are refused before anything lands.
+//
+// @decision(DL-177)
+func TestAWorktreeArchiveOverItsStreamOrFileCountIsRefused(t *testing.T) {
+	defer func(n int) { maxSyncEntries = n }(maxSyncEntries)
+	maxSyncEntries = 2
+	p := filepath.Join(t.TempDir(), "w.tar.gz")
+	if err := os.WriteFile(p, makeWorktreeTar(t, map[string]string{"a": "1", "b": "2", "c": "3"}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := archivePaths(p); err == nil || !strings.Contains(err.Error(), "over 2 files") {
+		t.Errorf("three files under a cap of two: %v", err)
+	}
+
+	r := &errorAfter{r: strings.NewReader(strings.Repeat("x", 100)), left: 10}
+	if _, err := io.ReadAll(r); !errors.Is(err, errTreeTooLarge) {
+		t.Errorf("a stream past its bound = %v, want errTreeTooLarge", err)
+	}
+	r = &errorAfter{r: strings.NewReader("short"), left: 10}
+	if b, err := io.ReadAll(r); err != nil || string(b) != "short" {
+		t.Errorf("a stream within its bound = %q, %v", b, err)
+	}
+}
+
+// TestAStreamThatBreaksIsCutShortWhateverTheCause: a reset stream reads
+// as a transfer cut short, with its cause kept.
+//
+// @decision(DL-178)
+func TestAStreamThatBreaksIsCutShortWhateverTheCause(t *testing.T) {
+	archive := syncArchive(t, wholeArchive(t, bytes.Repeat([]byte("b"), 4000), []byte("TREE")), false)
+	r := io.MultiReader(bytes.NewReader(archive[:2000]), errReader{errors.New("stream error: stream ID 3; INTERNAL_ERROR")})
+	_, err := SpoolSyncArchive(r, t.TempDir(), nil)
+	if !errors.Is(err, ErrSyncCutShort) || !strings.Contains(err.Error(), "INTERNAL_ERROR") {
+		t.Errorf("err = %v", err)
+	}
+}

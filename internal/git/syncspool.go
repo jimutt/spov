@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -139,10 +138,7 @@ func SpoolSyncArchive(r io.Reader, dir string, onMeta func(SyncMeta)) (SpooledSy
 		for {
 			hdr, err := tr.Next()
 			if err != nil {
-				if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-					return nil, ErrSyncCutShort
-				}
-				return nil, fmt.Errorf("git: read the sync-back: %w", err)
+				return nil, cutShort(err)
 			}
 			if hdr.Typeflag != tar.TypeReg {
 				return nil, fmt.Errorf("git: the sync-back holds %q, which is not a file", hdr.Name)
@@ -194,8 +190,8 @@ func SpoolSyncArchive(r io.Reader, dir string, onMeta func(SyncMeta)) (SpooledSy
 		if hdr.Name != name {
 			return 0, fmt.Errorf("git: the sync-back holds %q where it should hold %s", hdr.Name, name)
 		}
-		if total += hdr.Size; total > MaxSyncExportBytes {
-			return 0, fmt.Errorf("git: the sync-back is over the %d MiB a sync can send", MaxSyncExportBytes>>20)
+		if total += hdr.Size; total > MaxSyncPackedBytes {
+			return 0, fmt.Errorf("git: the sync-back is over the %d MiB a sync can send", MaxSyncPackedBytes>>20)
 		}
 		*dst = filepath.Join(dir, name)
 		f, err := os.OpenFile(*dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -239,10 +235,12 @@ func SpoolSyncArchive(r io.Reader, dir string, onMeta func(SyncMeta)) (SpooledSy
 	return out, nil
 }
 
-// cutShort reads a stream that broke inside an entry as one cut short.
+// cutShort reads a stream that ended or broke before the archive was
+// whole (an early end, a reset stream, a deadline) as one cut short,
+// keeping the cause.
 func cutShort(err error) error {
-	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) || strings.Contains(err.Error(), "unexpected EOF") {
+	if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
 		return ErrSyncCutShort
 	}
-	return fmt.Errorf("git: read the sync-back: %w", err)
+	return fmt.Errorf("%w (%w)", ErrSyncCutShort, err)
 }

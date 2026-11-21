@@ -698,12 +698,18 @@ func TestSyncBackRefusesEveryNameOfTheGitDirectory(t *testing.T) {
 	}
 }
 
-// applyState spools an in-memory export as the CLI would and lands it.
+// applyState spools an in-memory export where the CLI does, under the
+// checkout's git directory, lands it and removes the spool.
 func applyState(t testing.TB, ctx context.Context, root, sessionName, startBranch string, st ExportedState) (SyncResult, error) {
 	t.Helper()
-	spool, err := SpoolExported(t.TempDir(), st)
+	dir, err := NewSyncSpool(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
+	spool, err := SpoolExported(dir, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer spool.Remove()
 	return ApplySync(ctx, root, sessionName, startBranch, spool)
 }

@@ -306,12 +306,13 @@ func TestSyncSeedAndExportScriptsEndToEnd(t *testing.T) {
 	wantTree := int64(len("unpushed local work + uncommitted edit\n") + len("brand new untracked\n") + len("nested untracked\n"))
 	if summary.Branch != "feat/e2e-sync" || summary.HeadCommit != exported.HeadCommit || summary.Commits != 1 ||
 		summary.Files != 4 || summary.Rewritten || summary.WorktreeBytes != wantTree || summary.ObjectBytes == 0 ||
-		summary.Bytes != max(summary.ObjectBytes, summary.WorktreeBytes) || summary.Over != "" {
+		summary.Bytes != summary.ObjectBytes+summary.WorktreeBytes || summary.Over != "" {
 		t.Errorf("InspectSync = %+v, want branch feat/e2e-sync, 1 commit, 4 files, %d bytes of files", summary, wantTree)
 	}
 	// The streamed archive carries the same state, and is what lands.
 	//
 	// @decision(DL-176) @decision(DL-178)
+	archiveDir := useArchiveDir(t, defaultSyncBounds())
 	var archive bytes.Buffer
 	res, err := StreamSync(ctx, LocalShellExec{}, relFromWorkspace, checkout.HeadCommit, &archive)
 	if err != nil || res.ExitCode != 0 {
@@ -325,8 +326,8 @@ func TestSyncSeedAndExportScriptsEndToEnd(t *testing.T) {
 		strings.Join(spool.Deleted, ",") != strings.Join(exported.Deleted, ",") || spool.BundlePath == "" || spool.WorktreeTarPath == "" {
 		t.Errorf("the archive = %+v, the JSON export = %+v", spool, exported)
 	}
-	if _, err := os.Stat(archiveWorkDir); !os.IsNotExist(err) {
-		t.Errorf("the archive left %s behind: %v", archiveWorkDir, err)
+	if left, _ := os.ReadDir(archiveDir); len(left) != 0 {
+		t.Errorf("the archive left %v behind", left)
 	}
 	syncRes, err := git.ApplySync(ctx, localDir, "spov-e2e", checkout.Branch, spool)
 	if err != nil {
@@ -630,8 +631,7 @@ func TestALocalOnlySyncedSessionListsTheGuide(t *testing.T) {
 //
 // @decision(DL-177) @decision(DL-176)
 func TestAnArchiveOverTheBoundsIsRefusedBeforeAByte(t *testing.T) {
-	defer func(old string) { syncStateScript = old }(syncStateScript)
-	syncStateScript = buildSyncScript(syncBounds{JSON: 1 << 20, Export: 1 << 20, Objects: 4000, Blob: 3000, Meta: 1 << 20})
+	useArchiveDir(t, syncBounds{JSON: 1 << 20, Export: 4000, Packed: 1 << 20, Blob: 3000, Meta: 1 << 20, Entries: 100})
 
 	ctx := context.Background()
 	repo := filepath.Join(t.TempDir(), "repo")
@@ -686,4 +686,36 @@ func TestAnArchiveOverTheBoundsIsRefusedBeforeAByte(t *testing.T) {
 	if !strings.Contains(res.Stderr, "dataset.bin is 3500 bytes") {
 		t.Errorf("the refusal of a commit says %q", res.Stderr)
 	}
+
+	// More changed files than a sync takes is refused before a byte too.
+	runSyncGit(t, repo, "reset", "-q", "--hard", base)
+	for i := range 101 {
+		if err := os.WriteFile(filepath.Join(repo, fmt.Sprintf("gen%d.txt", i)), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out.Reset()
+	if res, err = StreamSync(ctx, LocalShellExec{}, rel, base, &out); err != nil || res.ExitCode == 0 || out.Len() != 0 ||
+		!strings.Contains(res.Stderr, "101 changed files, over the 100 a sync can take") {
+		t.Errorf("too many files = %+v, %v, %d bytes", res, err, out.Len())
+	}
+}
+
+// defaultSyncBounds are the script's production bounds.
+func defaultSyncBounds() syncBounds {
+	return syncBounds{
+		JSON: git.MaxSyncJSONExportBytes, Export: git.MaxSyncExportBytes, Packed: git.MaxSyncPackedBytes,
+		Blob: git.MaxSyncIncomingBlobBytes, Meta: git.MaxSyncMetaBytes, Entries: git.MaxSyncEntries,
+	}
+}
+
+// useArchiveDir builds the export script with bounds and a work
+// directory of the test's own, so runs on one machine never meet.
+func useArchiveDir(t *testing.T, b syncBounds) string {
+	t.Helper()
+	old := syncStateScript
+	t.Cleanup(func() { syncStateScript = old })
+	b.WorkDir = filepath.Join(t.TempDir(), "archive")
+	syncStateScript = buildSyncScript(b)
+	return b.WorkDir
 }

@@ -21,21 +21,27 @@ import (
 //
 // @decision(DL-027) @decision(DL-101) @decision(DL-176) @decision(DL-177)
 var syncStateScript = buildSyncScript(syncBounds{
-	JSON: git.MaxSyncJSONExportBytes, Export: git.MaxSyncExportBytes, Objects: git.MaxSyncIncomingBytes,
-	Blob: git.MaxSyncIncomingBlobBytes, Meta: git.MaxSyncMetaBytes,
+	JSON: git.MaxSyncJSONExportBytes, Export: git.MaxSyncExportBytes, Packed: git.MaxSyncPackedBytes,
+	Blob: git.MaxSyncIncomingBlobBytes, Meta: git.MaxSyncMetaBytes, Entries: git.MaxSyncEntries,
+	WorkDir: archiveWorkDir,
 })
 
-// syncBounds are the limits the export script checks.
-type syncBounds struct{ JSON, Export, Objects, Blob, Meta int }
+// syncBounds are the limits the export script checks, and where its
+// archive mode packs.
+type syncBounds struct {
+	JSON, Export, Packed, Blob, Meta, Entries int
+	WorkDir                                   string
+}
 
 func buildSyncScript(b syncBounds) string {
 	return strings.NewReplacer(
 		"@JSON_MAX@", strconv.Itoa(b.JSON),
 		"@EXPORT_MAX@", strconv.Itoa(b.Export),
-		"@OBJECT_MAX@", strconv.Itoa(b.Objects),
+		"@PACKED_MAX@", strconv.Itoa(b.Packed),
 		"@BLOB_MAX@", strconv.Itoa(b.Blob),
 		"@META_MAX@", strconv.Itoa(b.Meta),
-		"@WORK_DIR@", archiveWorkDir,
+		"@ENTRIES_MAX@", strconv.Itoa(b.Entries),
+		"@WORK_DIR@", b.WorkDir,
 	).Replace(syncStateScriptTemplate)
 }
 
@@ -47,14 +53,15 @@ const archiveWorkDir = "/tmp/spov-sync-archive"
 
 const syncStateScriptTemplate = `set -e
 cd "$1"
-exec ${4:+timeout -s TERM "$4"} python3 - "$2" "$3" <<'PY'
+exec ${4:+env SPOV_ARCHIVE_TIMED=1 timeout -s TERM "$4"} python3 - "$2" "$3" <<'PY'
 import base64, json, os, shutil, signal, subprocess, sys, tarfile, tempfile, threading, time
 
 JSON_MAX = @JSON_MAX@
 EXPORT_MAX = @EXPORT_MAX@
-OBJECT_MAX = @OBJECT_MAX@
+PACKED_MAX = @PACKED_MAX@
 BLOB_MAX = @BLOB_MAX@
 META_MAX = @META_MAX@
+ENTRIES_MAX = @ENTRIES_MAX@
 WORK_DIR = "@WORK_DIR@"
 MIB = 1024 * 1024
 
@@ -77,22 +84,62 @@ def mib(n):
     return f"{n / MIB:.0f} MiB" if n >= MIB else f"{n} bytes"
 
 
-if archive:
-    # One archive run at a time per sandbox: stop the group a previous
-    # run left (its reader went away) and start from an empty directory.
-    # The group is timeout's, which holds this run and its git and tar.
+def ours(pgid):
+    """Whether pgid leads a previous archive run: timeout running python3."""
     try:
-        with open(os.path.join(WORK_DIR, "pid")) as f:
+        with open(f"/proc/{pgid}/cmdline", "rb") as f:
+            argv = f.read().split(b"\0")
+    except OSError:
+        return False
+    return len(argv) > 1 and os.path.basename(argv[0]) == b"timeout" and b"python3" in argv
+
+
+def gone(pgid):
+    try:
+        os.killpg(pgid, 0)
+        return False
+    except OSError:
+        return True
+
+
+RUN_DIR = ""
+if archive:
+    if not os.environ.get("SPOV_ARCHIVE_TIMED"):
+        sys.stderr.write("the archive mode runs only under its timeout\n")
+        sys.exit(2)
+    # One archive run at a time per sandbox: stop the group a previous
+    # run left (its reader went away), wait for it to go, and pack in a
+    # directory of this run's own. The group is timeout's, which holds
+    # this run and its git and tar.
+    me = os.getpgrp()
+    os.makedirs(WORK_DIR, mode=0o700, exist_ok=True)
+    pid_file = os.path.join(WORK_DIR, "pid")
+    try:
+        with open(pid_file) as f:
             old = int(f.read().strip())
-        if old > 1 and old != os.getpgrp():
-            os.killpg(old, signal.SIGTERM)
-            time.sleep(0.5)
     except (OSError, ValueError):
-        pass
-    shutil.rmtree(WORK_DIR, ignore_errors=True)
-    os.makedirs(WORK_DIR, mode=0o700)
-    with open(os.path.join(WORK_DIR, "pid"), "w") as f:
-        f.write(str(os.getpgrp()))
+        old = 0
+    if old > 1 and old != me and ours(old):
+        try:
+            os.killpg(old, signal.SIGTERM)
+        except OSError:
+            pass
+        for _ in range(50):
+            if gone(old):
+                break
+            time.sleep(0.1)
+        else:
+            try:
+                os.killpg(old, signal.SIGKILL)
+            except OSError:
+                pass
+    for entry in os.listdir(WORK_DIR):
+        if entry != "pid":
+            shutil.rmtree(os.path.join(WORK_DIR, entry), ignore_errors=True)
+    RUN_DIR = os.path.join(WORK_DIR, str(me))
+    os.makedirs(RUN_DIR, mode=0o700)
+    with open(pid_file, "w") as f:
+        f.write(str(me))
 
     def on_term(signum, frame):
         raise SystemExit(143)
@@ -117,6 +164,7 @@ try:
     # local checkout has too, else the whole history.
     has_commits = bool(head) and head != base
     rev_arg = ""
+    commits = 0
     if has_commits:
         range_base = ""
         if base and run("git", "merge-base", "--is-ancestor", base, head, check=False).returncode == 0:
@@ -127,6 +175,10 @@ try:
             if cand and run("git", "merge-base", "--is-ancestor", cand, head, check=False).returncode == 0:
                 range_base = cand
         rev_arg = f"{range_base}..HEAD" if range_base else "HEAD"
+        # A HEAD reset onto the default branch leaves an empty range,
+        # which git will not bundle.
+        commits = int(run("git", "rev-list", "--count", rev_arg).stdout.decode().strip() or "0")
+        has_commits = commits > 0
 
     status = run("git", "status", "--porcelain=v1", "-z", "--untracked-files=all").stdout
     entries = status.split(b"\x00")
@@ -191,19 +243,22 @@ try:
 
     def over_reasons():
         reasons = []
-        if object_bytes > OBJECT_MAX:
-            reasons.append(f"the commits add {mib(object_bytes)}, over the {mib(OBJECT_MAX)} a sync can take")
-        if worktree_bytes > OBJECT_MAX:
-            reasons.append(f"the changed files are {mib(worktree_bytes)}, over the {mib(OBJECT_MAX)} a sync can take")
-        for size, name in sorted(blobs + files, reverse=True):
-            if size <= BLOB_MAX:
-                break
-            reasons.append(f"{name} is {mib(size)}, over the {mib(BLOB_MAX)} one file may be")
+        total = object_bytes + worktree_bytes
+        if total > EXPORT_MAX:
+            reasons.append(f"the commits add {mib(object_bytes)} and the changed files are {mib(worktree_bytes)}, "
+                           f"{mib(total)} together, over the {mib(EXPORT_MAX)} a sync can take")
+        if len(to_pack) > ENTRIES_MAX:
+            reasons.append(f"{len(to_pack)} changed files, over the {ENTRIES_MAX} a sync can take")
+        big = [(size, name) for size, name in sorted(blobs + files, reverse=True) if size > BLOB_MAX]
+        for size, name in big[:5]:
+            reasons.append(f"{name[:200]} is {mib(size)}, over the {mib(BLOB_MAX)} one file may be")
+        if len(big) > 5:
+            reasons.append(f"and {len(big) - 5} more files over {mib(BLOB_MAX)}")
         return reasons
 
     def largest():
         top = sorted(blobs + files, reverse=True)[:5]
-        return "".join(f"\n  {mib(size):>9}  {name}" for size, name in top)
+        return "".join(f"\n  {mib(size):>9}  {name[:200]}" for size, name in top)
 
     if inspect:
         commits, rewritten = 0, False
@@ -218,7 +273,7 @@ try:
             "head_commit": head,
             "commits": commits,
             "files": len(to_pack) + len(deleted),
-            "bytes": max(object_bytes, worktree_bytes),
+            "bytes": object_bytes + worktree_bytes,
             "object_bytes": object_bytes,
             "worktree_bytes": worktree_bytes,
             "over": "; ".join(reasons),
@@ -233,9 +288,6 @@ try:
                              + "The largest files:" + largest() + "\n"
                              + "Add generated output to .gitignore, or remove the files in the sandbox, and sync again.\n")
             sys.exit(3)
-        commits = 0
-        if has_commits:
-            commits = int(run("git", "rev-list", "--count", rev_arg).stdout.decode().strip() or "0")
         meta = json.dumps({
             "format": 1,
             "branch": branch,
@@ -295,9 +347,9 @@ try:
         add_bytes("spov-sync.json", meta)
         ticker = threading.Thread(target=keepalive, daemon=True)
         ticker.start()
-        bundle_path = os.path.join(WORK_DIR, "state.bundle")
-        tar_path = os.path.join(WORK_DIR, "worktree.tar.gz")
-        list_path = os.path.join(WORK_DIR, "worktree.list")
+        bundle_path = os.path.join(RUN_DIR, "state.bundle")
+        tar_path = os.path.join(RUN_DIR, "worktree.tar.gz")
+        list_path = os.path.join(RUN_DIR, "worktree.list")
         if has_commits:
             run("git", "bundle", "create", bundle_path, rev_arg)
         if to_pack:
@@ -309,8 +361,8 @@ try:
         ticker.join()
         sent = {"bundle_bytes": 0, "worktree_bytes": 0}
         packed = (os.path.getsize(bundle_path) if has_commits else 0) + (os.path.getsize(tar_path) if to_pack else 0)
-        if packed > EXPORT_MAX:
-            sys.stderr.write(f"This sync-back packs to {mib(packed)}, over the {mib(EXPORT_MAX)} a sync can send.\n")
+        if packed > PACKED_MAX:
+            sys.stderr.write(f"This sync-back packs to {mib(packed)}, over the {mib(PACKED_MAX)} a sync can send.\n")
             sys.exit(3)
         if has_commits:
             sent["bundle_bytes"] = add_file("state.bundle", bundle_path)
@@ -371,7 +423,15 @@ try:
         "deleted": deleted,
     }))
 finally:
-    if archive:
-        shutil.rmtree(WORK_DIR, ignore_errors=True)
+    # Only this run's own directory, and the pid file only while it
+    # still names this run: a newer run may have taken over.
+    if RUN_DIR:
+        shutil.rmtree(RUN_DIR, ignore_errors=True)
+        try:
+            with open(os.path.join(WORK_DIR, "pid")) as f:
+                if f.read().strip() == str(os.getpgrp()):
+                    os.remove(os.path.join(WORK_DIR, "pid"))
+        except OSError:
+            pass
 PY
 `
