@@ -64,11 +64,12 @@ type Quotas struct {
 //
 // @decision(DL-009)
 var DefaultQuotas = Quotas{
-	MaxConcurrentSessions: 3,
+	// @decision(DL-162)
+	MaxConcurrentSessions: 5,
 	// Below the session limit: a job runs unattended.
 	//
-	// @decision(DL-009)
-	MaxConcurrentJobs: 2,
+	// @decision(DL-009) @decision(DL-162)
+	MaxConcurrentJobs: 4,
 	// @decision(DL-049)
 	MaxJobDuration: 4 * time.Hour,
 	MaxTimeout:     8 * time.Hour,

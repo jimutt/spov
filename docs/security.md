@@ -203,8 +203,8 @@ The defaults, per user (zero or unset means the default, never unlimited):
 
 | Limit | Default | Setting |
 |---|---|---|
-| Concurrent sessions, excluding jobs' own | 3 | `quotas.max_concurrent_sessions` |
-| Unfinished jobs, queued included | 2 | `quotas.max_concurrent_jobs` |
+| Concurrent sessions, excluding jobs' own | 5 | `quotas.max_concurrent_sessions` |
+| Unfinished jobs, queued included | 4 | `quotas.max_concurrent_jobs` |
 | A session's lifetime | 8 h, never above 12 h | `quotas.max_timeout` |
 | A job's wall clock | 4 h | `quotas.max_job_duration` |
 | CPU, request and burst | 4 | `quotas.max_cpu` |

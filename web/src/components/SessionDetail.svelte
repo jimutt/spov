@@ -977,7 +977,6 @@
        @decision(DL-106) -->
   <div
     class="grid grid-cols-1 gap-[var(--col-gap)] max-lg:-mb-[var(--main-pad-y)] lg:grid-cols-[minmax(0,1fr)_var(--side-w)]"
-    style:--dock-h="{dockH}px"
   >
     <!-- Words an agent wrote, in the transcript and in a subagent's card:
          the one place either is drawn. Blank lines at either end of plain
@@ -1041,13 +1040,17 @@
       <div>
         <!-- Below `lg`: one slim bar that stays on screen, with the way back,
              the title, the state and the button for everything else. The
-             page's own header has scrolled away by then.
-             @decision(DL-106) -->
+             page's own header has scrolled away by then. `transform-gpu`
+             keeps the bar's paint on one compositor layer: a phone's Gecko
+             or WebKit can leave a sticky element's background without its
+             contents while the page scrolls under a moving toolbar
+             (Gecko #1585378, WebKit #330140).
+             @decision(DL-106) @decision(DL-163) -->
         {#if true}
           {@const st = listState(s)}
           {@const lead = sessionHeadline(s)}
           <div
-            class="sticky top-0 z-10 -mx-[var(--page-pad-x)] -mt-[var(--main-pad-y)] mb-4 flex items-center gap-1 border-b border-rule bg-raised px-1.5 py-1.5 lg:hidden"
+            class="sticky top-0 z-10 transform-gpu -mx-[var(--page-pad-x)] -mt-[var(--main-pad-y)] mb-4 flex items-center gap-1 border-b border-rule bg-raised px-1.5 py-1.5 lg:hidden"
             data-testid="session-bar"
           >
             <a
@@ -1367,8 +1370,9 @@
       {/if}
 
       <!-- Below `lg` the composer is docked to the foot of the screen, as in
-           any chat, and rides above the keyboard. Its height is published
-           as --dock-h for "Jump to latest". @decision(DL-106) -->
+           any chat, and rides above the keyboard. Its height reaches
+           "Jump to latest" as --dock-h on that control alone, not on an
+           ancestor of the transcript bar. @decision(DL-106) @decision(DL-163) -->
       <div
         class={!viewing && (composerShown(s.state, tailEnded) || (s.resume && resumeOffered(s.state, s.resume) && !job))
           ? 'max-lg:mt-auto max-lg:sticky max-lg:bottom-0 max-lg:z-10 max-lg:-mx-[var(--page-pad-x)] max-lg:border-t max-lg:border-rule max-lg:bg-raised max-lg:px-[var(--page-pad-x)] max-lg:pt-2 max-lg:pb-[calc(0.5rem+env(safe-area-inset-bottom))]'
@@ -1418,6 +1422,7 @@
     {#if !atEnd}
       <div
         class="pointer-events-none fixed bottom-[calc(var(--dock-h,0px)+0.75rem)] left-1/2 z-10 lg:bottom-6 flex w-full max-w-[var(--page-w)] -translate-x-1/2 px-[var(--page-pad-x)] lg:pr-[calc(var(--side-w)+var(--col-gap)+var(--page-pad-x))]"
+        style:--dock-h="{dockH}px"
       >
         <!-- Capped at --log-w and centred inside that, matching the
              transcript's own rows — centring on the grid column

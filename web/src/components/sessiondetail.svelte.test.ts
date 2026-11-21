@@ -1490,6 +1490,13 @@ describe("the session page on a phone", () => {
     page.done();
   });
 
+  // @decision(DL-163)
+  it("keeps the bar on a compositor layer of its own", async () => {
+    const page = await open();
+    expect(page.control("session-bar")!.className).toContain("transform-gpu");
+    page.done();
+  });
+
   // @decision(DL-151)
   it("leads the bar, the heading and the document title with the title, and keeps the repository below it", async () => {
     stub.setSession({ title: "Fix the flaky login test", repos: [{ platform: "github", owner: "acme", name: "storefront" }] });

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/auth"
+	"github.com/jimutt/spov/internal/config"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/store"
 )
@@ -21,6 +22,24 @@ func TestQuotaDefaults(t *testing.T) {
 	got := Quotas{}.withDefaults()
 	if got != DefaultQuotas {
 		t.Errorf("withDefaults = %+v, want %+v", got, DefaultQuotas)
+	}
+}
+
+// The built-in concurrency limits are the decided values, and the
+// config layer a server reads them through carries the same ones.
+//
+// @decision(DL-162)
+func TestTheDefaultConcurrencyLimitsAreTheDecidedValues(t *testing.T) {
+	if DefaultQuotas.MaxConcurrentSessions != 5 || DefaultQuotas.MaxConcurrentJobs != 4 {
+		t.Errorf("DefaultQuotas = %d sessions, %d jobs, want 5 and 4",
+			DefaultQuotas.MaxConcurrentSessions, DefaultQuotas.MaxConcurrentJobs)
+	}
+	q := config.Defaults().Quotas
+	if q.MaxConcurrentSessions != DefaultQuotas.MaxConcurrentSessions ||
+		q.MaxConcurrentJobs != DefaultQuotas.MaxConcurrentJobs {
+		t.Errorf("config defaults = %d sessions, %d jobs, want %d and %d",
+			q.MaxConcurrentSessions, q.MaxConcurrentJobs,
+			DefaultQuotas.MaxConcurrentSessions, DefaultQuotas.MaxConcurrentJobs)
 	}
 }
 
