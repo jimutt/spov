@@ -935,32 +935,26 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	if len(live.ProxiedKeys) > 0 {
 		log.Note(ProxiedKeysNote(live.ProxiedKeys))
 	}
+	// When the renewable token lapses is what the renewal pass keys on.
+	// Which grant the sidecar holds is what it compares a refreshed
+	// grant with; a sandbox without the sidecar cannot be given a new
+	// token, so it records none.
+	//
+	// @decision(DL-021) @decision(DL-015) @decision(DL-034)
+	keys := launchKeys{minted: s.deps.Now(), expires: live.RenewableExpiry, ca: s.keepProxyCA(sess, live.ProxyCA)}
+	if consoleGen > 0 && slices.Contains(live.ProxiedKeys, prep.OpenCodeKeyEnv) {
+		keys.grant = consoleGen
+	}
 	run := s.runOf(sess, plan, live.Info.ID, pick.image, live.ExitSnapshot)
-	cancelled, err := s.commitLaunch(storeCtx, sess, run)
+	cancelled, err := s.commitLaunch(storeCtx, sess, run, keys)
 	if err != nil {
 		s.deps.Warn(fmt.Sprintf("launch %s: record success: %v", sess.ID, err))
 	}
+	// A CA the store does not hold is kept in this process.
+	//
 	// @decision(DL-034)
-	if !cancelled {
-		s.keepProxyCA(storeCtx, sess, live.ProxyCA)
-	}
-	// When the renewable token lapses is what the renewal pass keys on.
-	//
-	// @decision(DL-021)
-	if !cancelled && !live.RenewableExpiry.IsZero() {
-		if err := s.deps.Store.Sessions().SetGitToken(storeCtx, sess.OrgID, sess.ID, s.deps.Now(), live.RenewableExpiry); err != nil {
-			s.deps.Warn(fmt.Sprintf("launch %s: record the git token's expiry: %v", sess.ID, err))
-		}
-	}
-	// Which grant the sidecar holds is what the renewal pass compares
-	// a refreshed grant with. A sandbox without the sidecar cannot be
-	// given a new token, so it records none.
-	//
-	// @decision(DL-015)
-	if !cancelled && consoleGen > 0 && slices.Contains(live.ProxiedKeys, prep.OpenCodeKeyEnv) {
-		if err := s.deps.Store.Sessions().SetOpenCodeGrant(storeCtx, sess.OrgID, sess.ID, consoleGen); err != nil {
-			s.deps.Warn(fmt.Sprintf("launch %s: record the OpenCode sign-in it holds: %v", sess.ID, err))
-		}
+	if !cancelled && (keys.ca == nil || err != nil) {
+		s.holdProxyCA(sess, live.ProxyCA)
 	}
 	if cancelled {
 		s.mu.Lock()
@@ -1006,13 +1000,47 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 	}
 }
 
-// commitLaunch records a finished launch as running, unless a delete
-// asked for it to be cancelled first. The read and the write are one
-// transaction so no delete can land between them. It reports whether the
-// launch was cancelled rather than committed.
+// launchKeys are what the renewal and sidecar passes key on, recorded
+// by the launch: the renewable token's mint time and expiry (none when
+// expires is zero), the OpenCode grant generation the sidecar holds
+// (none when 0) and the sealed proxy CA (none when nil).
 //
-// @decision(DL-003)
-func (s *Service) commitLaunch(ctx context.Context, sess store.Session, run store.Run) (bool, error) {
+// @decision(DL-021) @decision(DL-015) @decision(DL-034)
+type launchKeys struct {
+	minted, expires time.Time
+	grant           int
+	ca              *store.SealedValue
+}
+
+// write records keys on the session.
+func (k launchKeys) write(ctx context.Context, sessions store.SessionStore, sess store.Session) error {
+	if !k.expires.IsZero() {
+		if err := sessions.SetGitToken(ctx, sess.OrgID, sess.ID, k.minted, k.expires); err != nil {
+			return fmt.Errorf("record the git token's expiry: %w", err)
+		}
+	}
+	if k.grant > 0 {
+		if err := sessions.SetOpenCodeGrant(ctx, sess.OrgID, sess.ID, k.grant); err != nil {
+			return fmt.Errorf("record the OpenCode sign-in it holds: %w", err)
+		}
+	}
+	if k.ca != nil {
+		if err := sessions.SetProxyCA(ctx, sess.OrgID, sess.ID, *k.ca); err != nil {
+			return fmt.Errorf("keep the proxy CA: %w", err)
+		}
+	}
+	return nil
+}
+
+// commitLaunch records a finished launch as running, with its keys,
+// unless a delete asked for it to be cancelled first. The read and the
+// writes are one transaction so no delete can land between them, and so
+// no session is ever running without its keys, even when the process
+// stops as the launch commits. It reports whether the launch was
+// cancelled rather than committed.
+//
+// @decision(DL-003) @decision(DL-021)
+func (s *Service) commitLaunch(ctx context.Context, sess store.Session, run store.Run, keys launchKeys) (bool, error) {
 	var cancelled bool
 	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
 		var err error
@@ -1026,7 +1054,10 @@ func (s *Service) commitLaunch(ctx context.Context, sess store.Session, run stor
 			return err
 		}
 		// @decision(DL-085)
-		return recordRun(ctx, tx, run)
+		if err := recordRun(ctx, tx, run); err != nil {
+			return err
+		}
+		return keys.write(ctx, tx.Sessions(), sess)
 	})
 	return cancelled, err
 }
