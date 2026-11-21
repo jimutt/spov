@@ -56,6 +56,8 @@ export function templateSummary(t: TemplateSettings): string {
   if (vars > 0) parts.push(count(vars, "variable"));
   if (t.addons?.length) parts.push(joined(t.addons));
   if (t.apt?.length) parts.push(count(t.apt.length, "apt package"));
+  // @decision(DL-171)
+  if (t.plugins?.length) parts.push(count(t.plugins.length, "plugin"));
   if (t.git_access) parts.push(t.git_access === "all" ? "git access to every repository" : "git access to its repositories");
   return parts.join(", ");
 }
@@ -96,6 +98,8 @@ export interface TemplateDraft {
   /** One per line, as name or name@version. */
   addons: string;
   apt: string;
+  /** OpenCode plugins, one npm package spec per line. @decision(DL-171) */
+  plugins: string;
   access: "" | GitAccess;
 }
 
@@ -113,6 +117,7 @@ export function emptyTemplateDraft(): TemplateDraft {
     env: [],
     addons: "",
     apt: "",
+    plugins: "",
     access: "",
   };
 }
@@ -132,6 +137,7 @@ export function draftFromTemplate(t: Template): TemplateDraft {
       .map(([name, value]) => ({ name, value })),
     addons: (t.addons ?? []).join("\n"),
     apt: (t.apt ?? []).join("\n"),
+    plugins: (t.plugins ?? []).join("\n"),
     access: t.git_access ?? "",
   };
 }
@@ -205,6 +211,9 @@ export function toTemplateBody(draft: TemplateDraft): TemplateSettings | null {
   if (addons.length > 0) body.addons = addons;
   const apt = linesOf(draft.apt);
   if (apt.length > 0) body.apt = apt;
+  // @decision(DL-171)
+  const plugins = linesOf(draft.plugins);
+  if (plugins.length > 0) body.plugins = plugins;
   if (draft.access) body.git_access = draft.access;
   return body;
 }

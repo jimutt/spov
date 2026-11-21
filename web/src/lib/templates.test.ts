@@ -29,6 +29,8 @@ describe("a template's summary", () => {
       }),
     ).toBe("egress install, 2 credentials, 3 variables, rust and postgres@16");
     expect(templateSummary({ credentials: ["npm"] })).toBe("1 credential");
+    // @decision(DL-171)
+    expect(templateSummary({ plugins: ["envsitter-guard", "opencode-rules"] })).toBe("2 plugins");
     expect(templateSummary({ no_credentials: true, git_access: "all" })).toBe("no credentials, git access to every repository");
     expect(templateSummary({ egress: "agent", egress_extra_domains: ["a.example"], apt: ["jq", "vim"], git_access: "repos" })).toBe(
       "egress agent with 1 more domain, 2 apt packages, git access to its repositories",
@@ -51,7 +53,7 @@ describe("the request a template draft builds", () => {
   it("leaves every not-set control out of the body", () => {
     expect(toTemplateBody(draft({}))).toEqual({});
     // An untouched variable row and blank lines are not settings either.
-    expect(toTemplateBody(draft({ env: [{ name: "", value: "" }], addons: " \n", apt: "\n", description: "  " }))).toEqual({});
+    expect(toTemplateBody(draft({ env: [{ name: "", value: "" }], addons: " \n", apt: "\n", plugins: " \n", description: "  " }))).toEqual({});
   });
 
   it("sends each control that is set", () => {
@@ -69,6 +71,7 @@ describe("the request a template draft builds", () => {
           ],
           addons: "rust\npostgres@16",
           apt: "jq",
+          plugins: " envsitter-guard@0.1.1 \n\n@scope/rules",
           access: "repos",
         }),
       ),
@@ -80,6 +83,7 @@ describe("the request a template draft builds", () => {
       env: { REGION: "eu " },
       addons: ["rust", "postgres@16"],
       apt: ["jq"],
+      plugins: ["envsitter-guard@0.1.1", "@scope/rules"],
       git_access: "repos",
     });
   });
@@ -134,6 +138,7 @@ describe("the request a template draft builds", () => {
       env: { B: "2", A: "1" },
       addons: ["rust"],
       apt: ["jq"],
+      plugins: ["envsitter-guard"],
       git_access: "all" as const,
     };
     const d = draftFromTemplate({ name: "acme", ...stored, updated_at: "2026-11-10T00:00:00Z", missing_credentials: [] });

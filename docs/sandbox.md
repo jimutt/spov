@@ -120,7 +120,8 @@ Sandboxes can reach the open internet unless `sandbox.egress` narrows it:
 `install` and `agent` allow TLS only, so a plain-HTTP registry or `git://`
 fails. Another model provider (Groq, xAI, DeepSeek, Mistral) needs its API host
 in `sandbox.egress_extra_domains`. `sandbox.egress_extra_domains` adds hosts to either (not to `open`), and
-a routed credential's hosts are added for it.
+a routed credential's hosts are added for it. A session with [`sandbox.plugins`](plugins.md) also reaches
+`registry.npmjs.org` under `agent`, where OpenCode installs them from.
 
 ## Sandbox templates
 
@@ -138,6 +139,7 @@ A template can set any of:
 | Variables | Environment variables, merged by name under the launch's own |
 | Add-ons and apt packages | The image's add-ons, in place of the server's defaults |
 | Git access | `repos` or `all`, as a preference: where `all` is not allowed it falls back to `repos` and says so |
+| OpenCode plugins | [Plugins](plugins.md) for an interactive session, in place of `sandbox.plugins`; a job takes none |
 
 A setting a template leaves out stays as it would be without the template. A
 template holds no secret, no repository and no model.

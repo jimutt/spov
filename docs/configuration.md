@@ -86,6 +86,7 @@ sandbox:
   env:                              # environment variables in the sandbox, for sessions and jobs; not for secrets (see below)
     NODE_ENV: development
     OPENCODE_LOG_LEVEL: info
+  plugins: [envsitter-guard@0.1.1]  # OpenCode 2 plugins (npm package specs) for interactive sessions; --plugin replaces it (docs/plugins.md)
   # image: my-custom-image          # an image spov did not build; refused together with addons or apt
   # gpu: a10g                       # recognised only to be refused: v2 sandboxes have no GPU
 

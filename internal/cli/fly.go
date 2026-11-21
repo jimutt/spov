@@ -42,6 +42,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 		routed               routedFlags
 		template             templateFlags
 		envVars              []string
+		plugins              []string
 	)
 	cmd := &cobra.Command{
 		Use:   "fly",
@@ -67,6 +68,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 				Routed:               routed,
 				Template:             template,
 				Env:                  envVars,
+				Plugins:              plugins,
 				Sync:                 sync,
 				// An explicit --sync=false turns sync off rather than
 				// leaving it to sandbox.sync.
@@ -97,6 +99,9 @@ func newFlyCmd(env *Env) *cobra.Command {
 	addRoutedFlags(cmd, &routed, "sandbox.credentials")
 	addTemplateFlags(env, cmd, &template, "sandbox.template")
 	addEnvFlag(cmd, &envVars)
+	// @decision(DL-171)
+	cmd.Flags().StringArrayVar(&plugins, "plugin", nil,
+		"OpenCode plugin to add to the sandbox, as an npm package spec such as envsitter-guard or @scope/name@1.2.0 (repeatable); replaces sandbox.plugins")
 	// @decision(DL-027)
 	// @decision(DL-095)
 	cmd.Flags().BoolVar(&sync, "sync", false,
@@ -118,7 +123,11 @@ type flyOptions struct {
 	// Env are --env KEY=VALUE.
 	//
 	// @decision(DL-096)
-	Env                  []string
+	Env []string
+	// Plugins are --plugin values, which replace sandbox.plugins.
+	//
+	// @decision(DL-171)
+	Plugins              []string
 	Keep                 bool
 	Name                 string
 	AllowVersionMismatch bool
@@ -171,6 +180,12 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 	// @decision(DL-096)
 	vars, err := launchEnv(cfg.Sandbox.Env, opts.Env, cfg.Sandbox.Addons)
 	if err != nil {
+		return err
+	}
+	// Checked before the server is asked, as the server checks again.
+	//
+	// @decision(DL-171)
+	if err := opencode.CheckPlugins(pluginsFor(cfg, opts)); err != nil {
 		return err
 	}
 
@@ -372,6 +387,17 @@ func runFly(ctx context.Context, env *Env, opts flyOptions) error {
 	return terminateSession(ctx, env, c, sess)
 }
 
+// pluginsFor is the launch's plugin list: the --plugin flags when any
+// are given, else sandbox.plugins.
+//
+// @decision(DL-171)
+func pluginsFor(cfg config.Config, opts flyOptions) []string {
+	if len(opts.Plugins) > 0 {
+		return opts.Plugins
+	}
+	return cfg.Sandbox.Plugins
+}
+
 // sessionRequest is the API request for a launch: what the flags and
 // config ask for, and nothing the server defaults better. Only an
 // explicitly configured image is sent, so a hosted server's own image
@@ -388,7 +414,9 @@ func sessionRequest(cfg config.Config, opts flyOptions, name string, refs []serv
 		// @decision(DL-033)
 		Addons: sb.Addons,
 		Apt:    sb.Apt,
-		Egress: sb.Egress,
+		// @decision(DL-171)
+		Plugins: pluginsFor(cfg, opts),
+		Egress:  sb.Egress,
 		// @decision(DL-068)
 		EgressExtraDomains: sb.EgressExtraDomains,
 		Sandbox: server.SandboxConfigView{

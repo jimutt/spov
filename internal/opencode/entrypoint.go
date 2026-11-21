@@ -60,10 +60,11 @@ type Entrypoint struct {
 	// @decision(DL-036)
 	Clones []Clone
 	// Landing is the directory under WorkspaceRoot the server starts in.
-	// Empty means WorkspaceRoot itself, and nothing defaults it to a
-	// repository.
+	// Empty means WorkspaceRoot itself. The server names a one-repository
+	// interactive session's repository here (DL-170); nothing below it
+	// picks one.
 	//
-	// @decision(DL-037)
+	// @decision(DL-037) @decision(DL-170)
 	Landing string
 	// Port the server listens on.
 	Port int
@@ -96,6 +97,11 @@ type Entrypoint struct {
 	//
 	// @decision(DL-038)
 	ModelUnlisted bool
+	// Plugins are written into an interactive session's config; a job's
+	// carries none.
+	//
+	// @decision(DL-171)
+	Plugins []string
 	// Proxied means the sandbox has the credential proxy sidecar: the
 	// entrypoint installs its CA and waits for it before cloning.
 	//
@@ -425,7 +431,7 @@ func (e Entrypoint) writeGitIdentity(b *strings.Builder) {
 // @decision(DL-038) @decision(DL-040)
 func (e Entrypoint) writeOpenCodeConfig(b *strings.Builder) {
 	fmt.Fprintf(b, "mkdir -p \"%s\"\n", ConfigDir)
-	config := SandboxConfigJSON(e.Model, e.ModelUnlisted)
+	config := SandboxConfigJSON(e.Model, e.ModelUnlisted, e.Plugins)
 	if e.Job != nil {
 		config = JobConfigJSON(e.Model, e.ModelUnlisted)
 	}
@@ -551,6 +557,10 @@ func (e Entrypoint) Validate() error {
 		if !strings.HasPrefix(f.Path, "/") || strings.Contains("\n"+f.Content+"\n", "\n"+fileMarker+"\n") || !strings.HasSuffix(f.Content, "\n") {
 			return fmt.Errorf("opencode: the config file %s cannot be written", f.Path)
 		}
+	}
+	// @decision(DL-171)
+	if err := CheckPlugins(e.Plugins); err != nil {
+		return fmt.Errorf("opencode: %w", err)
 	}
 	if e.Landing != "" {
 		if err := validDir(e.Landing); err != nil {

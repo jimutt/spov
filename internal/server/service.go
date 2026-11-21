@@ -147,6 +147,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	}
 	req = withAccountAuthor(p, req)
 	req = s.withDefaults(req)
+	req = defaultLanding(req)
 	if err := s.validateRequest(req); err != nil {
 		return store.Session{}, inTemplate(tmpl, err)
 	}
@@ -322,12 +323,39 @@ func (s *Service) egressFor(req store.SessionRequest, selections []git.Selection
 		return sandbox.EgressPolicy{}, err
 	}
 	policy = policy.WithForgeHosts(forgeHosts(selections)...)
+	if pluginsNeedRegistry(req) {
+		policy = policy.WithDomains(sandbox.PluginRegistryDomain)
+	}
 	policy = policy.WithDomains(s.deps.Defaults.EgressExtraDomains...)
 	policy = policy.WithDomains(req.EgressExtraDomains...)
 	if err := policy.Validate(); err != nil {
 		return sandbox.EgressPolicy{}, err
 	}
 	return policy, nil
+}
+
+// pluginsNeedRegistry reports whether a session's plugins need the npm
+// registry added to its egress: only under the agent preset, since
+// install already has it and open has everything.
+//
+// @decision(DL-172)
+func pluginsNeedRegistry(req store.SessionRequest) bool {
+	return len(req.Plugins) > 0 && req.Egress == sandbox.PresetAgent
+}
+
+// pluginNote is the launch's line about its plugins: which, that they
+// install at the first message, and the registry joining agent egress.
+//
+// @decision(DL-171) @decision(DL-172)
+func pluginNote(req store.SessionRequest) string {
+	if len(req.Plugins) == 0 {
+		return ""
+	}
+	note := "OpenCode plugins " + strings.Join(req.Plugins, ", ") + " install from npm when the session's first conversation starts"
+	if pluginsNeedRegistry(req) {
+		note += "; " + sandbox.PluginRegistryDomain + " is added to the agent egress preset for them"
+	}
+	return note
 }
 
 // forgeHosts are the hosts of the platforms a session's selections use.
@@ -418,6 +446,20 @@ func (s *Service) withDefaults(req store.SessionRequest) store.SessionRequest {
 	return req
 }
 
+// defaultLanding starts an interactive session with one repository
+// inside it, so OpenCode reads that repository's opencode.json and
+// .opencode/ as it would in a local checkout. A session with several
+// repositories, or one whose request names a landing, is left alone.
+// Only Create calls it: a job's session works from the workspace.
+//
+// @decision(DL-170) @decision(DL-037)
+func defaultLanding(req store.SessionRequest) store.SessionRequest {
+	if req.Landing == "" && len(req.Repos) == 1 {
+		req.Landing = git.SingleRepoDir(req.Repos[0].Owner, req.Repos[0].Name)
+	}
+	return req
+}
+
 // maxPreferences bounds a request's credential preferences.
 const maxPreferences = 32
 
@@ -474,6 +516,10 @@ func (s *Service) validateRequest(req store.SessionRequest) error {
 	}
 	// @decision(DL-043)
 	if _, err := store.ParseGitAccess(string(req.GitAccess)); err != nil {
+		problems = append(problems, err.Error())
+	}
+	// @decision(DL-171)
+	if err := opencode.CheckPlugins(req.Plugins); err != nil {
 		problems = append(problems, err.Error())
 	}
 	// @decision(DL-097)
@@ -675,6 +721,10 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		fail(err)
 		return
 	}
+	// @decision(DL-171) @decision(DL-172)
+	if note := pluginNote(sess.Request); note != "" {
+		log.Note(note)
+	}
 	// The warning travels with the launch rather than being printed by
 	// the client: only the server knows which keys it holds.
 	//
@@ -783,10 +833,12 @@ func (s *Service) launch(ctx context.Context, sess store.Session, log *launchLog
 		// A resumed run gets the stored variables again.
 		//
 		// @decision(DL-096)
-		Env:            sess.Request.Env,
-		Landing:        sess.Request.Landing,
-		Model:          sess.Request.Model,
-		ModelUnlisted:  s.modelUnlisted(sess.Request.Model),
+		Env:           sess.Request.Env,
+		Landing:       sess.Request.Landing,
+		Model:         sess.Request.Model,
+		ModelUnlisted: s.modelUnlisted(sess.Request.Model),
+		// @decision(DL-171)
+		Plugins:        sess.Request.Plugins,
 		CPU:            sb.CPU,
 		MemoryMiB:      sb.MemoryMiB,
 		CPULimit:       sb.CPULimit,

@@ -50,6 +50,11 @@ type sandboxConfig struct {
 	//
 	// @decision(DL-038)
 	Providers map[string]declaredProvider `json:"providers,omitempty"`
+	// Plugins are the launch's sandbox.plugins, npm package specs that
+	// OpenCode installs and loads; the key is `plugins` at OpenCode 2.
+	//
+	// @decision(DL-171)
+	Plugins []string `json:"plugins,omitempty"`
 }
 
 // declaredProvider holds the one declared model, by id.
@@ -110,16 +115,18 @@ func allowAll(action string, patterns []string) []permissionRule {
 // "allow", so a prompt still appears for the git credentials and the
 // OpenCode auth store.
 //
-// An unlisted model is declared (DL-038).
+// An unlisted model is declared (DL-038), and the launch's plugins are
+// listed (DL-171).
 //
-// @decision(DL-038)
-func SandboxConfigJSON(model string, unlisted bool) string {
+// @decision(DL-038) @decision(DL-171)
+func SandboxConfigJSON(model string, unlisted bool, plugins []string) string {
 	return marshalConfig(sandboxConfig{
 		Schema:      configSchema,
 		Model:       model,
 		WebSearch:   webSearch{Provider: WebSearchProvider},
 		Permissions: allowAll(ActionExternalDirectory, workspaceGlobs),
 		Providers:   declare(model, unlisted),
+		Plugins:     plugins,
 	})
 }
 

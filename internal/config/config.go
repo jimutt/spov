@@ -226,6 +226,12 @@ type Sandbox struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `koanf:"env"`
+	// Plugins are OpenCode 2 plugins, as npm package specs, added to an
+	// interactive session's OpenCode config. A list replaces the list
+	// of a lower layer.
+	//
+	// @decision(DL-171)
+	Plugins []string `koanf:"plugins"`
 	// Regions and Cloud pin where the sandbox runs; empty lets the
 	// provider choose.
 	//

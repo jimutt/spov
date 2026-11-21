@@ -74,8 +74,10 @@ func underTemplate(env *Env, cfg *config.Config, name string, job bool) {
 	drop(len(sb.Addons) > 0, "sandbox.addons")
 	drop(len(sb.Apt) > 0, "sandbox.apt")
 	drop(len(sb.Env) > 0, "sandbox.env")
+	// @decision(DL-171)
+	drop(len(sb.Plugins) > 0 && !job, "sandbox.plugins")
 	drop(*access != "", accessKey)
-	sb.Egress, sb.EgressExtraDomains, sb.Addons, sb.Apt, sb.Env = "", nil, nil, nil, nil
+	sb.Egress, sb.EgressExtraDomains, sb.Addons, sb.Apt, sb.Env, sb.Plugins = "", nil, nil, nil, nil, nil
 	*access = ""
 	if len(replaced) > 0 {
 		env.deferWarning(fmt.Sprintf("note: the template %s takes the place of %s from your configuration for this launch",

@@ -393,6 +393,10 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string, tmpl *store.Te
 	if tmpl != nil {
 		sreq = applyTemplate(sreq, *tmpl)
 	}
+	// A job's config carries no plugins, so a template's are not taken.
+	//
+	// @decision(DL-171)
+	sreq.Plugins = nil
 	sreq = s.withDefaults(sreq)
 	if err := s.validateRequest(sreq); err != nil {
 		return store.SessionRequest{}, err
