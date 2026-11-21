@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -132,6 +134,69 @@ func TestALaunchRecordsItsCredentialsAndTheTokensExpiry(t *testing.T) {
 	if !noted {
 		t.Error("the launch log does not say the sandbox gets a stored token")
 	}
+}
+
+// The token's expiry and the sealed proxy CA are written in the
+// transaction that makes the session running, so a server that stops
+// as a launch commits leaves no running session the renewal and
+// sidecar passes cannot key on.
+//
+// @decision(DL-021) @decision(DL-034)
+func TestALaunchCommitsItsKeysWithItsRunningState(t *testing.T) {
+	sealer, err := auth.NewSealer(map[int]string{1: base64.StdEncoding.EncodeToString(make([]byte, auth.KeyBytes))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var watch *commitWatch
+	f := newRecoverFixtureWith(t, func(d *Deps) {
+		watch = &commitWatch{Store: d.Store, first: map[string]commitSeen{}}
+		d.Store = watch
+		d.Credentials = &CredentialStore{Store: d.Store.Credentials(), Sealer: sealer}
+	})
+	watch.mu.Lock()
+	seen, ok := watch.first[f.id]
+	watch.mu.Unlock()
+	if !ok {
+		t.Fatal("no transaction made the session running")
+	}
+	if seen.row.GitTokenExpiresAt == nil || seen.row.GitTokenMintedAt == nil {
+		t.Errorf("running before the token's expiry was recorded: minted %v, expires %v", seen.row.GitTokenMintedAt, seen.row.GitTokenExpiresAt)
+	}
+	if !seen.ca {
+		t.Error("running before the proxy CA was kept")
+	}
+}
+
+// commitWatch is a store that reads each session back as the
+// transaction that first makes it running commits.
+type commitWatch struct {
+	store.Store
+	mu    sync.Mutex
+	first map[string]commitSeen
+}
+
+type commitSeen struct {
+	row store.Session
+	ca  bool
+}
+
+func (w *commitWatch) Tx(ctx context.Context, fn func(store.Store) error) error {
+	if err := w.Store.Tx(ctx, fn); err != nil {
+		return err
+	}
+	running, err := w.Store.Sessions().List(ctx, auth.LocalID, store.SessionFilter{States: []store.SessionState{store.StateRunning}})
+	if err != nil {
+		return err
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, sess := range running {
+		if _, ok := w.first[sess.ID]; !ok {
+			_, caErr := w.Store.Sessions().ProxyCA(ctx, sess.OrgID, sess.ID)
+			w.first[sess.ID] = commitSeen{row: sess, ca: caErr == nil}
+		}
+	}
+	return nil
 }
 
 // A token that is not near its expiry is left alone.
