@@ -89,6 +89,7 @@ curl -fsSL https://github.com/jimutt/spov/releases/latest/download/install.sh | 
 spov goes to `~/.local/bin`, and running the script again updates it. With
 Homebrew, `brew install jimutt/tap/spov` installs spov alone; install OpenCode 2
 with its own installer (`curl -fsSL https://opencode.ai/v2/install | bash`).
+If brew says the cask is invalid, run `brew update` first.
 
 <details>
 <summary>Where it installs, how the download is checked, and pinning a version</summary>
