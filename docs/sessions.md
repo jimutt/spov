@@ -229,7 +229,8 @@ for 30 days after a session stops (`history.retention`);
 ## Where a session works
 
 Each repository is cloned into its own directory under `/workspace`. A
-session with one repository starts inside it, as OpenCode would in your own
+session with one repository starts inside it (on a server with the credential
+proxy; `landing: .` keeps it in `/workspace`), as OpenCode would in your own
 checkout, so the repository's `opencode.json`, `.opencode/` and `AGENTS.md`
 apply: its [plugins](plugins.md), and also its permission rules, model and MCP
 servers. A session with several starts in

@@ -13,6 +13,12 @@ import (
 // @decision(DL-037)
 const AgentsFile = WorkspaceRoot + "/AGENTS.md"
 
+// WorkspaceLanding is the landing that names the workspace root itself,
+// for a session with one repository that should not start inside it.
+//
+// @decision(DL-170)
+const WorkspaceLanding = "."
+
 // ForgeCLI identifies the CLI that talks to a repository's platform.
 type ForgeCLI string
 
@@ -50,14 +56,14 @@ type WorkspaceRepo struct {
 //
 // @decision(DL-037)
 func AgentsMarkdown(repos []WorkspaceRepo, jobKind string) string {
-	return agentsMarkdown(repos, jobKind, "")
+	return agentsMarkdown(repos, jobKind, "", "")
 }
 
 // agentsMarkdown is AgentsMarkdown with a pr job's pull request policy,
 // which is what the entrypoint renders for a job.
 //
 // @decision(DL-037) @decision(DL-137)
-func agentsMarkdown(repos []WorkspaceRepo, jobKind, prPolicy string) string {
+func agentsMarkdown(repos []WorkspaceRepo, jobKind, prPolicy, worksIn string) string {
 	var b strings.Builder
 	b.WriteString("# Workspace\n\n")
 	b.WriteString("This sandbox was prepared by spov. The repositories below are already\n")
@@ -81,11 +87,21 @@ func agentsMarkdown(repos []WorkspaceRepo, jobKind, prPolicy string) string {
 	}
 
 	b.WriteString("\n## Read each repository's own instructions\n\n")
-	b.WriteString("You are working from the workspace root, not from inside a repository, so\n")
-	b.WriteString("no repository's own instruction files have been loaded for you. Before you\n")
-	b.WriteString("change anything in one of the directories above, read its `AGENTS.md` and\n")
-	b.WriteString("`CLAUDE.md` if they exist. They carry the conventions your work is judged\n")
-	b.WriteString("against, and nothing else will tell you what they say.\n")
+	// @decision(DL-174) @decision(DL-170)
+	if worksIn != "" {
+		fmt.Fprintf(&b, "You are working inside `%s`, and that repository's own `AGENTS.md`\n", path.Join(WorkspaceRoot, worksIn))
+		b.WriteString("and OpenCode configuration have been loaded for you. Paths are relative to\n")
+		b.WriteString("it. Before you change anything in another directory above, read its\n")
+		b.WriteString("`AGENTS.md` and `CLAUDE.md` if they exist, and read this repository's\n")
+		b.WriteString("`CLAUDE.md` if it has one. They carry the conventions your work is judged\n")
+		b.WriteString("against.\n")
+	} else {
+		b.WriteString("You are working from the workspace root, not from inside a repository, so\n")
+		b.WriteString("no repository's own instruction files have been loaded for you. Before you\n")
+		b.WriteString("change anything in one of the directories above, read its `AGENTS.md` and\n")
+		b.WriteString("`CLAUDE.md` if they exist. They carry the conventions your work is judged\n")
+		b.WriteString("against, and nothing else will tell you what they say.\n")
+	}
 
 	// @decision(DL-100)
 	if jobKind == "sync" {

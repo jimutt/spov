@@ -12,6 +12,7 @@ import (
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/git"
 	"github.com/jimutt/spov/internal/jobs"
+	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/redact"
 	"github.com/jimutt/spov/internal/store"
 	"github.com/jimutt/spov/internal/telemetry"
@@ -340,6 +341,12 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string, tmpl *store.Te
 	//
 	// @decision(DL-100)
 	landing := req.Landing
+	// A job works from the workspace already.
+	//
+	// @decision(DL-170)
+	if landing == opencode.WorkspaceLanding {
+		landing = ""
+	}
 	if req.Kind == store.JobKindSync && len(repos) == 1 {
 		dir := git.SingleRepoDir(repos[0].Owner, repos[0].Name)
 		if landing != "" && strings.Trim(landing, "/") != dir {

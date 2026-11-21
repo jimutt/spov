@@ -55,7 +55,7 @@ repos:                              # cloned into /workspace/<dir> when a sessio
     name: api
     dir: backend                    # default: the repository's name
 
-landing: widgets                    # the repository directory OpenCode starts in; default /workspace
+landing: widgets                    # the repository directory OpenCode starts in, or . for /workspace; default: the one repository, else /workspace
 
 # --- The sandbox ------------------------------------------------------------
 sandbox:

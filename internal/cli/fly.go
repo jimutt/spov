@@ -629,7 +629,10 @@ func imageName(cfg config.Config) string {
 //
 // @decision(DL-023) @decision(DL-037)
 func landingFor(cfg config.Config, opts flyOptions) string {
-	if len(opts.Repos) > 0 {
+	// `.` names no repository, so it holds for a --repo list too.
+	//
+	// @decision(DL-170)
+	if len(opts.Repos) > 0 && cfg.Landing != opencode.WorkspaceLanding {
 		return ""
 	}
 	return cfg.Landing

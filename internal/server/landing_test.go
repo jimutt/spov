@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -18,12 +19,18 @@ func (f *apiFixture) viewOfSession(id string) SessionView {
 	return view
 }
 
+// withProxy says the server runs the credential proxy, which is all the
+// landing rule reads.
+func withProxy(d *Deps) {
+	d.ProxyImage = func(context.Context) (string, error) { return "spov-proxy-test", nil }
+}
+
 // An interactive session with one repository starts inside it, so
 // OpenCode reads that repository's opencode.json and .opencode/.
 //
 // @decision(DL-170)
 func TestASingleRepositorySessionStartsInsideIt(t *testing.T) {
-	f := newAPIFixture(t)
+	f := newAPIFixtureWith(t, withProxy)
 	id := f.create(repoReq("one"))
 	f.events(id)
 	if view := f.viewOfSession(id); view.Landing != "/workspace/app" {
@@ -40,7 +47,7 @@ func TestASingleRepositorySessionStartsInsideIt(t *testing.T) {
 //
 // @decision(DL-170) @decision(DL-037)
 func TestASessionWithSeveralRepositoriesStartsInTheWorkspace(t *testing.T) {
-	f := newAPIFixture(t)
+	f := newAPIFixtureWith(t, withProxy)
 	two := repoReq("two")
 	two.Repos = append(two.Repos, RepoRef{Platform: "fake", Owner: "acme", Name: "lib"})
 	id := f.create(two)
@@ -56,5 +63,28 @@ func TestASessionWithSeveralRepositoriesStartsInTheWorkspace(t *testing.T) {
 	f.events(id)
 	if view := f.viewOfSession(id); view.Landing != "/workspace/lib" {
 		t.Errorf("landing = %q, want /workspace/lib", view.Landing)
+	}
+}
+
+// Without the credential proxy a repository's own configuration would run
+// beside the tokens in the sandbox, so the session stays in the
+// workspace; and `.` keeps any one-repository session there.
+//
+// @decision(DL-170)
+func TestARepositorysConfigIsNotLoadedWithoutTheProxyOrWhenAskedNotTo(t *testing.T) {
+	f := newAPIFixture(t)
+	id := f.create(repoReq("no-proxy"))
+	f.events(id)
+	if view := f.viewOfSession(id); view.Landing != "/workspace" {
+		t.Errorf("without the proxy: landing = %q, want /workspace", view.Landing)
+	}
+
+	p := newAPIFixtureWith(t, withProxy)
+	root := repoReq("root")
+	root.Landing = "."
+	id = p.create(root)
+	p.events(id)
+	if view := p.viewOfSession(id); view.Landing != "/workspace" {
+		t.Errorf("with landing .: landing = %q, want /workspace", view.Landing)
 	}
 }

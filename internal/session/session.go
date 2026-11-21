@@ -436,8 +436,10 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		entrypointLanding = ""
 	}
 	entrypoint := opencode.Entrypoint{
-		Clones:    toOpenCodeClones(bootstrap.Clones),
-		Landing:   entrypointLanding,
+		Clones:  toOpenCodeClones(bootstrap.Clones),
+		Landing: entrypointLanding,
+		// @decision(DL-174)
+		WorksIn:   opts.Landing,
 		Port:      opts.Port,
 		Workspace: workspace,
 		Logins:    cliLogins(bootstrap.Tokens, opts.Selections),

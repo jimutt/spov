@@ -147,7 +147,7 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	}
 	req = withAccountAuthor(p, req)
 	req = s.withDefaults(req)
-	req = defaultLanding(req)
+	req = defaultLanding(req, s.deps.ProxyImage != nil)
 	if err := s.validateRequest(req); err != nil {
 		return store.Session{}, inTemplate(tmpl, err)
 	}
@@ -449,12 +449,19 @@ func (s *Service) withDefaults(req store.SessionRequest) store.SessionRequest {
 // defaultLanding starts an interactive session with one repository
 // inside it, so OpenCode reads that repository's opencode.json and
 // .opencode/ as it would in a local checkout. A session with several
-// repositories, or one whose request names a landing, is left alone.
-// Only Create calls it: a job's session works from the workspace.
+// repositories, or one whose request names a landing, is left alone;
+// `.` names the workspace root. Without the credential proxy the
+// repository's own configuration would run beside the tokens in the
+// sandbox, so the session stays in the workspace. Only Create calls it:
+// a job's session works from the workspace.
 //
-// @decision(DL-170) @decision(DL-037)
-func defaultLanding(req store.SessionRequest) store.SessionRequest {
-	if req.Landing == "" && len(req.Repos) == 1 {
+// @decision(DL-170) @decision(DL-037) @decision(DL-034)
+func defaultLanding(req store.SessionRequest, proxied bool) store.SessionRequest {
+	if req.Landing == opencode.WorkspaceLanding {
+		req.Landing = ""
+		return req
+	}
+	if proxied && req.Landing == "" && len(req.Repos) == 1 {
 		req.Landing = git.SingleRepoDir(req.Repos[0].Owner, req.Repos[0].Name)
 	}
 	return req

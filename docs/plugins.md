@@ -51,7 +51,12 @@ spov: its `opencode.json` (with `plugins`) and its `.opencode/` directory
 (local plugin files, rules, commands and agents) are read by OpenCode when the
 session runs inside that repository. A session runs inside its repository
 when it has exactly one: a synced `spov fly` in a checkout, `spov fly --repo
-owner/name`, or a browser launch of one repository.
+owner/name`, or a browser launch of one repository, on a server that runs the
+credential proxy. Without the proxy, a server keeps the tokens inside the
+sandbox, so it starts such a session in `/workspace` instead and the
+repository's configuration does not load. `landing: .` in your config starts
+a one-repository session in `/workspace` on purpose, for a repository whose
+configuration you would rather not run.
 
 The repository's whole `opencode.json` applies, as it would for a local
 OpenCode run in the checkout: its `permission` rules, `model`, MCP servers and

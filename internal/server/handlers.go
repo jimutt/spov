@@ -249,7 +249,7 @@ type SandboxConfigView struct {
 type SessionRequest struct {
 	Name    string            `json:"name,omitempty" maxLength:"63" doc:"Session and sandbox name; generated when empty"`
 	Repos   []RepoRef         `json:"repos" minItems:"1"`
-	Landing string            `json:"landing,omitempty" doc:"Workspace directory to start in; the workspace root when empty"`
+	Landing string            `json:"landing,omitempty" doc:"Workspace directory to start in; when empty, a session with one repository starts in it on a server with the credential proxy, and otherwise at the workspace root; . is the workspace root"`
 	Image   string            `json:"image,omitempty"`
 	Sandbox SandboxConfigView `json:"sandbox,omitempty"`
 	Egress  string            `json:"egress,omitempty" doc:"Egress preset name"`

@@ -2269,7 +2269,7 @@ components:
         image:
           type: string
         landing:
-          description: Workspace directory to start in; the workspace root when empty
+          description: Workspace directory to start in; when empty, a session with one repository starts in it on a server with the credential proxy, and otherwise at the workspace root; . is the workspace root
           type: string
         model:
           description: Model to run on, as provider/model; OpenCode's default when empty

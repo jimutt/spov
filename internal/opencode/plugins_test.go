@@ -24,7 +24,7 @@ func TestCheckPluginSpec(t *testing.T) {
 		"", " pkg", "pkg ", "Pkg", "pkg@", "@scope", "@scope/", "../evil", "./local", "/abs/path", "file:../x",
 		"git+https://github.com/a/b", "https://example.com/p.tgz", "github:a/b", "a/b", "pkg@1 || 2",
 		"pkg@file:../x", "pkg@https://x", "pkg@" + strings.Repeat("1", 65), strings.Repeat("a", 215), ".hidden", "_under",
-		"pkg\nnext", "pkg@1;rm", "pkg@..", "pkg@.", "pkg@...", "pkg@x.tgz", "pkg@x.tar", "pkg@x.TAR.GZ",
+		"pkg\nnext", "pkg@1;rm", "pkg@..", "pkg@.", "pkg@...", "pkg@x.tgz", "pkg@x.tar", "pkg@x.TAR.GZ", "-g", "--force", "~x", "@-scope/x", "@scope/-x",
 	} {
 		if err := CheckPluginSpec(bad); err == nil {
 			t.Errorf("%q accepted", bad)
@@ -122,6 +122,22 @@ func TestTheGuideIsListedWhenTheSessionStartsInARepository(t *testing.T) {
 	inRepo.Landing = "app"
 	if got := instructions(inRepo); len(got) != 1 || got[0] != AgentsFile {
 		t.Errorf("a session in its repository lists %v, want %s", got, AgentsFile)
+	}
+	// The guide says which: inside a repository its own instructions are
+	// loaded; at the root none are.
+	guide := func(e Entrypoint) string {
+		t.Helper()
+		script, err := e.Script()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return script
+	}
+	if g := guide(inRepo); !strings.Contains(g, "You are working inside `/workspace/app`") || strings.Contains(g, "working from the workspace root") {
+		t.Errorf("a session in its repository is told otherwise:\n%s", g)
+	}
+	if g := guide(base); !strings.Contains(g, "working from the workspace root") || strings.Contains(g, "You are working inside") {
+		t.Errorf("a session at the root is told otherwise:\n%s", g)
 	}
 	job := inRepo
 	job.Job = &Plugin{Kind: "pr", Goal: "g"}

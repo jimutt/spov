@@ -195,8 +195,9 @@ func Validate(c Config) error {
 		dirs[dir] = true
 	}
 
-	if c.Landing != "" && !dirs[c.Landing] {
-		return fmt.Errorf("config: landing %q is not one of the configured repo directories", c.Landing)
+	// @decision(DL-170)
+	if c.Landing != "" && c.Landing != opencode.WorkspaceLanding && !dirs[c.Landing] {
+		return fmt.Errorf("config: landing %q is not one of the configured repo directories, nor . for the workspace root", c.Landing)
 	}
 	return nil
 }

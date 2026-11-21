@@ -304,6 +304,9 @@ func TestTheConfigDocumentsMatchThePinnedSchema(t *testing.T) {
 		"interactive": SandboxConfigJSON("anthropic/claude-sonnet-4-5", false, nil, nil), "job": JobConfigJSON("anthropic/claude-sonnet-4-5", false, nil),
 		// @decision(DL-038)
 		"interactive, declared": SandboxConfigJSON("anthropic/claude-next", true, nil, nil), "job, declared": JobConfigJSON("anthropic/claude-next", true, nil),
+		// @decision(DL-171) @decision(DL-174)
+		"interactive, plugins and guide": SandboxConfigJSON("anthropic/claude-sonnet-4-5", false, []string{"envsitter-guard@0.1.1", "@scope/x"}, []string{AgentsFile}),
+		"job, guide":                     JobConfigJSON("anthropic/claude-sonnet-4-5", false, []string{AgentsFile}),
 	} {
 		if err := d.CheckSchema("Config.InfoEncoded", []byte(doc)); err != nil {
 			t.Errorf("%s: %v\n%s", name, err, doc)

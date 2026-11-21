@@ -61,3 +61,17 @@ func TestATemplateTakesThePlaceOfTheConfiguredPlugins(t *testing.T) {
 		t.Errorf("plugins %v: want the flag's", got)
 	}
 }
+
+// `landing: .` keeps a one-repository session at the workspace root, a
+// --repo list included, and the config accepts it.
+//
+// @decision(DL-170)
+func TestLandingDotKeepsTheSessionAtTheWorkspaceRoot(t *testing.T) {
+	f := newAPIFixtureWithConfig(t, defaultConfig+"landing: .\n")
+	if _, stderr, err := runWith(t, f.env, "fly", "--keep", "--name", "root", "--repo", "alice/other"); err != nil {
+		t.Fatalf("fly: %v\n%s", err, stderr)
+	}
+	if got := f.session("root").Request.Landing; got != "" {
+		t.Errorf("landing = %q, want the workspace root", got)
+	}
+}

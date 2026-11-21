@@ -11,9 +11,10 @@ import (
 // @decision(DL-171)
 const MaxPlugins = 16
 
-// pluginName is an npm package name, scoped or not, as npm accepts one
-// today: lowercase, at most 214 characters, no leading dot or underscore.
-var pluginName = regexp.MustCompile(`^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$`)
+// pluginName is an npm package name, scoped or not, as npm accepts a new
+// one today: lowercase, at most 214 characters, starting with a letter or
+// a digit, so none reads as a flag.
+var pluginName = regexp.MustCompile(`^(@[a-z0-9][a-z0-9-._~]*/)?[a-z0-9][a-z0-9-._~]*$`)
 
 // pluginVersion is what may follow the name's `@`: a version, a tag or
 // a semver range, without spaces, so nothing names a URL, a path or a

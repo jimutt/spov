@@ -536,3 +536,30 @@ func TestInspectSyncSeesAnUnchangedAndARewrittenRepository(t *testing.T) {
 		t.Error("an invalid base was accepted")
 	}
 }
+
+// A local-only synced session starts its server in the workspace, since
+// its repository is seeded afterwards, but works in that repository: its
+// config lists spov's guide, and the guide says where it works.
+//
+// @decision(DL-174)
+func TestALocalOnlySyncedSessionListsTheGuide(t *testing.T) {
+	f := newFixture(t)
+	f.opts.Selections = nil
+	f.opts.Landing = "notes"
+	f.opts.Sync = &SyncSeed{Branch: "main", BaseCommit: strings.Repeat("a", 40), Slug: "local/notes", Dir: "notes", Host: "local", Bundle: []byte("bundle")}
+	sess, err := f.launcher.Launch(context.Background(), f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Landing != "/workspace/notes" {
+		t.Errorf("landing = %q", sess.Landing)
+	}
+	specs := f.provider.Specs()
+	script := strings.Join(specs[len(specs)-1].Command, " ")
+	if !strings.Contains(script, `"instructions": [`) || !strings.Contains(script, `"/workspace/AGENTS.md"`) {
+		t.Errorf("the config does not list the guide:\n%s", script)
+	}
+	if !strings.Contains(script, "You are working inside `/workspace/notes`") {
+		t.Errorf("the guide does not say where the session works:\n%s", script)
+	}
+}
