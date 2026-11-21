@@ -351,3 +351,28 @@ func TestAResumesAnswerCarriesTheTitle(t *testing.T) {
 	}
 	f.waitRunning()
 }
+
+// A resumed session's view names when its current run started, which
+// its sandbox's timeout counts from, and not only when the session was
+// created.
+//
+// @decision(DL-169)
+func TestAResumedSessionsViewCarriesItsCurrentRunsStart(t *testing.T) {
+	f := resumable(t)
+	f.srv.svc.CollectSnapshots(context.Background())
+	if code, _, body := f.resume(map[string]any{}); code != http.StatusAccepted {
+		t.Fatalf("resume: %d %s", code, body)
+	}
+	f.waitRunning()
+	run := f.run()
+	res, raw := f.do(http.MethodGet, "/api/v1/sessions/"+f.id, nil)
+	var view SessionView
+	_ = json.Unmarshal(raw, &view)
+	if res.StatusCode != http.StatusOK || run.N != 2 || view.RunStartedAt == nil || !view.RunStartedAt.Equal(run.StartedAt) {
+		t.Fatalf("run %d started %s; the view: %s", run.N, run.StartedAt, raw)
+	}
+	_, raw = f.do(http.MethodGet, "/api/v1/sessions", nil)
+	if !strings.Contains(string(raw), `"run_started_at":"`+run.StartedAt.Format(time.RFC3339Nano)) {
+		t.Errorf("the listing does not carry the run's start: %s", raw)
+	}
+}

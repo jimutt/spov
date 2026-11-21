@@ -39,13 +39,24 @@ export function duration(secs: number): string {
 }
 
 /**
- * age is how long a session has run: to now while it is live, and to the
+ * runStart is when the session's current sandbox started: a resumed
+ * session's newest run, else its creation. Its timeout and its running
+ * time count from here.
+ *
+ * @decision(DL-169)
+ */
+export function runStart(s: Session): string {
+  return s.run_started_at ?? s.created_at;
+}
+
+/**
+ * age is how long a session's current sandbox has run: to now while it is live, and to the
  * moment it stopped once it is not — so a finished session shows how
  * long it took rather than how long ago it was.
  */
 export function age(s: Session, now: Date): number {
   const end = s.stopped_at ? Date.parse(s.stopped_at) : now.getTime();
-  const start = Date.parse(s.created_at);
+  const start = Date.parse(runStart(s));
   if (Number.isNaN(start) || Number.isNaN(end)) return 0;
   return Math.max(0, Math.floor((end - start) / 1000));
 }
@@ -458,10 +469,11 @@ export function clockBar(s: Session, j: Job | undefined, now: Date): ClockBar | 
   const job = jobBar(j, now);
   if (job) return job;
   const cap = s.sandbox?.timeout_secs ?? 0;
-  const created = Date.parse(s.created_at);
+  // @decision(DL-169)
+  const created = Date.parse(runStart(s));
   if (!live(s) || cap <= 0 || Number.isNaN(created)) return null;
   const used = age(s, now);
-  const start = `Started ${clock(s.created_at)}`;
+  const start = `Started ${clock(runStart(s))}`;
   const endValue = clock(new Date(created + cap * 1000).toISOString());
   const at = clock(now.toISOString());
   return {

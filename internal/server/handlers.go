@@ -70,6 +70,12 @@ type SessionView struct {
 	CreatedAt       time.Time         `json:"created_at"`
 	UpdatedAt       time.Time         `json:"updated_at"`
 	StoppedAt       *time.Time        `json:"stopped_at,omitempty"`
+	// RunStartedAt is when the session's current run (its newest
+	// sandbox) started: created_at for a session never resumed, later
+	// for one that was. The sandbox's timeout counts from it.
+	//
+	// @decision(DL-169) @decision(DL-085)
+	RunStartedAt *time.Time `json:"run_started_at,omitempty" doc:"When the current run's sandbox started; the sandbox's timeout counts from it"`
 	// EstimatedCost is this session's whole life in US dollars, from its
 	// requested resources — a floor, never an invoice. It spans the
 	// session, where /me/usage covers the calendar month, so a session
@@ -523,6 +529,10 @@ func (s *Server) withRuns(ctx context.Context, p auth.Principal, sessions []stor
 		rs := runs[sess.ID]
 		if len(rs) == 0 {
 			continue
+		}
+		// @decision(DL-169)
+		if start := rs[len(rs)-1].StartedAt; !start.IsZero() {
+			views[i].RunStartedAt = &start
 		}
 		views[i].EstimatedCost = round2(sandbox.EstimatedCost(
 			sess.Request.Sandbox.CPU, sess.Request.Sandbox.MemoryMiB, billableWithin(sess, rs, sess.CreatedAt, now)))
