@@ -2,9 +2,9 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-164 | The limit meter's capped row fits a phone and fills in proportion past 24 units | proposed | web | quotas, listings, phone-layout |
-| DL-163 | The phone's session bar is isolated from the composer's resize and painted on its own layer | proposed | web | phone-layout, session-page |
-| DL-162 | The default concurrency limits are five sessions and four jobs | proposed | server | quotas, cost |
+| DL-164 | The limit meter's capped row fits a phone and fills in proportion past 24 units | accepted | web | quotas, listings, phone-layout |
+| DL-163 | The transcript follows its end with a smooth scroll, because Firefox for Android stops drawing the phone's top bar after an instant one | accepted | web | phone-layout, session-page |
+| DL-162 | The default concurrency limits are five sessions and four jobs | accepted | server | quotas, cost |
 | DL-161 | A running session's composer offers the model's reasoning modes beside the model, and keeps the chosen mode across a switch when the new model offers it | accepted | web | reasoning-modes, models, session-page |
 | DL-160 | A session serves its models' reasoning modes, and its model switch refuses a mode the model does not offer there | accepted | server | reasoning-modes, models |
 | DL-159 | The recorder reads which reasoning modes each model offers from the running sandbox, once per run, and keeps them on the session | accepted | server | reasoning-modes, models |

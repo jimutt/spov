@@ -730,15 +730,30 @@
   //
   // @decision(DL-057)
   let atEnd = $state(true);
+  // A page that follows is at its end or on its way there by a smooth
+  // scroll (`followTo`), so "Jump to latest" stays away meanwhile.
+  //
+  // @decision(DL-163)
+  function endReached(el: HTMLElement): boolean {
+    return tail.following || atBottom(el);
+  }
   function measure(): void {
     const el = scroller();
-    if (el) atEnd = atBottom(el);
+    if (el) atEnd = endReached(el);
+  }
+  // A scroll the page makes to keep up with the end as it moves: smooth,
+  // never instant, since Firefox for Android stops drawing the top bar
+  // after an instant one until the reader's next touch.
+  //
+  // @decision(DL-163)
+  function followTo(el: HTMLElement, to: number): void {
+    el.scrollTo({ top: to, behavior: 'smooth' });
   }
   function onScroll(): void {
     const el = scroller();
     if (!el) return;
     tail.onScroll(el);
-    atEnd = atBottom(el);
+    atEnd = endReached(el);
     // @decision(DL-070)
     start = tail.following ? undefined : held(blocks, start);
     anchoring();
@@ -870,7 +885,7 @@
       const el = scroller();
       if (!el) return;
       const to = tail.onGrow(el);
-      if (to !== undefined) el.scrollTo({ top: to, behavior: 'auto' });
+      if (to !== undefined) followTo(el, to);
       measure();
     };
     window.addEventListener('resize', follow);
@@ -955,7 +970,7 @@
     if (!el) return;
     const frame = requestAnimationFrame(() => {
       const to = tail.onGrow(el);
-      if (to !== undefined) el.scrollTo({ top: to, behavior: 'auto' });
+      if (to !== undefined) followTo(el, to);
       // Growing moved the end away from a reader who is not following,
       // and that fires no scroll event — so the control's visibility is
       // re-measured here or it goes stale until the reader moves.
@@ -977,6 +992,7 @@
        @decision(DL-106) -->
   <div
     class="grid grid-cols-1 gap-[var(--col-gap)] max-lg:-mb-[var(--main-pad-y)] lg:grid-cols-[minmax(0,1fr)_var(--side-w)]"
+    style:--dock-h="{dockH}px"
   >
     <!-- Words an agent wrote, in the transcript and in a subagent's card:
          the one place either is drawn. Blank lines at either end of plain
@@ -1040,17 +1056,13 @@
       <div>
         <!-- Below `lg`: one slim bar that stays on screen, with the way back,
              the title, the state and the button for everything else. The
-             page's own header has scrolled away by then. `transform-gpu`
-             keeps the bar's paint on one compositor layer: a phone's Gecko
-             or WebKit can leave a sticky element's background without its
-             contents while the page scrolls under a moving toolbar
-             (Gecko #1585378, WebKit #330140).
-             @decision(DL-106) @decision(DL-163) -->
+             page's own header has scrolled away by then.
+             @decision(DL-106) -->
         {#if true}
           {@const st = listState(s)}
           {@const lead = sessionHeadline(s)}
           <div
-            class="sticky top-0 z-10 transform-gpu -mx-[var(--page-pad-x)] -mt-[var(--main-pad-y)] mb-4 flex items-center gap-1 border-b border-rule bg-raised px-1.5 py-1.5 lg:hidden"
+            class="sticky top-0 z-10 -mx-[var(--page-pad-x)] -mt-[var(--main-pad-y)] mb-4 flex items-center gap-1 border-b border-rule bg-raised px-1.5 py-1.5 lg:hidden"
             data-testid="session-bar"
           >
             <a
@@ -1370,9 +1382,8 @@
       {/if}
 
       <!-- Below `lg` the composer is docked to the foot of the screen, as in
-           any chat, and rides above the keyboard. Its height reaches
-           "Jump to latest" as --dock-h on that control alone, not on an
-           ancestor of the transcript bar. @decision(DL-106) @decision(DL-163) -->
+           any chat, and rides above the keyboard. Its height is published
+           as --dock-h for "Jump to latest". @decision(DL-106) -->
       <div
         class={!viewing && (composerShown(s.state, tailEnded) || (s.resume && resumeOffered(s.state, s.resume) && !job))
           ? 'max-lg:mt-auto max-lg:sticky max-lg:bottom-0 max-lg:z-10 max-lg:-mx-[var(--page-pad-x)] max-lg:border-t max-lg:border-rule max-lg:bg-raised max-lg:px-[var(--page-pad-x)] max-lg:pt-2 max-lg:pb-[calc(0.5rem+env(safe-area-inset-bottom))]'
@@ -1412,7 +1423,8 @@
 
     <!-- Shown whenever the reader is not AT the end, measured fresh —
          not whenever the latch is released, since content growth moves
-         the end without a scroll event. Stays for a finished session
+         the end without a scroll event — and never while the page
+         follows, which is already on its way there (DL-163). Stays for a finished session
          too: the end no longer moves, but a reader scrolled up still
          has a long way back. @decision(DL-057) -->
     <!-- `sticky bottom-6` inside a zero-height, `top-full` wrapper puts
@@ -1422,7 +1434,6 @@
     {#if !atEnd}
       <div
         class="pointer-events-none fixed bottom-[calc(var(--dock-h,0px)+0.75rem)] left-1/2 z-10 lg:bottom-6 flex w-full max-w-[var(--page-w)] -translate-x-1/2 px-[var(--page-pad-x)] lg:pr-[calc(var(--side-w)+var(--col-gap)+var(--page-pad-x))]"
-        style:--dock-h="{dockH}px"
       >
         <!-- Capped at --log-w and centred inside that, matching the
              transcript's own rows — centring on the grid column
