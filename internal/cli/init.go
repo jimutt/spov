@@ -16,6 +16,7 @@ import (
 
 	"github.com/jimutt/spov/internal/config"
 	"github.com/jimutt/spov/internal/credentials"
+	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/server"
 	"github.com/jimutt/spov/internal/server/client"
@@ -279,6 +280,9 @@ func (r *initRun) conclude(ctx context.Context, steps []initStep, ready bool) {
 		for _, s := range steps {
 			if res := r.results[s.name]; s.required && res.state != stepOK {
 				title := s.title
+				if res.state == stepWaiting && res.fix == "" {
+					res.fix = res.detail
+				}
 				if res.fix != "" {
 					title += ":"
 				}
@@ -333,7 +337,9 @@ func checkModal(ctx context.Context, r *initRun) stepResult {
 		fix = "correct or unset MODAL_TOKEN_ID and MODAL_TOKEN_SECRET"
 	}
 	if errors.Is(found, credentials.ErrNoModalCredentials) {
-		return stepResult{state: stepMissing, detail: strings.TrimPrefix(found.Error(), "credentials: "), why: why, fix: fix}
+		// The fix line names the command; the error's own hint would
+		// name another.
+		return stepResult{state: stepMissing, detail: credentials.ErrNoModalCredentials.Error(), why: why, fix: fix}
 	}
 	// What spov found is only a hint: Modal's own client decides, and
 	// it reads more than spov looks at.
@@ -414,7 +420,7 @@ func checkModel(_ context.Context, r *initRun) stepResult {
 	}
 	if len(have) == 0 {
 		return stepResult{state: stepMissing, detail: "no OpenCode sign-in and no provider key",
-			why: "The agent needs a model. An OpenCode Go or Zen subscription is enough, with no API key: sign in with it. Otherwise store an API key for a provider.",
+			why: "The agent needs a model: an OpenCode Go or Zen subscription, with no API key, or a provider's API key.",
 			fix: "spov login opencode, or spov credentials add ANTHROPIC_API_KEY"}
 	}
 	return stepResult{state: stepOK, detail: strings.Join(have, "; ")}
@@ -431,9 +437,13 @@ func checkClient(ctx context.Context, r *initRun) stepResult {
 func clientResult(ctx context.Context, env *Env, want string) stepResult {
 	found, err := env.locateBinary(ctx, want)
 	if err != nil {
-		first, _, _ := strings.Cut(err.Error(), "\n")
-		return stepResult{state: stepMissing, detail: first,
-			fix: fmt.Sprintf("curl -fsSL https://opencode.ai/v2/install | bash -s -- --version %s", want)}
+		install := fmt.Sprintf("curl -fsSL https://opencode.ai/v2/install | bash -s -- --version %s", want)
+		detail, _, _ := strings.Cut(err.Error(), "\n")
+		if errors.Is(err, opencode.ErrBinaryNotFound) {
+			// The error's own advice repeats the fix line.
+			detail = fmt.Sprintf("opencode %s is not installed; the web UI works without it", want)
+		}
+		return stepResult{state: stepMissing, detail: detail, fix: install}
 	}
 	return stepResult{state: stepOK, detail: fmt.Sprintf("opencode %s at %s", found.Version, found.Path)}
 }
