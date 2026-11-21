@@ -2309,7 +2309,7 @@
     "name": "Qwen3.8 2.4T A95B",
     "released": "2026-08-12",
     "context": 1048576,
-    "output": 131072
+    "output": 65536
    },
    {
     "id": "x-ai/grok-4.6",
