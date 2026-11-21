@@ -228,12 +228,17 @@ for 30 days after a session stops (`history.retention`);
 
 ## Where a session works
 
-Every session starts in `/workspace`, with each repository cloned into its own
-directory under it. spov writes `/workspace/AGENTS.md`, which lists the
-repositories, their hosts and which forge CLI belongs to each, and tells the
-agent to read each repository's own `AGENTS.md`. `landing:` in config starts
-OpenCode inside one repository instead, and a synced launch always starts in
-its repository. What the sandbox has installed is in [The sandbox](sandbox.md).
+Each repository is cloned into its own directory under `/workspace`. A
+session with one repository starts inside it (on a server with the credential
+proxy; `landing: .` keeps it in `/workspace`), as OpenCode would in your own
+checkout, so the repository's `opencode.json`, `.opencode/` and `AGENTS.md`
+apply: its [plugins](plugins.md), and also its permission rules, model and MCP
+servers. A session with several starts in
+`/workspace` itself, and `landing:` in config starts it inside one of them
+instead. spov writes `/workspace/AGENTS.md`, which lists the repositories,
+their hosts and which forge CLI belongs to each, and tells the agent to read
+each repository's own `AGENTS.md`; the agent reads it wherever the session
+starts. What the sandbox has installed is in [The sandbox](sandbox.md).
 
 ## The OpenCode client
 

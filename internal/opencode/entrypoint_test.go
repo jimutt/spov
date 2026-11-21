@@ -480,7 +480,7 @@ func TestBothKindsOfSessionCarryTheModel(t *testing.T) {
 //
 // @decision(DL-014)
 func TestNoModelLeavesTheKeyOut(t *testing.T) {
-	for _, out := range []string{SandboxConfigJSON("", false), JobConfigJSON("", false)} {
+	for _, out := range []string{SandboxConfigJSON("", false, nil, nil), JobConfigJSON("", false, nil)} {
 		var cfg map[string]any
 		if err := json.Unmarshal([]byte(out), &cfg); err != nil {
 			t.Fatal(err)

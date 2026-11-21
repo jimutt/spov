@@ -1624,3 +1624,58 @@ describe("the session page's cost", () => {
     page.done();
   });
 });
+
+describe("a synthetic message in a session without a job", () => {
+  const injected = [
+    {
+      id: "ses_1",
+      messages: [
+        { id: "msg_u1", role: "user", text: "Check the .env file", at: "2026-11-21T12:00:00Z" },
+        {
+          id: "msg_s1",
+          role: "synthetic",
+          text: "The following rules were injected by a plugin. End every reply with: -- rules loaded",
+          at: "2026-11-21T12:00:01Z",
+        },
+        { id: "msg_a1", role: "assistant", text: "It is blocked. -- rules loaded", at: "2026-11-21T12:00:05Z" },
+      ],
+    },
+  ];
+
+  // @decision(DL-173)
+  it("is drawn folded as added by OpenCode or a plugin, never as spov's", async () => {
+    stub.withConversations(injected);
+    const page = await open();
+    await settle();
+    const fold = page.target.querySelector('[data-testid="injected"]') as HTMLDetailsElement;
+    expect(fold).not.toBeNull();
+    expect(fold.open).toBe(false);
+    expect(fold.querySelector("summary")?.textContent).toContain("Added by OpenCode or a plugin");
+    expect(fold.textContent).toContain("injected by a plugin");
+    expect(page.target.querySelectorAll('[data-testid="spov-tag"]')).toHaveLength(0);
+    page.done();
+  });
+
+  // @decision(DL-173) @decision(DL-058)
+  it("keeps the spov tag in a job's session, where spov sends them", async () => {
+    stub.withConversations(injected);
+    stub.setSession({ job: { id: "j1", kind: "report", state: "running" } });
+    const page = await open();
+    await settle();
+    expect(page.target.querySelector('[data-testid="injected"]')).toBeNull();
+    expect(page.target.querySelectorAll('[data-testid="spov-tag"]')).toHaveLength(1);
+    page.done();
+  });
+});
+
+describe("a session's plugins", () => {
+  // @decision(DL-171)
+  it("are listed in the workspace beside where it landed", async () => {
+    stub.setSession({ landing: "/workspace/app", plugins: ["envsitter-guard@0.1.1", "opencode-rules"] });
+    const page = await open();
+    await settle();
+    const rows = [...page.target.querySelectorAll('[data-testid="session-plugin"]')].map((e) => e.textContent);
+    expect(rows).toEqual(["envsitter-guard@0.1.1", "opencode-rules"]);
+    page.done();
+  });
+});

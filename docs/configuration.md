@@ -55,7 +55,7 @@ repos:                              # cloned into /workspace/<dir> when a sessio
     name: api
     dir: backend                    # default: the repository's name
 
-landing: widgets                    # the repository directory OpenCode starts in; default /workspace
+landing: widgets                    # the repository directory OpenCode starts in, or . for /workspace; default: the one repository, else /workspace
 
 # --- The sandbox ------------------------------------------------------------
 sandbox:
@@ -86,6 +86,7 @@ sandbox:
   env:                              # environment variables in the sandbox, for sessions and jobs; not for secrets (see below)
     NODE_ENV: development
     OPENCODE_LOG_LEVEL: info
+  plugins: [envsitter-guard@0.1.1]  # OpenCode 2 plugins (npm package specs) for interactive sessions; --plugin replaces it (docs/plugins.md)
   # image: my-custom-image          # an image spov did not build; refused together with addons or apt
   # gpu: a10g                       # recognised only to be refused: v2 sandboxes have no GPU
 

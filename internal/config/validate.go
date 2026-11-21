@@ -11,6 +11,7 @@ import (
 
 	"github.com/jimutt/spov/internal/credproxy"
 	"github.com/jimutt/spov/internal/git"
+	"github.com/jimutt/spov/internal/opencode"
 	"github.com/jimutt/spov/internal/sandbox"
 	"github.com/jimutt/spov/internal/toolchain"
 )
@@ -90,6 +91,10 @@ func Validate(c Config) error {
 	}
 	if err := sandbox.ValidatePackages(c.Sandbox.Apt); err != nil {
 		return fmt.Errorf("config: sandbox.apt: %w", err)
+	}
+	// @decision(DL-171)
+	if err := opencode.CheckPlugins(c.Sandbox.Plugins); err != nil {
+		return fmt.Errorf("config: sandbox.plugins: %w", err)
 	}
 	if c.Sandbox.Image != "" && (len(c.Sandbox.Addons) > 0 || len(c.Sandbox.Apt) > 0) {
 		return fmt.Errorf("config: sandbox.image names an image spov did not build, so it cannot take sandbox.addons or sandbox.apt; drop one or the other")
@@ -190,8 +195,9 @@ func Validate(c Config) error {
 		dirs[dir] = true
 	}
 
-	if c.Landing != "" && !dirs[c.Landing] {
-		return fmt.Errorf("config: landing %q is not one of the configured repo directories", c.Landing)
+	// @decision(DL-170)
+	if c.Landing != "" && c.Landing != opencode.WorkspaceLanding && !dirs[c.Landing] {
+		return fmt.Errorf("config: landing %q is not one of the configured repo directories, nor . for the workspace root", c.Landing)
 	}
 	return nil
 }

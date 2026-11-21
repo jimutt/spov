@@ -211,6 +211,13 @@ func TestValidateSandboxLimitsAndEgress(t *testing.T) {
 		"bad extra domain": {
 			func(c *Config) { c.Sandbox.EgressExtraDomains = []string{"https://evil.example"} }, "egress_extra_domains",
 		},
+		// @decision(DL-171)
+		"plugin that is a path": {
+			func(c *Config) { c.Sandbox.Plugins = []string{"../local-plugin"} }, "sandbox.plugins",
+		},
+		"plugin from git": {
+			func(c *Config) { c.Sandbox.Plugins = []string{"git+https://example.com/p"} }, "sandbox.plugins",
+		},
 		"bad inbound cidr": {
 			func(c *Config) { c.Sandbox.InboundCIDRs = []string{"203.0.113.1"} }, "inbound_cidrs",
 		},

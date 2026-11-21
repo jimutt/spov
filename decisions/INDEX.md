@@ -2,6 +2,11 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-174 | A session that starts inside a repository lists spov's guide in its OpenCode config | accepted | opencode | workspace, landing |
+| DL-173 | In a session without a job, a synthetic message is drawn as added by OpenCode or a plugin, folded | accepted | web | session-page, transcript, plugins |
+| DL-172 | A session with plugins reaches the npm registry under the agent egress preset | accepted | sandbox | egress, plugins |
+| DL-171 | sandbox.plugins adds OpenCode 2 plugins to every sandbox of a launch | accepted | opencode | plugins, config, templates |
+| DL-170 | An interactive session with one repository starts inside it | accepted | opencode | workspace, landing, plugins |
 | DL-169 | A session's view carries its current run's start, and the page times the sandbox from it | accepted | web | session-page, resume |
 | DL-168 | While the agent works, the newest folded run names its latest action | accepted | web | session-page, transcript |
 | DL-167 | An opened run is a sheet on a narrow screen, and from lg its summary sticks while the run is on screen | accepted | web | session-page, transcript, phone-layout |

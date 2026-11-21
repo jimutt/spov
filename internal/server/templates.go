@@ -51,6 +51,8 @@ type TemplateSettingsView struct {
 	Addons             []string          `json:"addons,omitempty" maxItems:"16"`
 	Apt                []string          `json:"apt,omitempty" maxItems:"32"`
 	GitAccess          store.GitAccess   `json:"git_access,omitempty" enum:"repos,all"`
+	// @decision(DL-171)
+	Plugins []string `json:"plugins,omitempty" maxItems:"16" doc:"OpenCode plugins, as npm package specs, added to the sandbox's config"`
 }
 
 func templateView(t store.Template, missing []string) TemplateView {
@@ -94,6 +96,9 @@ func (s *Service) checkTemplate(t store.Template) (store.Template, error) {
 	}
 	if len(t.Apt) == 0 {
 		t.Apt = nil
+	}
+	if len(t.Plugins) == 0 {
+		t.Plugins = nil
 	}
 	switch {
 	case t.Credentials != nil && len(t.Credentials) == 0:
@@ -164,6 +169,10 @@ func applyTemplate(req store.SessionRequest, t store.Template) store.SessionRequ
 		env := maps.Clone(t.Env)
 		maps.Copy(env, req.Env)
 		req.Env = env
+	}
+	// @decision(DL-171)
+	if len(req.Plugins) == 0 {
+		req.Plugins = slices.Clone(t.Plugins)
 	}
 	// Under the request's own value and over a saved preference, and
 	// itself a preference.

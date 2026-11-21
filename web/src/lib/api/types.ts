@@ -2064,7 +2064,7 @@ export interface components {
             /** @description The git access is a saved preference, such as the CLI's config: a platform that cannot have all gets repos rather than refusing the launch */
             git_access_preferred?: boolean;
             image?: string;
-            /** @description Workspace directory to start in; the workspace root when empty */
+            /** @description Workspace directory to start in; when empty, a session with one repository starts in it on a server with the credential proxy, and otherwise at the workspace root; . is the workspace root */
             landing?: string;
             /** @description Model to run on, as provider/model; OpenCode's default when empty */
             model?: string;
@@ -2074,6 +2074,8 @@ export interface components {
             needs?: string[] | null;
             /** @description Attach no routed credential */
             no_credentials?: boolean;
+            /** @description OpenCode plugins as npm package specs, e.g. envsitter-guard or @scope/name@1.2.0, added to the sandbox's OpenCode config */
+            plugins?: string[] | null;
             repos: components["schemas"]["RepoRef"][] | null;
             sandbox?: components["schemas"]["SandboxConfigView"];
             /** @description Seed the repository from a local git branch and commit */
@@ -2156,6 +2158,8 @@ export interface components {
             model?: string;
             name: string;
             owner_id: string;
+            /** @description The OpenCode plugins the launch added to the sandbox's config, as npm package specs */
+            plugins?: string[] | null;
             repos: components["schemas"]["RepoRef"][] | null;
             resume?: components["schemas"]["ResumeView"];
             /** @description The routed credentials the proxy holds for this session, with their hosts */
@@ -2292,6 +2296,8 @@ export interface components {
             git_access?: "repos" | "all";
             /** @description Attach no routed credential */
             no_credentials?: boolean;
+            /** @description OpenCode plugins, as npm package specs, added to the sandbox's config */
+            plugins?: string[] | null;
         };
         TemplateView: {
             /**
@@ -2320,6 +2326,8 @@ export interface components {
             name: string;
             /** @description Attach no routed credential */
             no_credentials?: boolean;
+            /** @description OpenCode plugins, as npm package specs, added to the sandbox's config */
+            plugins?: string[] | null;
             /** Format: date-time */
             updated_at?: string;
         };

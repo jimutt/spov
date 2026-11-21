@@ -42,6 +42,10 @@ type TemplateSettings struct {
 	Addons        []string          `json:"addons,omitempty"`
 	Apt           []string          `json:"apt,omitempty"`
 	GitAccess     GitAccess         `json:"git_access,omitempty"`
+	// Plugins are OpenCode plugins a launch adds to its sandbox.
+	//
+	// @decision(DL-171)
+	Plugins []string `json:"plugins,omitempty"`
 }
 
 func (t Template) clone() Template {
@@ -50,6 +54,7 @@ func (t Template) clone() Template {
 	t.Env = maps.Clone(t.Env)
 	t.Addons = slices.Clone(t.Addons)
 	t.Apt = slices.Clone(t.Apt)
+	t.Plugins = slices.Clone(t.Plugins)
 	return t
 }
 

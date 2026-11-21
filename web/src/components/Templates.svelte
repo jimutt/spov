@@ -337,6 +337,23 @@
           ></textarea>
           <p class="{help} mb-4">One per line. Empty is not set.</p>
 
+          <!-- @decision(DL-171) -->
+          <label class={label} for="template-plugins">OpenCode plugins</label>
+          <textarea
+            id="template-plugins"
+            class="{fieldMono} resize-y"
+            rows="2"
+            bind:value={draft.plugins}
+            placeholder="envsitter-guard@0.1.1"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+          ></textarea>
+          <p class="{help} mb-4">
+            OpenCode 2 plugins, one npm package per line, as <code class="font-mono text-ink">name</code> or
+            <code class="font-mono text-ink">name@version</code>, for interactive sessions. Empty is not set.
+          </p>
+
           <label class={label} for="template-access">Git access</label>
           <select id="template-access" class={field} bind:value={draft.access} aria-describedby="template-access-note">
             <option value="">Not set</option>

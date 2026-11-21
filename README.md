@@ -13,6 +13,11 @@ cd your-repo
 spov fly
 ```
 
+> **OpenCode 2 only.** spov runs [OpenCode 2](https://opencode.ai/v2/docs) in
+> its sandboxes and expects OpenCode 2 on your machine for the terminal UI.
+> OpenCode 1 and plugins written only for it are not supported; see
+> [OpenCode plugins](docs/plugins.md).
+
 > **Early days.** spov is young: everything described here works and is
 > exercised against real Modal, GitHub, GitLab and Forgejo, but its interfaces
 > may still change between releases.

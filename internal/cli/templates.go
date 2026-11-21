@@ -74,8 +74,10 @@ func underTemplate(env *Env, cfg *config.Config, name string, job bool) {
 	drop(len(sb.Addons) > 0, "sandbox.addons")
 	drop(len(sb.Apt) > 0, "sandbox.apt")
 	drop(len(sb.Env) > 0, "sandbox.env")
+	// @decision(DL-171)
+	drop(len(sb.Plugins) > 0 && !job, "sandbox.plugins")
 	drop(*access != "", accessKey)
-	sb.Egress, sb.EgressExtraDomains, sb.Addons, sb.Apt, sb.Env = "", nil, nil, nil, nil
+	sb.Egress, sb.EgressExtraDomains, sb.Addons, sb.Apt, sb.Env, sb.Plugins = "", nil, nil, nil, nil, nil
 	*access = ""
 	if len(replaced) > 0 {
 		env.deferWarning(fmt.Sprintf("note: the template %s takes the place of %s from your configuration for this launch",
@@ -221,6 +223,10 @@ func templateSummary(v server.TemplateView) string {
 	if v.GitAccess != "" {
 		parts = append(parts, "git access "+string(v.GitAccess))
 	}
+	// @decision(DL-171)
+	if n := len(v.Plugins); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d plugins", n))
+	}
 	if len(parts) == 0 {
 		return "nothing"
 	}
@@ -259,6 +265,8 @@ func printTemplate(env *Env, v server.TemplateView) error {
 	row("add-ons", strings.Join(v.Addons, ", "))
 	row("apt", strings.Join(v.Apt, ", "))
 	row("git access", string(v.GitAccess))
+	// @decision(DL-171)
+	row("plugins", strings.Join(v.Plugins, ", "))
 	return w.Flush()
 }
 

@@ -42,9 +42,10 @@ type Config struct {
 	Platforms []Platform `koanf:"platforms"`
 	Repos     []Repo     `koanf:"repos"`
 	// Landing names the repo (by Repo.Dir) the OpenCode server starts in.
-	// Empty starts it at the workspace root.
+	// Empty leaves it to the server, which starts a one-repository session
+	// inside that repository; `.` is the workspace root.
 	//
-	// @decision(DL-037)
+	// @decision(DL-037) @decision(DL-170)
 	Landing string `koanf:"landing"`
 	// Server names the spov server the CLI talks to.
 	//
@@ -226,6 +227,12 @@ type Sandbox struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `koanf:"env"`
+	// Plugins are OpenCode 2 plugins, as npm package specs, added to an
+	// interactive session's OpenCode config. A list replaces the list
+	// of a lower layer.
+	//
+	// @decision(DL-171)
+	Plugins []string `koanf:"plugins"`
 	// Regions and Cloud pin where the sandbox runs; empty lets the
 	// provider choose.
 	//

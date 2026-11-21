@@ -57,6 +57,11 @@ var (
 		"github.com", "api.github.com", "codeload.github.com",
 		"objects.githubusercontent.com", "*.githubusercontent.com",
 	}
+	// PluginRegistryDomain is where OpenCode installs a plugin from, and
+	// the one host a session with plugins adds under the agent preset.
+	//
+	// @decision(DL-172)
+	PluginRegistryDomain = "registry.npmjs.org"
 	// RegistryDomains are the package registries and toolchain
 	// downloads a dependency install needs, for Go, Node, Python, Rust,
 	// Java, .NET, Ruby, PHP and Debian packages, and for mise and

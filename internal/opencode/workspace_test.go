@@ -211,7 +211,7 @@ func TestAGoalFlowGuideNamesTheCLIsAndNoCreateCommand(t *testing.T) {
 		{Slug: "o/r", Dir: "r", Platform: "cf", Host: "codefloe.com", CLI: CLITea},
 		{Slug: "g/s/r", Dir: "gl", Platform: "gl", Host: "gitlab.com", CLI: CLIGlab},
 	}
-	md := agentsMarkdown(repos, "pr", PRPolicyGoal)
+	md := agentsMarkdown(repos, "pr", PRPolicyGoal, "")
 	for _, want := range []string{
 		"## This job's pull request", "goal says which branch to work on",
 		"**`gh`**", "**`tea`**", "**`glab`**", "merge request",
@@ -231,11 +231,11 @@ func TestAGoalFlowGuideNamesTheCLIsAndNoCreateCommand(t *testing.T) {
 		t.Error("the refusal section is not between the pull request section and the scratchpad")
 	}
 	for _, kind := range []string{"", "report"} {
-		if agentsMarkdown(repos, kind, PRPolicyGoal) != AgentsMarkdown(repos, kind) {
+		if agentsMarkdown(repos, kind, PRPolicyGoal, "") != AgentsMarkdown(repos, kind) {
 			t.Errorf("kind %q took the policy", kind)
 		}
 	}
-	if agentsMarkdown(repos, "pr", "spov") != AgentsMarkdown(repos, "pr") || !strings.Contains(AgentsMarkdown(repos, "pr"), "gh pr create") {
+	if agentsMarkdown(repos, "pr", "spov", "") != AgentsMarkdown(repos, "pr") || !strings.Contains(AgentsMarkdown(repos, "pr"), "gh pr create") {
 		t.Error("spov's policy changed the guide")
 	}
 }

@@ -47,7 +47,7 @@ func TestSandboxConfigJSON(t *testing.T) {
 		} `json:"websearch"`
 		Permission json.RawMessage `json:"permission"`
 	}
-	out := []byte(SandboxConfigJSON("", false))
+	out := []byte(SandboxConfigJSON("", false, nil, nil))
 	if err := json.Unmarshal(out, &cfg); err != nil {
 		t.Fatalf("the generated config is not valid JSON: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestSandboxConfigJSON(t *testing.T) {
 //
 // @decision(DL-031) @decision(DL-038)
 func TestEverySessionPinsItsWebSearch(t *testing.T) {
-	for name, doc := range map[string]string{"interactive": SandboxConfigJSON("m", false), "job": JobConfigJSON("m", false)} {
+	for name, doc := range map[string]string{"interactive": SandboxConfigJSON("m", false, nil, nil), "job": JobConfigJSON("m", false, nil)} {
 		var cfg struct {
 			WebSearch struct {
 				Provider string `json:"provider"`
@@ -104,7 +104,7 @@ func TestSandboxConfigIsScopedToTheWorkspace(t *testing.T) {
 			Action, Resource, Effect string
 		} `json:"permissions"`
 	}
-	if err := json.Unmarshal([]byte(SandboxConfigJSON("", false)), &cfg); err != nil {
+	if err := json.Unmarshal([]byte(SandboxConfigJSON("", false, nil, nil)), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	for _, r := range cfg.Permissions {
@@ -301,9 +301,12 @@ func TestTheConfigDocumentsMatchThePinnedSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, doc := range map[string]string{
-		"interactive": SandboxConfigJSON("anthropic/claude-sonnet-4-5", false), "job": JobConfigJSON("anthropic/claude-sonnet-4-5", false),
+		"interactive": SandboxConfigJSON("anthropic/claude-sonnet-4-5", false, nil, nil), "job": JobConfigJSON("anthropic/claude-sonnet-4-5", false, nil),
 		// @decision(DL-038)
-		"interactive, declared": SandboxConfigJSON("anthropic/claude-next", true), "job, declared": JobConfigJSON("anthropic/claude-next", true),
+		"interactive, declared": SandboxConfigJSON("anthropic/claude-next", true, nil, nil), "job, declared": JobConfigJSON("anthropic/claude-next", true, nil),
+		// @decision(DL-171) @decision(DL-174)
+		"interactive, plugins and guide": SandboxConfigJSON("anthropic/claude-sonnet-4-5", false, []string{"envsitter-guard@0.1.1", "@scope/x"}, []string{AgentsFile}),
+		"job, guide":                     JobConfigJSON("anthropic/claude-sonnet-4-5", false, []string{AgentsFile}),
 	} {
 		if err := d.CheckSchema("Config.InfoEncoded", []byte(doc)); err != nil {
 			t.Errorf("%s: %v\n%s", name, err, doc)
@@ -319,8 +322,8 @@ func TestTheConfigDocumentsMatchThePinnedSchema(t *testing.T) {
 // @decision(DL-038)
 func TestAnUnlistedModelIsDeclared(t *testing.T) {
 	for name, doc := range map[string]string{
-		"interactive": SandboxConfigJSON("openrouter/acme/new-model#high", true),
-		"job":         JobConfigJSON("openrouter/acme/new-model#high", true),
+		"interactive": SandboxConfigJSON("openrouter/acme/new-model#high", true, nil, nil),
+		"job":         JobConfigJSON("openrouter/acme/new-model#high", true, nil),
 	} {
 		var cfg struct {
 			Providers map[string]map[string]any `json:"providers"`
@@ -333,10 +336,10 @@ func TestAnUnlistedModelIsDeclared(t *testing.T) {
 			t.Errorf("%s declares %s", name, got)
 		}
 	}
-	if strings.Contains(SandboxConfigJSON("anthropic/claude-sonnet-5", false), "providers") {
+	if strings.Contains(SandboxConfigJSON("anthropic/claude-sonnet-5", false, nil, nil), "providers") {
 		t.Error("a listed model was declared")
 	}
-	evil := SandboxConfigJSON("anthropic/x\nSPOV_CONFIG_EOF\nrm -rf /", true)
+	evil := SandboxConfigJSON("anthropic/x\nSPOV_CONFIG_EOF\nrm -rf /", true, nil, nil)
 	if strings.Contains(evil, "\nSPOV_CONFIG_EOF") {
 		t.Error("a declared id can close the heredoc")
 	}

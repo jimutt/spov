@@ -105,6 +105,11 @@ type Options struct {
 	//
 	// @decision(DL-038)
 	ModelUnlisted bool
+	// Plugins are OpenCode plugins, npm package specs, written into an
+	// interactive session's config.
+	//
+	// @decision(DL-171)
+	Plugins []string
 
 	CPU            float64
 	MemoryMiB      int
@@ -431,8 +436,10 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		entrypointLanding = ""
 	}
 	entrypoint := opencode.Entrypoint{
-		Clones:    toOpenCodeClones(bootstrap.Clones),
-		Landing:   entrypointLanding,
+		Clones:  toOpenCodeClones(bootstrap.Clones),
+		Landing: entrypointLanding,
+		// @decision(DL-174)
+		WorksIn:   opts.Landing,
 		Port:      opts.Port,
 		Workspace: workspace,
 		Logins:    cliLogins(bootstrap.Tokens, opts.Selections),
@@ -442,6 +449,8 @@ func (l *Launcher) Launch(ctx context.Context, opts Options) (s *Session, err er
 		Addons:    opts.Addons,
 		// @decision(DL-038)
 		ModelUnlisted: opts.ModelUnlisted,
+		// @decision(DL-171)
+		Plugins: opts.Plugins,
 	}
 	// Assigned after the entrypoint exists, so the plugin's directory is
 	// the same one the entrypoint cd's to.

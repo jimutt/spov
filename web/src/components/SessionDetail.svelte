@@ -513,6 +513,9 @@
   const dividers = $derived(timeDividers(windowed.shown, now));
 
   const s = $derived(session.data);
+  // spov sends synthetic messages only into a job's session, so in any
+  // other one a synthetic is OpenCode's or a plugin's. @decision(DL-173)
+  const jobSession = $derived(Boolean(s?.job));
   // The document title leads with the session's title when it has one.
   //
   // @decision(DL-151)
@@ -1189,6 +1192,16 @@
             <!-- What the parent agent asked this subagent: in its view
                  only. @decision(DL-111) @decision(DL-113) -->
             <div class="{row} mb-5"><SubagentPrompt text={block.entry.text} /></div>
+          {:else if block.kind === 'message' && block.entry.role === 'synthetic' && !jobSession}
+            <!-- Context OpenCode or a plugin added, never spov's words:
+                 folded, and said to be neither yours nor the agent's.
+                 @decision(DL-173) -->
+            <details class="{row} group/injected mb-5" data-testid="injected">
+              <summary class="{textButton} list-none [&::-webkit-details-marker]:hidden">
+                <Icon name="chevron" class="chevron size-3" />Added by OpenCode or a plugin
+              </summary>
+              <div class="mt-1.5 border-l-2 border-rule-2 pl-3">{@render markdown(block.entry.text, 'text-md text-soft')}</div>
+            </details>
           {:else if block.kind === 'message'}
             {@const synthetic = block.entry.role === 'synthetic'}
             {@const mine = block.entry.role === 'user'}
@@ -1864,7 +1877,7 @@
         {/if}
       </details>
 
-      {#if repoNames(s).length || s.landing || s.credentials?.length || s.routed_credentials?.length}
+      {#if repoNames(s).length || s.landing || s.plugins?.length || s.credentials?.length || s.routed_credentials?.length}
         <section>
           <h2 class="m-0 mb-2 text-base font-semibold">Workspace</h2>
           <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
@@ -1876,6 +1889,12 @@
               <dt class="text-soft">Landed in</dt>
               <dd class="m-0 text-right font-mono [overflow-wrap:anywhere]">{s.landing}</dd>
             {/if}
+            <!-- The plugins the launch added to OpenCode's config; a
+                 repository's own opencode.json may add more. @decision(DL-171) -->
+            {#each s.plugins ?? [] as plugin (plugin)}
+              <dt class="text-soft">Plugin</dt>
+              <dd class="m-0 text-right font-mono [overflow-wrap:anywhere]" data-testid="session-plugin">{plugin}</dd>
+            {/each}
           </dl>
           <!-- What the sandbox holds for each platform, never the secret:
                the kind, and anything unusual about where it is kept or how

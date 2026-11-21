@@ -60,10 +60,11 @@ type Entrypoint struct {
 	// @decision(DL-036)
 	Clones []Clone
 	// Landing is the directory under WorkspaceRoot the server starts in.
-	// Empty means WorkspaceRoot itself, and nothing defaults it to a
-	// repository.
+	// Empty means WorkspaceRoot itself. The server names a one-repository
+	// interactive session's repository here (DL-170); nothing below it
+	// picks one.
 	//
-	// @decision(DL-037)
+	// @decision(DL-037) @decision(DL-170)
 	Landing string
 	// Port the server listens on.
 	Port int
@@ -96,6 +97,18 @@ type Entrypoint struct {
 	//
 	// @decision(DL-038)
 	ModelUnlisted bool
+	// WorksIn is the repository directory the session's conversations
+	// work in, when it is one. It is Landing, except for a local-only
+	// synced session, which starts the server in the workspace because
+	// its repository is seeded after the entrypoint starts.
+	//
+	// @decision(DL-174)
+	WorksIn string
+	// Plugins are written into an interactive session's config; a job's
+	// carries none.
+	//
+	// @decision(DL-171)
+	Plugins []string
 	// Proxied means the sandbox has the credential proxy sidecar: the
 	// entrypoint installs its CA and waits for it before cloning.
 	//
@@ -367,7 +380,7 @@ func (e Entrypoint) writeWorkspaceGuide(b *strings.Builder) {
 	}
 	fmt.Fprintf(b, "cat > %s <<'SPOV_AGENTS_EOF'\n", AgentsFile)
 	// @decision(DL-137)
-	b.WriteString(agentsMarkdown(e.Workspace, kind, policy))
+	b.WriteString(agentsMarkdown(e.Workspace, kind, policy, e.worksIn()))
 	// @decision(DL-089)
 	if e.Resume == ResumeTranscript {
 		b.WriteString("\n" + TranscriptResumeNote)
@@ -413,6 +426,29 @@ func (e Entrypoint) writeGitIdentity(b *strings.Builder) {
 	}
 }
 
+// guideInstructions lists the generated guide in the config when the
+// session starts inside a repository: OpenCode looks for AGENTS.md from
+// the session's directory up to the repository's root and no further,
+// so it would never reach /workspace/AGENTS.md. A session in /workspace
+// finds the guide itself, and listing it there too would load it twice.
+//
+// @decision(DL-174) @decision(DL-037)
+func (e Entrypoint) guideInstructions() []string {
+	if e.worksIn() == "" || len(e.Workspace) == 0 {
+		return nil
+	}
+	return []string{AgentsFile}
+}
+
+// worksIn is the repository directory the session works in, or "" for
+// the workspace root.
+func (e Entrypoint) worksIn() string {
+	if e.WorksIn != "" {
+		return e.WorksIn
+	}
+	return e.Landing
+}
+
 // writeOpenCodeConfig writes the global OpenCode config.
 //
 // ConfigDir is the one interpolated word here that is not shellQuoted:
@@ -425,9 +461,9 @@ func (e Entrypoint) writeGitIdentity(b *strings.Builder) {
 // @decision(DL-038) @decision(DL-040)
 func (e Entrypoint) writeOpenCodeConfig(b *strings.Builder) {
 	fmt.Fprintf(b, "mkdir -p \"%s\"\n", ConfigDir)
-	config := SandboxConfigJSON(e.Model, e.ModelUnlisted)
+	config := SandboxConfigJSON(e.Model, e.ModelUnlisted, e.Plugins, e.guideInstructions())
 	if e.Job != nil {
-		config = JobConfigJSON(e.Model, e.ModelUnlisted)
+		config = JobConfigJSON(e.Model, e.ModelUnlisted, e.guideInstructions())
 	}
 	fmt.Fprintf(b, "cat > \"%s\" <<'SPOV_CONFIG_EOF'\n", ConfigFile)
 	b.WriteString(config)
@@ -551,6 +587,15 @@ func (e Entrypoint) Validate() error {
 		if !strings.HasPrefix(f.Path, "/") || strings.Contains("\n"+f.Content+"\n", "\n"+fileMarker+"\n") || !strings.HasSuffix(f.Content, "\n") {
 			return fmt.Errorf("opencode: the config file %s cannot be written", f.Path)
 		}
+	}
+	if e.WorksIn != "" {
+		if err := validDir(e.WorksIn); err != nil {
+			return fmt.Errorf("opencode: works in: %w", err)
+		}
+	}
+	// @decision(DL-171)
+	if err := CheckPlugins(e.Plugins); err != nil {
+		return fmt.Errorf("opencode: %w", err)
 	}
 	if e.Landing != "" {
 		if err := validDir(e.Landing); err != nil {

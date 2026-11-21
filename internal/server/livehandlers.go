@@ -49,8 +49,11 @@ type LogEvent struct {
 	// @decision(DL-058)
 	Source string `json:"source" enum:"opencode,ephemeral,spov"`
 	// Role is who spoke, where the frame says: "user" for a person's
-	// prompt, "synthetic" for one of spov's own, "assistant" for the
-	// agent. Empty when the frame names nobody, which is most of them.
+	// prompt, "synthetic" for one sent by spov in a job's session or by
+	// OpenCode or a plugin anywhere, "assistant" for the agent. Empty
+	// when the frame names nobody, which is most of them.
+	//
+	// @decision(DL-173)
 	//
 	// @decision(DL-058)
 	Role string `json:"role,omitempty"`

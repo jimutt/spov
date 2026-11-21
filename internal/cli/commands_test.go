@@ -685,17 +685,18 @@ func TestFlyRejectsABadSandboxConfigBeforeLaunching(t *testing.T) {
 }
 
 // TestFlyRepoFlagOverridesConfiguredLanding: a landing that names a
-// configured repo cannot apply to a list --repo replaced.
+// configured repo cannot apply to a list --repo replaced; the server
+// starts the session in its one repository instead.
 //
-// @decision(DL-037)
+// @decision(DL-037) @decision(DL-170)
 func TestFlyRepoFlagOverridesConfiguredLanding(t *testing.T) {
 	f := newAPIFixtureWithConfig(t, defaultConfig+"landing: spov\n")
 	_, stderr, err := runWith(t, f.env, "fly", "--repo", "alice/other")
 	if err != nil {
 		t.Fatalf("fly: %v\n%s", err, stderr)
 	}
-	if got := f.session(f.provider.Created[0].Name).Request.Landing; got != "" {
-		t.Errorf("landing = %q, want none when --repo replaced the list", got)
+	if got := f.session(f.provider.Created[0].Name).Request.Landing; got != "other" {
+		t.Errorf("landing = %q, want the session's one repository, not the configured spov", got)
 	}
 }
 

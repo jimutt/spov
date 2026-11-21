@@ -57,6 +57,8 @@ type SessionView struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:"env,omitempty" doc:"The environment variables set in the sandbox beside spov's own, as name to value"`
+	// @decision(DL-171)
+	Plugins []string `json:"plugins,omitempty" doc:"The OpenCode plugins the launch added to the sandbox's config, as npm package specs"`
 	// @decision(DL-120)
 	Template string `json:"template,omitempty" doc:"The sandbox template the launch took settings from"`
 	// BootedImage and InstalledAddons are what the sandbox got, which
@@ -247,7 +249,7 @@ type SandboxConfigView struct {
 type SessionRequest struct {
 	Name    string            `json:"name,omitempty" maxLength:"63" doc:"Session and sandbox name; generated when empty"`
 	Repos   []RepoRef         `json:"repos" minItems:"1"`
-	Landing string            `json:"landing,omitempty" doc:"Workspace directory to start in; the workspace root when empty"`
+	Landing string            `json:"landing,omitempty" doc:"Workspace directory to start in; when empty, a session with one repository starts in it on a server with the credential proxy, and otherwise at the workspace root; . is the workspace root"`
 	Image   string            `json:"image,omitempty"`
 	Sandbox SandboxConfigView `json:"sandbox,omitempty"`
 	Egress  string            `json:"egress,omitempty" doc:"Egress preset name"`
@@ -291,6 +293,11 @@ type SessionRequest struct {
 	//
 	// @decision(DL-096)
 	Env map[string]string `json:"env,omitempty" doc:"Environment variables set in the sandbox, as name to value; not secret, they are stored and shown with the session"`
+	// Plugins are OpenCode plugins, npm package specs, added to the
+	// sandbox's config.
+	//
+	// @decision(DL-171)
+	Plugins []string `json:"plugins,omitempty" maxItems:"16" doc:"OpenCode plugins as npm package specs, e.g. envsitter-guard or @scope/name@1.2.0, added to the sandbox's OpenCode config"`
 	// @decision(DL-120)
 	Template string `json:"template,omitempty" maxLength:"40" doc:"One of the caller's sandbox templates: its settings apply where the request sets none"`
 	// Sync seeds the sandbox repository from a local git branch and
@@ -328,6 +335,8 @@ func (r SessionRequest) toStore() (store.SessionRequest, error) {
 		Addons: r.Addons, Apt: r.Apt,
 		// @decision(DL-096)
 		Env: r.Env, Template: r.Template,
+		// @decision(DL-171)
+		Plugins: r.Plugins,
 		// @decision(DL-027)
 		Sync: sync,
 	}, nil
@@ -368,6 +377,8 @@ func viewOf(s store.Session, now time.Time) SessionView {
 		Model: s.Request.Model,
 		Image: s.Request.Image, Sandbox: sandboxViewOf(s.Request.Sandbox), Egress: s.Request.Egress,
 		Addons: s.Request.Addons, Apt: s.Request.Apt, Env: s.Request.Env, Template: s.Request.Template,
+		// @decision(DL-171)
+		Plugins:     s.Request.Plugins,
 		BootedImage: s.Booted.Image, InstalledAddons: s.Booted.Addons,
 		CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt, StoppedAt: s.StoppedAt,
 		Credentials: credentialViews(s.Credentials),
