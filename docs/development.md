@@ -104,3 +104,13 @@ node .claude/skills/dld-common/scripts/dld.mjs regenerate-index         # rewrit
 `scripts/comment-blocks.py`, run by `check.sh`, fails on a comment block over
 20 lines: a comment that needs a paragraph of why means the record is missing
 it.
+
+**The first records are a consolidation.** spov was developed in another
+repository before it moved here, and the decisions made there were merged into
+the first batch of records on the move. That is why the records up to DL-069
+all carry the same midnight timestamp (`2026-11-04T00:00:00Z`) rather than the
+moment each was made, and why many of them are long: one record often holds
+what were several decisions, with their later amendments and measurements
+folded in. From DL-070 on, each record is one decision, timestamped when it
+was recorded, and a change to an accepted one is a new record that amends or
+supersedes it.
