@@ -21,6 +21,7 @@
     type EventEntry,
   } from '../lib/timeline';
   import { touchFirst } from '../lib/steer';
+  import { lockScroll } from '../lib/scrolllock';
   import Icon from './Icon.svelte';
   import { secondary, textButton } from './ui';
 
@@ -53,7 +54,11 @@
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   });
-  const sheet = $derived(open && foldable && !wide);
+  // Whether the reader's own press opened the run as a sheet: decided
+  // when it opens, so a viewport crossing `lg` meanwhile neither turns an
+  // inline run into a sheet nor a sheet into an inline run.
+  let asSheet = $state(false);
+  const sheet = $derived(open && foldable && asSheet);
   const visible = $derived(shown(events, open && !sheet));
 
   let root = $state<HTMLElement | null>(null);
@@ -67,13 +72,17 @@
   //
   // @decision(DL-167)
   let pushed = false;
+  let closing = false;
   $effect(() => {
     if (!sheet) return;
     history.pushState({ spovRun: true }, '', location.href);
     pushed = true;
+    closing = false;
     const onPop = () => {
       if (!pushed) return;
       pushed = false;
+      closing = false;
+      asSheet = false;
       ontoggle();
     };
     const onKey = (e: KeyboardEvent) => {
@@ -81,21 +90,30 @@
     };
     window.addEventListener('popstate', onPop);
     window.addEventListener('keydown', onKey);
-    const restore = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const frame = requestAnimationFrame(() => closeButton?.focus());
+    const release = lockScroll();
+    const frame = requestAnimationFrame(() => closeButton?.focus({ preventScroll: true }));
     return () => {
       window.removeEventListener('popstate', onPop);
       window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = restore;
+      release();
       cancelAnimationFrame(frame);
-      toggleButton?.focus();
+      // The page behind may have followed new blocks meanwhile: focus
+      // must not scroll it back to the summary.
+      toggleButton?.focus({ preventScroll: true });
     };
   });
 
+  // Once: a second Close or Escape before the first one's popstate
+  // would go back past the sheet's entry and leave the page.
   function close(): void {
-    if (pushed) history.back();
-    else ontoggle();
+    if (closing) return;
+    if (pushed) {
+      closing = true;
+      history.back();
+    } else {
+      asSheet = false;
+      ontoggle();
+    }
   }
 
   // Folding a run opened in place whose top has scrolled above its
@@ -103,6 +121,11 @@
   //
   // @decision(DL-167) @decision(DL-163)
   async function toggle(): Promise<void> {
+    if (sheet) {
+      close();
+      return;
+    }
+    if (!open) asSheet = foldable && !wide;
     if (!open || sheet || !root || !head) {
       ontoggle();
       return;

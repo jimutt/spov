@@ -180,6 +180,21 @@ describe('promotion', () => {
     ]);
   });
 
+  // @decision(DL-166)
+  test('an older event whose message the transcript no longer holds leaves the newer one alone', () => {
+    // The transcript keeps only the newest messages; the log goes back
+    // further, so an earlier "Done." has no message of its own here.
+    const t = buildTimeline(conv({ role: 'assistant', text: 'Done.', at: '2026-09-01T12:01:00Z' }), [
+      ev(1, 'session.text.ended', '2026-09-01T11:00:00Z', 'Done.'),
+      ev(2, 'session.reasoning.ended', '2026-09-01T12:01:20Z', 'wrap up'),
+      ev(3, 'session.text.ended', '2026-09-01T12:01:30Z', 'Done.'),
+    ]);
+    expect(t.map((e) => (e.kind === 'event' ? e.name : e.kind === 'message' ? e.key : ''))).toEqual([
+      'session.reasoning.ended',
+      'm0.0',
+    ]);
+  });
+
   test('the same words promoted twice are spoken once', () => {
     const t = buildTimeline([], [
       ev(0, 'session.text.ended', '', 'here you go'),

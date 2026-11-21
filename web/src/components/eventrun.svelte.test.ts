@@ -1,5 +1,5 @@
 import { flushSync, mount, unmount } from "svelte";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import EventRun from "./EventRun.svelte";
 import type { EventEntry } from "../lib/timeline";
 
@@ -172,6 +172,57 @@ describe("a long run on a narrow screen", () => {
     flushSync();
     expect(r.sheet()).toBeNull();
     expect(r.state.open).toBe(false);
+    r.done();
+    restore();
+  });
+});
+
+describe("a long run whose screen changes width", () => {
+  // @decision(DL-167)
+  it("stays a sheet once opened as one, and an inline run never becomes one", () => {
+    let matches = false;
+    const listeners: (() => void)[] = [];
+    const was = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      get matches() {
+        return matches;
+      },
+      media: query,
+      addEventListener: (_: string, f: () => void) => listeners.push(f),
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    const depth = history.length;
+    matches = true;
+    const r = drawToggling();
+    r.summary().click();
+    flushSync();
+    expect(r.sheet()).toBeNull();
+    matches = false;
+    listeners.forEach((f) => f());
+    flushSync();
+    expect(r.sheet()).toBeNull();
+    expect(history.length).toBe(depth);
+    expect(document.body.style.overflow).toBe("");
+    r.done();
+    window.matchMedia = was;
+  });
+});
+
+describe("closing a sheet twice", () => {
+  // @decision(DL-167)
+  it("goes back once", async () => {
+    const restore = narrow();
+    const r = drawToggling();
+    r.summary().click();
+    flushSync();
+    const back = vi.spyOn(history, "back");
+    (r.sheet()!.querySelector("button") as HTMLButtonElement).click();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(back).toHaveBeenCalledTimes(1);
+    await new Promise((done) => window.addEventListener("popstate", done, { once: true }));
+    flushSync();
+    expect(r.sheet()).toBeNull();
+    back.mockRestore();
     r.done();
     restore();
   });

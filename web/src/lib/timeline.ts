@@ -778,8 +778,12 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       const already = id ? ids.has(id) || (!identified && said.has(body)) : said.has(body);
       if (already) {
         // @decision(DL-166)
-        const stored = spoke === "assistant" ? unplaced.get(body)?.shift() : undefined;
+        // Taken only when it moves: an older event whose own message the
+        // transcript no longer holds must not use up a newer one.
+        const waiting = spoke === "assistant" ? unplaced.get(body) : undefined;
+        const stored = waiting?.[0];
         if (stored && at >= stored.at) {
+          waiting!.shift();
           stored.at = at;
           stored.seq = seq + pos;
         }
