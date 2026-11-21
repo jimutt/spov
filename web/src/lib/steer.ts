@@ -667,17 +667,15 @@ export function inboxClosed(sessionState: string | undefined, tailEnded: boolean
 }
 
 /**
- * queuedNote is the line under a person's message still waiting to be
- * read, worded by how it was sent and what follows it.
+ * queuedNote is the one quiet word under a person's message still
+ * waiting to be read: "Queued" for one read when the turn ends,
+ * "Waiting" for one read at the next step. When it is read is said once,
+ * beside the composer's choice, never under every message.
  *
- * @decision(DL-019) @decision(DL-059)
+ * @decision(DL-019) @decision(DL-059) @decision(DL-165)
  */
-export function queuedNote(delivery?: string, after?: string): string {
-  const when =
-    delivery === "queue"
-      ? "Queued: the agent reads it when its current turn ends."
-      : "Waiting: the agent reads it once its current step finishes.";
-  return after === "handover" ? when + " The job then pauses for you." : when;
+export function queuedNote(delivery?: string): string {
+  return delivery === "queue" ? "Queued" : "Waiting";
 }
 
 /**

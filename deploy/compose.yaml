@@ -78,7 +78,7 @@ services:
       SPOV_GITHUB_APP_PRIVATE_KEY: "${SPOV_GITHUB_APP_PRIVATE_KEY:-}"
       SPOV_PLATFORM_TOKEN_CODEFLOE: "${SPOV_PLATFORM_TOKEN_CODEFLOE:-}"
       # Per-user limits, checked before anything billable. Unset uses
-      # the built-in defaults (3 sessions, 8h, 4 CPU, 16 GiB) rather
+      # the built-in defaults (5 sessions, 8h, 4 CPU, 16 GiB) rather
       # than no limit — an unbounded default is how a hosted server
       # gets a surprise bill. Admins raise or lower them per user
       # through PATCH /api/v1/users/{id}.

@@ -95,6 +95,21 @@ describe('following the tail', () => {
     expect(tail.following).toBe(true);
   });
 
+  // The page's way back is a smooth scroll: every frame of it is a
+  // scroll event part-way down the page, which must keep the latch.
+  //
+  // @decision(DL-163)
+  test('a smooth way back keeps the latch through every frame of it', () => {
+    const tail = new Tail();
+    tail.onScroll(scroller(end()));
+    tail.onScroll(scroller(0));
+    tail.resume(scroller(0));
+    for (let at = 0; at <= end(); at += 300) {
+      tail.onScroll(scroller(at));
+      expect(tail.following, `released at ${at}`).toBe(true);
+    }
+  });
+
   test('following survives a run of arriving events', () => {
     // The sequence a live job actually produces: an event lands, the
     // page follows it, the browser then delivers the scroll that the

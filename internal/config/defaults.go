@@ -39,17 +39,17 @@ func Defaults() Config {
 		Snapshots: Snapshots{Enabled: true, Retention: 168 * time.Hour, MaxPerUser: 20},
 		// @decision(DL-093)
 		History: History{Retention: 720 * time.Hour, MaxSessionMiB: 1024},
-		// Per-user limits for a hosted server. Three concurrent
+		// Per-user limits for a hosted server. Five concurrent
 		// sessions and eight hours are generous for one person and
 		// still bound what any one user can spend.
 		//
-		// @decision(DL-009)
+		// @decision(DL-009) @decision(DL-162)
 		Quotas: Quotas{
-			MaxConcurrentSessions: 3,
+			MaxConcurrentSessions: 5,
 			// Fewer jobs than sessions: a job runs unattended.
 			//
-			// @decision(DL-045)
-			MaxConcurrentJobs: 2,
+			// @decision(DL-045) @decision(DL-162)
+			MaxConcurrentJobs: 4,
 			// @decision(DL-049)
 			MaxJobDuration: 4 * time.Hour,
 			MaxTimeout:     8 * time.Hour,

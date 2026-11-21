@@ -113,8 +113,8 @@ server:
 
 # --- Read only by spov serve ---------------------------------------------------------
 quotas:                             # per-user defaults; 0 means the built-in default, not unlimited
-  max_concurrent_sessions: 3
-  max_concurrent_jobs: 2
+  max_concurrent_sessions: 5
+  max_concurrent_jobs: 4
   max_job_duration: 4h
   max_timeout: 8h
   max_cpu: 4

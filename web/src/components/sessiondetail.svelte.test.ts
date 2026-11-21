@@ -1542,6 +1542,39 @@ describe("the session page on a phone", () => {
     page.done();
   });
 
+  // An instant scroll the page makes leaves Firefox for Android's top bar
+  // undrawn, so following a growing transcript is a smooth scroll, and
+  // "Jump to latest" stays away while it travels.
+  //
+  // @decision(DL-163)
+  it("follows a growing transcript with a smooth scroll and offers no jump meanwhile", async () => {
+    const page = await open();
+    let height = 5000;
+    let top = 4300;
+    const el = document.documentElement;
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => height });
+    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => 700 });
+    Object.defineProperty(el, "scrollTop", { configurable: true, get: () => top });
+    try {
+      window.dispatchEvent(new Event("scroll"));
+      await settle();
+      const scrolled = vi.spyOn(Element.prototype, "scrollTo");
+      // A reply lands and the page grows by more than the end's margin;
+      // the stubbed scroll moves nothing, as a smooth one has not yet.
+      height = 5600;
+      stub.say({ name: "session.text.ended", source: "opencode", role: "assistant", text: "a long reply", at: "2026-09-16T10:01:00Z", pos: 1 });
+      await settle();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(scrolled).toHaveBeenCalledWith({ top: 5600, behavior: "smooth" });
+      expect(scrolled).not.toHaveBeenCalledWith(expect.objectContaining({ behavior: "auto" }));
+      expect(page.said()).not.toContain("Jump to latest");
+      scrolled.mockRestore();
+    } finally {
+      for (const key of ["scrollHeight", "clientHeight", "scrollTop"]) delete (el as unknown as Record<string, unknown>)[key];
+      page.done();
+    }
+  });
+
   it("returns to the end when a message is sent from further up the page", async () => {
     const page = await open();
     // A page a long way from its end: the latch is released by a move up.
@@ -1564,7 +1597,7 @@ describe("the session page on a phone", () => {
       page.send().click();
       await settle();
       await new Promise((r) => setTimeout(r, 50));
-      expect(scrolled).toHaveBeenCalledWith({ top: 5000, behavior: "auto" });
+      expect(scrolled).toHaveBeenCalledWith({ top: 5000, behavior: "smooth" });
       scrolled.mockRestore();
     } finally {
       for (const key of ["scrollHeight", "clientHeight", "scrollTop"]) delete (el as unknown as Record<string, unknown>)[key];
