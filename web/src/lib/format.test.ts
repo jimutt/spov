@@ -579,6 +579,16 @@ describe('clockBar', () => {
     expect(bar.endValue).toBe(clock('2026-09-01T16:00:00Z'));
   });
 
+  // @decision(DL-169)
+  test("a resumed session's bar counts from its current run, not its creation", () => {
+    const resumed = session({ sandbox: { timeout_secs: 4 * 3600 }, created_at: '2026-08-31T22:00:00Z', run_started_at: '2026-09-01T13:00:00Z' });
+    const bar = clockBar(resumed, undefined, NOW)!;
+    expect(bar.start).toBe(`Started ${clock('2026-09-01T13:00:00Z')}`);
+    expect(bar.endValue).toBe(clock('2026-09-01T17:00:00Z'));
+    expect(bar.fraction).toBeCloseTo(0.25);
+    expect(age(resumed, NOW)).toBe(3600);
+  });
+
   test('a delivering job falls back to the sandbox', () => {
     const bar = clockBar(session({ sandbox: { timeout_secs: 4 * 3600 } }), job('delivering'), NOW)!;
     expect(bar.endLabel).toBe('Sandbox stops at');

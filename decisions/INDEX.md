@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-169 | A session's view carries its current run's start, and the page times the sandbox from it | accepted | web | session-page, resume |
 | DL-165 | A stopped session keeps the ordinary message box to resume it, and a waiting message says one quiet word | accepted | web | session-page, composer |
 | DL-164 | The limit meter's capped row fits a phone and fills in proportion past 24 units | accepted | web | quotas, listings, phone-layout |
 | DL-163 | The transcript follows its end with a smooth scroll, because Firefox for Android stops drawing the phone's top bar after an instant one | accepted | web | phone-layout, session-page |

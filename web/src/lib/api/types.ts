@@ -2160,6 +2160,11 @@ export interface components {
             resume?: components["schemas"]["ResumeView"];
             /** @description The routed credentials the proxy holds for this session, with their hosts */
             routed_credentials?: components["schemas"]["SessionRoutedCredentialView"][] | null;
+            /**
+             * Format: date-time
+             * @description When the current run's sandbox started; the sandbox's timeout counts from it
+             */
+            run_started_at?: string;
             sandbox: components["schemas"]["SandboxConfigView"];
             sandbox_id?: string;
             /** @enum {string} */
