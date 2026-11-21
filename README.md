@@ -1,6 +1,6 @@
 # spov
 
-**Run coding agents in disposable cloud sandboxes, on your own repositories.**
+**Run OpenCode in disposable, remote Modal sandboxes.**
 
 spov starts an [OpenCode](https://opencode.ai) agent in a fresh
 [Modal](https://modal.com) sandbox with only the repositories you choose,
