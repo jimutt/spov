@@ -1,6 +1,31 @@
-# spov
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/spov-logotype-dark.svg">
+    <img alt="spov" src="docs/assets/spov-logotype-light.svg" width="280">
+  </picture>
+</p>
 
-**Run OpenCode in disposable, remote Modal sandboxes.**
+<p align="center">
+  <strong>Run OpenCode in disposable, remote Modal sandboxes.</strong>
+</p>
+
+<p align="center">
+  <a href="#get-started">Install</a>
+  &nbsp;·&nbsp;
+  <a href="docs/README.md">Docs</a>
+  &nbsp;·&nbsp;
+  <a href="docs/sessions.md">Sessions</a>
+  &nbsp;·&nbsp;
+  <a href="docs/jobs.md">Jobs</a>
+  &nbsp;·&nbsp;
+  <a href="docs/server.md">Dashboard</a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/jimutt/spov/releases">Releases</a>
+</p>
+
+<p align="center">
+  <img alt="spov fly: the launch view, an ASCII curlew beside the launch steps" src="docs/assets/launch-view.png" width="720">
+</p>
 
 spov starts an [OpenCode](https://opencode.ai) agent in a fresh
 [Modal](https://modal.com) sandbox with only the repositories you choose,
