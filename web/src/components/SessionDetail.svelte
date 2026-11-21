@@ -132,7 +132,6 @@
   import Icon from './Icon.svelte';
   import InfoToggle from './InfoToggle.svelte';
   import Problem from './Problem.svelte';
-  import ResumeComposer from './ResumeComposer.svelte';
   import StateMark from './StateMark.svelte';
   import { primary, secondary, secondarySmall, textButton } from './ui';
 
@@ -805,13 +804,11 @@
   function toEnd(): void {
     const el = scroller();
     if (!el) return;
-    // `auto` rather than the default: a smooth scroll animates over
-    // several hundred milliseconds, and every frame of it fires a
-    // scroll event from part-way up the page — which releases the latch
-    // the jump just re-armed, so the page stops following the moment it
-    // arrives. Jumping outright also matches what the control says it
-    // does.
-    el.scrollTo({ top: tail.resume(el), behavior: 'auto' });
+    // Smooth, as every scroll the page makes: an instant one leaves Firefox
+    // for Android's top bar undrawn. The latch is re-armed first and only
+    // a move up releases it, so the frames of the way down keep it.
+    // @decision(DL-163)
+    followTo(el, tail.resume(el));
     anchoring();
     measure();
   }
@@ -1251,7 +1248,7 @@
                     {#if cancelling.has(id)}
                       Cancelling…
                     {:else}
-                      {queuedNote(block.entry.delivery, block.entry.after)}
+                      {queuedNote(block.entry.delivery)}
                       {#if composerShown(s.state, tailEnded)}
                         <button type="button" class={textButton} data-testid="message-cancel" onclick={() => cancelQueued(id)}
                           >Cancel</button
@@ -1416,7 +1413,9 @@
           onJobChanged={() => void jobs.refresh()}
         />
       {:else if s.resume && resumeOffered(s.state, s.resume) && !job}
-        <ResumeComposer {ref} resume={s.resume} onResumed={reread} />
+        <!-- The ordinary box, which resumes the session with what is
+             written. @decision(DL-165) -->
+        <Composer {ref} inFlight={false} jobKnown={jobs.loaded} onEcho={track} resume={s.resume} onResumed={reread} />
       {/if}
       </div>
     </div>

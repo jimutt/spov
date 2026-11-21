@@ -1597,7 +1597,7 @@ describe("the session page on a phone", () => {
       page.send().click();
       await settle();
       await new Promise((r) => setTimeout(r, 50));
-      expect(scrolled).toHaveBeenCalledWith({ top: 5000, behavior: "auto" });
+      expect(scrolled).toHaveBeenCalledWith({ top: 5000, behavior: "smooth" });
       scrolled.mockRestore();
     } finally {
       for (const key of ["scrollHeight", "clientHeight", "scrollTop"]) delete (el as unknown as Record<string, unknown>)[key];

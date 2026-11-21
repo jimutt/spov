@@ -21,6 +21,7 @@
     controlsNote,
     deliveryNote,
     draftProblem,
+    newMessageID,
     offersAfter,
     restoredDraft,
     resumable,
@@ -31,6 +32,8 @@
     touchFirst,
     stopOutcome,
   } from '../lib/steer';
+  import { Committed } from '../lib/jobform';
+  import { type ResumeView, resumed } from '../lib/resume';
   import Icon from './Icon.svelte';
   import InfoToggle from './InfoToggle.svelte';
   import { modelChip, type ModelVariants } from '../lib/reasoning';
@@ -106,9 +109,18 @@
      * rejects.
      */
     onJobChanged?: () => void | Promise<void>;
+    /**
+     * Set on a stopped session that can resume: the box resumes it with
+     * what is written, and draws no status line, chip or options.
+     *
+     * @decision(DL-165)
+     */
+    resume?: ResumeView;
+    /** Called once a resume was accepted, so the page re-reads. */
+    onResumed?: () => void | Promise<void>;
   }
 
-  const { ref, jobKnown, jobState, jobId, inFlight, working = 0, turnsEnded = 0, asking = false, model, variants, onVariantsStale, onEcho, onJobChanged }: Props =
+  const { ref, jobKnown, jobState, jobId, inFlight, working = 0, turnsEnded = 0, asking = false, model, variants, onVariantsStale, onEcho, onJobChanged, resume, onResumed }: Props =
     $props();
 
   let text = $state('');
@@ -178,7 +190,7 @@
   // they do behind its (i).
   //
   // @decision(DL-059)
-  const status = $derived(composerStatus(jobState, inFlight, asking, working));
+  const status = $derived(resume ? null : composerStatus(jobState, inFlight, asking, working));
   // @decision(DL-144)
   const explained = $derived(controlsNote(jobState, stoppable, releasable, inFlight ? 0 : working));
   let controlsOpen = $state(false);
@@ -307,7 +319,8 @@
     // by Enter, by requestSubmit or by an extension. A job state that
     // refuses a message is not checked here — the form is not rendered
     // at all in that case.
-    if (problem || sending) return;
+    if (problem || sending || committed) return;
+    if (resume) return goResume();
     const words = text;
     const act = `${delivery}/${following}`;
     if (act !== replayAct) replay = '';
@@ -334,6 +347,37 @@
       //
       // @decision(DL-059) @decision(DL-155)
       text = restoredDraft(words, text);
+    } finally {
+      sending = false;
+    }
+  }
+
+  // A resume that may have happened while its answer could not be read
+  // keeps Send off: a second one buys nothing but a refusal.
+  //
+  // @decision(DL-165) @decision(DL-090)
+  let committed = $state(false);
+  // A stopped session's box resumes it with what was written, cleared at
+  // once and given back on a refusal, as a send is.
+  //
+  // @decision(DL-165) @decision(DL-090)
+  async function goResume() {
+    const words = text;
+    sending = true;
+    failure = undefined;
+    text = '';
+    try {
+      // No conversation named, as a send names none: the server steers an
+      // omitted one into the session's oldest. @decision(DL-019)
+      await resumed(
+        (body) => api.POST('/api/v1/sessions/{ref}/resume', { params: { path: { ref } }, body }),
+        { text: words.trim(), id: newMessageID() },
+      );
+      await onResumed?.();
+    } catch (err) {
+      failure = err;
+      if (err instanceof Committed) committed = true;
+      else text = restoredDraft(words, text);
     } finally {
       sending = false;
     }
@@ -440,12 +484,12 @@
         class="{fieldBase} resize-none px-3 py-2.5 text-read max-md:row-start-1 max-md:max-h-[40dvh] max-md:min-h-11 max-md:rounded-xl max-md:border-0 max-md:bg-transparent max-md:py-2.5 max-md:focus-visible:outline-0 {toolbar
           ? 'max-md:col-span-2'
           : 'max-md:col-start-1'} md:min-h-[5.75rem] md:resize-y"
-        placeholder="Message this session"
+        placeholder={resume ? 'Resume session' : 'Message this session'}
       ></textarea>
 
       <button
         type="button"
-        class="{toolbar
+        class="{toolbar && !resume
           ? 'inline-flex'
           : 'hidden'} relative col-start-1 row-start-2 h-8 min-w-0 cursor-pointer items-center gap-1.5 justify-self-start rounded-full border border-rule-2 bg-transparent px-2.5 py-0 text-sm text-soft after:absolute after:-inset-y-1.5 after:inset-x-0 after:content-[''] focus-visible:outline-2 focus-visible:outline-olive focus-visible:outline-offset-2 md:hidden"
         aria-expanded={optionsOpen}
@@ -465,7 +509,7 @@
         class="{primary} max-md:relative max-md:col-start-2 max-md:size-9 max-md:rounded-full max-md:p-0 max-md:after:absolute max-md:after:-inset-1 max-md:after:content-[''] {toolbar
           ? 'max-md:row-start-2'
           : 'max-md:row-start-1'}"
-        disabled={sending || problem !== ''}
+        disabled={sending || committed || problem !== ''}
         onmousedown={keepFocus}
         ><Icon name="send" class="size-5 md:hidden" /><span class="max-md:sr-only">{sending ? 'Sending…' : 'Send'}</span></button
       >

@@ -738,13 +738,12 @@ describe("whether a queued message can still be read", () => {
   });
 });
 
-// @decision(DL-019) @decision(DL-059)
-describe("the line under a waiting message", () => {
-  it("says when it is read and what follows", () => {
-    expect(queuedNote("queue")).toContain("when its current turn ends");
-    expect(queuedNote("steer")).toContain("once its current step finishes");
-    expect(queuedNote("queue", "handover")).toContain("pauses for you");
-    expect(queuedNote(undefined, "continue")).not.toContain("pauses");
+// @decision(DL-019) @decision(DL-059) @decision(DL-165)
+describe("the word under a waiting message", () => {
+  it("is one quiet word, by how it was sent", () => {
+    expect(queuedNote("queue")).toBe("Queued");
+    expect(queuedNote("steer")).toBe("Waiting");
+    expect(queuedNote(undefined)).toBe("Waiting");
   });
 });
 

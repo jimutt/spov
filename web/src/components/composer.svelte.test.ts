@@ -30,6 +30,7 @@ const stub = vi.hoisted(() => {
   // rather than what the page looks like mid-request.
   let stopped = true;
   let resumeStatus = 204;
+  let sessionResume: "ok" | "unreadable" | "refused" = "ok";
   const json = (body: unknown, status: number) =>
     new Response(JSON.stringify(body), {
       status,
@@ -45,6 +46,13 @@ const stub = vi.hoisted(() => {
     if (breaks) throw new TypeError("Failed to fetch");
     if (path.endsWith("/interrupt")) {
       return json({ interrupted: stopped, conversation: "ses_1" }, 200);
+    }
+    // A session's resume answers with the session, starting again; an
+    // unreadable answer is `sessionResume: "unreadable"`.
+    if (path.startsWith("/api/v1/sessions/") && path.endsWith("/resume")) {
+      if (sessionResume === "unreadable") return json({}, 202);
+      if (sessionResume === "refused") return json({ title: "Conflict", status: 409, detail: "the session is running" }, 409);
+      return json({ id: "ses_1", state: "starting" }, 202);
     }
     if (path.endsWith("/resume")) {
       if (resumeStatus === 204) return new Response(null, { status: 204 });
@@ -71,6 +79,7 @@ const stub = vi.hoisted(() => {
       breaks = false;
       stopped = true;
       resumeStatus = 204;
+      sessionResume = "ok";
       bodies.splice(0, bodies.length);
       urls.splice(0, urls.length);
     },
@@ -80,6 +89,7 @@ const stub = vi.hoisted(() => {
     /** What the sandbox answers to an interrupt. */
     stopAnswers: (was: boolean) => (stopped = was),
     refuseTheResume: (status: number) => (resumeStatus = status),
+    sessionResumeAnswers: (how: "ok" | "unreadable" | "refused") => (sessionResume = how),
     /** The request in flight fails as a dropped connection would. */
     fail: () => failInFlight(new TypeError("Failed to fetch")),
     answer: () =>
@@ -119,6 +129,9 @@ interface Drawn {
   model?: string;
   /** The models' reasoning modes, as the page read them. @decision(DL-161) */
   variants?: { read: boolean; models: Record<string, string[]> };
+  /** A stopped session's resume, which turns the box into its resume. @decision(DL-165) */
+  resume?: { mode: "snapshot" | "transcript" };
+  onResumed?: () => void | Promise<void>;
 }
 
 function draw(jobState?: JobState, opts: Drawn = {}) {
@@ -139,6 +152,8 @@ function draw(jobState?: JobState, opts: Drawn = {}) {
       variants: opts.variants,
       onEcho: track,
       onJobChanged: changed,
+      resume: opts.resume,
+      onResumed: opts.onResumed,
     },
   });
   const pick = <T extends Element>(id: string) =>
@@ -951,5 +966,66 @@ describe("Enter on a touch screen", () => {
     const touch = draw("running");
     expect(touch.target.textContent).not.toContain("to send");
     touch.done();
+  });
+});
+
+// A stopped session's box is the ordinary one: it resumes the session
+// with what is written, on one press, and keeps nothing else.
+//
+// @decision(DL-165) @decision(DL-090)
+describe("the box on a stopped session", () => {
+  it("resumes the session with what is written, under its own placeholder", async () => {
+    const onResumed = vi.fn();
+    const c = draw(undefined, { resume: { mode: "transcript" }, onResumed, model: "anthropic/claude" });
+    expect(c.box()!.placeholder).toBe("Resume session");
+    expect(c.target.querySelector('[data-testid="composer-status"]')).toBeNull();
+    expect(c.chip().className).toContain("hidden");
+    c.box()!.focus();
+    c.box()!.value = "carry on";
+    c.box()!.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    c.form().dispatchEvent(new Event("submit", { cancelable: true }));
+    flushSync();
+    expect(c.box()!.value).toBe("");
+    await settle();
+    expect(stub.urls()).toEqual(["/api/v1/sessions/ses_1/resume"]);
+    const body = stub.bodies()[0] as { message: { text: string; id: string } };
+    expect(body.message.text).toBe("carry on");
+    expect(body.message.id).toMatch(/^msg_/);
+    expect(onResumed).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(c.box());
+    c.done();
+  });
+
+  it("gives the words back on a refusal", async () => {
+    stub.sessionResumeAnswers("refused");
+    const c = draw(undefined, { resume: { mode: "transcript" } });
+    c.box()!.value = "carry on";
+    c.box()!.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    c.form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await settle();
+    expect(c.box()!.value).toBe("carry on");
+    expect(c.button()!.disabled).toBe(false);
+    c.done();
+  });
+
+  it("keeps Send off after an answer it cannot read, so it never resumes twice", async () => {
+    stub.sessionResumeAnswers("unreadable");
+    const c = draw(undefined, { resume: { mode: "transcript" } });
+    c.box()!.value = "carry on";
+    c.box()!.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    c.form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await settle();
+    expect(c.target.textContent).toContain("Reload the page");
+    c.box()!.value = "again";
+    c.box()!.dispatchEvent(new Event("input", { bubbles: true }));
+    flushSync();
+    expect(c.button()!.disabled).toBe(true);
+    c.form().dispatchEvent(new Event("submit", { cancelable: true }));
+    await settle();
+    expect(stub.urls()).toEqual(["/api/v1/sessions/ses_1/resume"]);
+    c.done();
   });
 });
