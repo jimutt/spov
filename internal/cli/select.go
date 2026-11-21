@@ -278,7 +278,7 @@ func resolvePlatformName(cfg config.Config, name string) (string, error) {
 		return cfg.Platforms[0].Name, nil
 	case 0:
 		return "", errors.New("no git platforms configured; qualify the repo as <platform>:owner/name, add a `platforms:` entry" +
-			" to your user config file (docs/configuration.md), or run `spov init`, which sets up GitHub")
+			" to your user config file (https://github.com/jimutt/spov/blob/main/docs/configuration.md), or run `spov init`, which sets up GitHub")
 	default:
 		return "", fmt.Errorf("several platforms are configured (%s); qualify the repo as <platform>:owner/name",
 			strings.Join(platformNames(cfg), ", "))

@@ -124,6 +124,7 @@
   } from '../lib/subagentview';
   import AskCard from './AskCard.svelte';
   import EventRun from './EventRun.svelte';
+  import { lockScroll } from '../lib/scrolllock';
   import SubagentBar from './SubagentBar.svelte';
   import SubagentCard from './SubagentCard.svelte';
   import SubagentPrompt from './SubagentPrompt.svelte';
@@ -920,12 +921,11 @@
       if (e.key === 'Escape') infoOpen = false;
     };
     window.addEventListener('keydown', onKey);
-    const restore = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const release = lockScroll();
     const frame = requestAnimationFrame(() => infoClose?.focus());
     return () => {
       window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = restore;
+      release();
       cancelAnimationFrame(frame);
       infoButton?.focus();
     };
@@ -942,13 +942,12 @@
       if (e.key === 'Escape') previewOpen = false;
     };
     window.addEventListener('keydown', onKey);
-    const restore = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    const release = lockScroll();
     // After the panel is in the DOM.
     const frame = requestAnimationFrame(() => previewPanel?.focus());
     return () => {
       window.removeEventListener('keydown', onKey);
-      document.body.style.overflow = restore;
+      release();
       cancelAnimationFrame(frame);
       previewOpener?.focus();
       previewOpener = null;
@@ -1324,7 +1323,13 @@
                  summary alone; a tool call is one line however many events
                  OpenCode sent about it. @decision(DL-057) @decision(DL-058) -->
             <div class="{row} -mt-1.5 mb-5">
-              <EventRun events={block.events} open={showAll} ontoggle={() => (showAll ? expanded.delete(block.key) : expanded.add(block.key))} />
+              <!-- @decision(DL-168) -->
+              <EventRun
+                events={block.events}
+                open={showAll}
+                live={!viewing && inFlight && block === windowed.shown[windowed.shown.length - 1]}
+                ontoggle={() => (showAll ? expanded.delete(block.key) : expanded.add(block.key))}
+              />
             </div>
           {/if}
         {/each}
