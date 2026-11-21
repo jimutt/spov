@@ -24,7 +24,7 @@
 </p>
 
 <p align="center">
-  <img alt="spov fly: the launch view, an ASCII curlew beside the launch steps" src="docs/assets/launch-view.png" width="720">
+  <a href="https://spov.dev/#video"><img alt="Watch the video (3 min): spov fly's launch view, an ASCII curlew beside the launch steps" src="docs/assets/video-poster.png" width="720"></a>
 </p>
 
 spov starts an [OpenCode](https://opencode.ai) agent in a fresh
