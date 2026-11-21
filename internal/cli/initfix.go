@@ -105,7 +105,7 @@ func fixGitHub(ctx context.Context, r *initRun) error {
 	switch {
 	case errors.Is(err, errGhMissing):
 		r.say("spov uses the GitHub CLI's login. Install gh from https://cli.github.com, run `gh auth login`, then `spov init` again.")
-		r.say("A GitHub App works without gh: see docs/credentials.md.")
+		r.say("A GitHub App or a personal access token works without gh: see https://github.com/jimutt/spov/blob/main/docs/credentials.md.")
 		return nil
 	case errors.Is(err, errGhSignedOut):
 		r.say("The GitHub CLI is installed but not signed in to %s.", host)
@@ -230,7 +230,7 @@ func fixModel(ctx context.Context, r *initRun) error {
 	if r.results[stepModal].state == stepOK {
 		options = append(options, signIn)
 	} else {
-		r.say("(With an OpenCode Go or Zen subscription you need no API key: signing in is offered once Modal is connected, since it goes through spov's local server. Later, run `spov login opencode`.)")
+		r.say("Signing in with an OpenCode subscription is offered once Modal is connected, since it goes through spov's local server: run `spov init` again then, or `spov login opencode`.")
 	}
 	options = append(options, "Paste an API key for a model provider", "Skip for now")
 	choice, err := env.choose(ctx, r.ask, "How should the agent reach a model?", options)

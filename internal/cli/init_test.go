@@ -284,7 +284,7 @@ func TestInitWithoutModal(t *testing.T) {
 	if !strings.Contains(out, "– 5. Sandbox image  waiting") || !strings.Contains(out, "waits for Modal") {
 		t.Errorf("the image step did not wait for Modal:\n%s", out)
 	}
-	if strings.Contains(strings.Join(f.offered, "|"), "OpenCode Go or Zen subscription") || !strings.Contains(out, "offered once Modal is connected") || !strings.Contains(out, "spov login opencode") {
+	if strings.Contains(strings.Join(f.offered, "|"), "OpenCode Go or Zen subscription") || !strings.Contains(out, "offered once Modal is") || !strings.Contains(out, "spov login opencode") {
 		t.Errorf("the OpenCode sign-in was offered without Modal: %v\n%s", f.offered, out)
 	}
 	// With Modal it is one of the choices.

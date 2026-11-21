@@ -69,11 +69,16 @@ homebrew_casks:
     description: Launch OpenCode sessions in on-demand Modal sandboxes
     license: MIT
     skip_upload: '{{ if eq (envOrDefault "HOMEBREW_TAP_TOKEN" "") "" }}true{{ else }}auto{{ end }}'
+    # The release is not notarised, so macOS would quarantine the
+    # download. `install_steps` becomes Homebrew's structured
+    # `postflight_steps`, which Homebrew 7 requires in place of a Ruby
+    # `postflight` block.
+    # @decision(DL-081)
     hooks:
       post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/spov"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{" }}staged_path{{ "}}" }}/spov"]
           end
 
 changelog:
