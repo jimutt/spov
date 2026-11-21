@@ -419,6 +419,20 @@ func (e Entrypoint) writeGitIdentity(b *strings.Builder) {
 	}
 }
 
+// guideInstructions lists the generated guide in the config when the
+// session starts inside a repository: OpenCode looks for AGENTS.md from
+// the session's directory up to the repository's root and no further,
+// so it would never reach /workspace/AGENTS.md. A session in /workspace
+// finds the guide itself, and listing it there too would load it twice.
+//
+// @decision(DL-174) @decision(DL-037)
+func (e Entrypoint) guideInstructions() []string {
+	if e.Landing == "" || len(e.Workspace) == 0 {
+		return nil
+	}
+	return []string{AgentsFile}
+}
+
 // writeOpenCodeConfig writes the global OpenCode config.
 //
 // ConfigDir is the one interpolated word here that is not shellQuoted:
@@ -431,9 +445,9 @@ func (e Entrypoint) writeGitIdentity(b *strings.Builder) {
 // @decision(DL-038) @decision(DL-040)
 func (e Entrypoint) writeOpenCodeConfig(b *strings.Builder) {
 	fmt.Fprintf(b, "mkdir -p \"%s\"\n", ConfigDir)
-	config := SandboxConfigJSON(e.Model, e.ModelUnlisted, e.Plugins)
+	config := SandboxConfigJSON(e.Model, e.ModelUnlisted, e.Plugins, e.guideInstructions())
 	if e.Job != nil {
-		config = JobConfigJSON(e.Model, e.ModelUnlisted)
+		config = JobConfigJSON(e.Model, e.ModelUnlisted, e.guideInstructions())
 	}
 	fmt.Fprintf(b, "cat > \"%s\" <<'SPOV_CONFIG_EOF'\n", ConfigFile)
 	b.WriteString(config)

@@ -223,6 +223,10 @@ func templateSummary(v server.TemplateView) string {
 	if v.GitAccess != "" {
 		parts = append(parts, "git access "+string(v.GitAccess))
 	}
+	// @decision(DL-171)
+	if n := len(v.Plugins); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d plugins", n))
+	}
 	if len(parts) == 0 {
 		return "nothing"
 	}
@@ -261,6 +265,8 @@ func printTemplate(env *Env, v server.TemplateView) error {
 	row("add-ons", strings.Join(v.Addons, ", "))
 	row("apt", strings.Join(v.Apt, ", "))
 	row("git access", string(v.GitAccess))
+	// @decision(DL-171)
+	row("plugins", strings.Join(v.Plugins, ", "))
 	return w.Flush()
 }
 

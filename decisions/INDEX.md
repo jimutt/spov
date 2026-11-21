@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-174 | A session that starts inside a repository lists spov's guide in its OpenCode config | accepted | opencode | workspace, landing |
 | DL-173 | In a session without a job, a synthetic message is drawn as added by OpenCode or a plugin, folded | accepted | web | session-page, transcript, plugins |
 | DL-172 | A session with plugins reaches the npm registry under the agent egress preset | accepted | sandbox | egress, plugins |
 | DL-171 | sandbox.plugins adds OpenCode 2 plugins to every sandbox of a launch | accepted | opencode | plugins, config, templates |

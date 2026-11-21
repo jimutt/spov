@@ -24,7 +24,7 @@ func TestCheckPluginSpec(t *testing.T) {
 		"", " pkg", "pkg ", "Pkg", "pkg@", "@scope", "@scope/", "../evil", "./local", "/abs/path", "file:../x",
 		"git+https://github.com/a/b", "https://example.com/p.tgz", "github:a/b", "a/b", "pkg@1 || 2",
 		"pkg@file:../x", "pkg@https://x", "pkg@" + strings.Repeat("1", 65), strings.Repeat("a", 215), ".hidden", "_under",
-		"pkg\nnext", "pkg@1;rm",
+		"pkg\nnext", "pkg@1;rm", "pkg@..", "pkg@.", "pkg@...", "pkg@x.tgz", "pkg@x.tar", "pkg@x.TAR.GZ",
 	} {
 		if err := CheckPluginSpec(bad); err == nil {
 			t.Errorf("%q accepted", bad)
@@ -62,16 +62,16 @@ func TestAPluginListReachesTheSandboxConfig(t *testing.T) {
 	var cfg struct {
 		Plugins []string `json:"plugins"`
 	}
-	if err := json.Unmarshal([]byte(SandboxConfigJSON("", false, []string{"envsitter-guard@0.1.1", "@scope/x"})), &cfg); err != nil {
+	if err := json.Unmarshal([]byte(SandboxConfigJSON("", false, []string{"envsitter-guard@0.1.1", "@scope/x"}, nil)), &cfg); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(cfg.Plugins, ",") != "envsitter-guard@0.1.1,@scope/x" {
 		t.Errorf("plugins = %v", cfg.Plugins)
 	}
-	if strings.Contains(SandboxConfigJSON("", false, nil), "plugins") {
+	if strings.Contains(SandboxConfigJSON("", false, nil, nil), "plugins") {
 		t.Error("an empty list wrote the key")
 	}
-	if strings.Contains(JobConfigJSON("", false), "plugins") {
+	if strings.Contains(JobConfigJSON("", false, nil), "plugins") {
 		t.Error("a job's config lists plugins")
 	}
 	e := Entrypoint{Port: 4096, Plugins: []string{"envsitter-guard"}}
@@ -85,5 +85,47 @@ func TestAPluginListReachesTheSandboxConfig(t *testing.T) {
 	e.Plugins = []string{"git+https://example.com/x"}
 	if _, err := e.Script(); err == nil {
 		t.Error("the entrypoint wrote a plugin that is not a package spec")
+	}
+}
+
+// A session that starts inside a repository has spov's guide listed in
+// its config's instructions, an interactive one and a job's alike; one
+// that starts in /workspace finds the guide itself and does not list it.
+//
+// @decision(DL-174)
+func TestTheGuideIsListedWhenTheSessionStartsInARepository(t *testing.T) {
+	base := Entrypoint{
+		Port:      4096,
+		Clones:    []Clone{{URL: "https://git.example.com/acme/app.git", Dir: "app"}},
+		Workspace: []WorkspaceRepo{{Slug: "acme/app", Dir: "app", Platform: "fake", Host: "git.example.com"}},
+	}
+	instructions := func(e Entrypoint) []string {
+		t.Helper()
+		script, err := e.Script()
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := strings.Index(script, "<<'SPOV_CONFIG_EOF'\n")
+		end := strings.Index(script, "\nSPOV_CONFIG_EOF\n")
+		var cfg struct {
+			Instructions []string `json:"instructions"`
+		}
+		if start < 0 || end < 0 || json.Unmarshal([]byte(script[start+len("<<'SPOV_CONFIG_EOF'\n"):end]), &cfg) != nil {
+			t.Fatalf("no config in the script:\n%s", script)
+		}
+		return cfg.Instructions
+	}
+	if got := instructions(base); len(got) != 0 {
+		t.Errorf("a session in /workspace lists %v", got)
+	}
+	inRepo := base
+	inRepo.Landing = "app"
+	if got := instructions(inRepo); len(got) != 1 || got[0] != AgentsFile {
+		t.Errorf("a session in its repository lists %v, want %s", got, AgentsFile)
+	}
+	job := inRepo
+	job.Job = &Plugin{Kind: "pr", Goal: "g"}
+	if got := instructions(job); len(got) != 1 || got[0] != AgentsFile {
+		t.Errorf("a job in its repository lists %v, want %s", got, AgentsFile)
 	}
 }

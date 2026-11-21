@@ -55,6 +55,12 @@ type sandboxConfig struct {
 	//
 	// @decision(DL-171)
 	Plugins []string `json:"plugins,omitempty"`
+	// Instructions names spov's generated guide for a session that starts
+	// inside a repository, where OpenCode's own search for AGENTS.md
+	// stops at the repository's root.
+	//
+	// @decision(DL-174)
+	Instructions []string `json:"instructions,omitempty"`
 }
 
 // declaredProvider holds the one declared model, by id.
@@ -119,14 +125,15 @@ func allowAll(action string, patterns []string) []permissionRule {
 // listed (DL-171).
 //
 // @decision(DL-038) @decision(DL-171)
-func SandboxConfigJSON(model string, unlisted bool, plugins []string) string {
+func SandboxConfigJSON(model string, unlisted bool, plugins, instructions []string) string {
 	return marshalConfig(sandboxConfig{
-		Schema:      configSchema,
-		Model:       model,
-		WebSearch:   webSearch{Provider: WebSearchProvider},
-		Permissions: allowAll(ActionExternalDirectory, workspaceGlobs),
-		Providers:   declare(model, unlisted),
-		Plugins:     plugins,
+		Schema:       configSchema,
+		Model:        model,
+		WebSearch:    webSearch{Provider: WebSearchProvider},
+		Permissions:  allowAll(ActionExternalDirectory, workspaceGlobs),
+		Providers:    declare(model, unlisted),
+		Plugins:      plugins,
+		Instructions: instructions,
 	})
 }
 
@@ -138,12 +145,13 @@ func SandboxConfigJSON(model string, unlisted bool, plugins []string) string {
 // An unlisted model is declared (DL-038).
 //
 // @decision(DL-038)
-func JobConfigJSON(model string, unlisted bool) string {
+func JobConfigJSON(model string, unlisted bool, instructions []string) string {
 	return marshalConfig(sandboxConfig{
-		Schema:    configSchema,
-		Model:     model,
-		WebSearch: webSearch{Provider: WebSearchProvider},
-		Providers: declare(model, unlisted),
+		Schema:       configSchema,
+		Model:        model,
+		WebSearch:    webSearch{Provider: WebSearchProvider},
+		Providers:    declare(model, unlisted),
+		Instructions: instructions,
 	})
 }
 

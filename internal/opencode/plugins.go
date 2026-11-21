@@ -40,10 +40,18 @@ func CheckPluginSpec(spec string) error {
 	if len(name) > 214 || !pluginName.MatchString(name) {
 		return fmt.Errorf("plugin %q is not an npm package name: name it as on npm, like envsitter-guard or @scope/name, with an optional @version", spec)
 	}
-	if version != "" && !pluginVersion.MatchString(version) {
+	// npm reads a version that starts with a dot as a directory and one
+	// named like an archive as a local tarball.
+	if version != "" && (!pluginVersion.MatchString(version) || strings.HasPrefix(version, ".") || tarball(version)) {
 		return fmt.Errorf("plugin %q has an unusable version: give a version, a tag or a semver range, never a URL or a path", spec)
 	}
 	return nil
+}
+
+// tarball reports whether npm would read a version as a local archive.
+func tarball(version string) bool {
+	v := strings.ToLower(version)
+	return strings.HasSuffix(v, ".tgz") || strings.HasSuffix(v, ".tar") || strings.HasSuffix(v, ".tar.gz")
 }
 
 // CheckPlugins checks a launch's whole list.

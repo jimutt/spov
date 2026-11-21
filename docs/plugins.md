@@ -53,6 +53,12 @@ session runs inside that repository. A session runs inside its repository
 when it has exactly one: a synced `spov fly` in a checkout, `spov fly --repo
 owner/name`, or a browser launch of one repository.
 
+The repository's whole `opencode.json` applies, as it would for a local
+OpenCode run in the checkout: its `permission` rules, `model`, MCP servers and
+agents as well as its plugins. A repository that allows every action removes
+the prompts spov's own config keeps for the git credentials, and a
+repository's `model` replaces the one you launched with.
+
 A session with several repositories starts in `/workspace`, the folder that
 holds them, which is no repository: OpenCode reads none of their
 `opencode.json` files there, as it would not if you started it in the parent
@@ -85,8 +91,9 @@ the repository's.
 - **Time and space, once per sandbox.** A plugin installs when the first
   conversation starts, which delays the first answer by the install's time
   (seconds for most, more for a plugin with large native dependencies). A
-  resumed session keeps what was installed, so a resume does not install
-  again.
+  session resumed from its snapshot keeps what was installed and does not
+  install again; one resumed from its transcript is a fresh sandbox and
+  installs again.
 
 ## In the transcript
 
@@ -100,8 +107,9 @@ other tool call.
 
 - **Jobs.** `spov jobs create` adds no plugins: a job's permission policy
   allows only the actions its kind needs, and a plugin's tools are not on
-  that list. A sync job runs inside its repository, so that repository's own
-  `opencode.json` still loads there.
+  that list. A job that runs inside its repository (a sync job, or one
+  created with `--landing <repo>`) still loads that repository's own
+  `opencode.json`.
 - **The TUI's side of a plugin.** A plugin can also extend OpenCode's terminal
   UI. `spov attach` uses the `opencode` on your machine, so that part comes
   from the plugins installed there, not from the sandbox.

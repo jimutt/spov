@@ -231,7 +231,8 @@ for 30 days after a session stops (`history.retention`);
 Each repository is cloned into its own directory under `/workspace`. A
 session with one repository starts inside it, as OpenCode would in your own
 checkout, so the repository's `opencode.json`, `.opencode/` and `AGENTS.md`
-apply (its [plugins](plugins.md) included). A session with several starts in
+apply: its [plugins](plugins.md), and also its permission rules, model and MCP
+servers. A session with several starts in
 `/workspace` itself, and `landing:` in config starts it inside one of them
 instead. spov writes `/workspace/AGENTS.md`, which lists the repositories,
 their hosts and which forge CLI belongs to each, and tells the agent to read
