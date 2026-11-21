@@ -136,6 +136,50 @@ describe('promotion', () => {
     expect(after[0].key).toBe('m0.0');
   });
 
+  // @decision(DL-166)
+  test("the agent's message is drawn after the reasoning of its own step", () => {
+    // OpenCode dates the message when the step opens, before it thinks;
+    // the words are finished at their text event.
+    const t = buildTimeline(
+      conv(
+        { role: 'user', text: 'go', at: '2026-09-01T12:00:00Z' },
+        { role: 'assistant', text: 'Done.', at: '2026-09-01T12:01:00Z' },
+      ),
+      [
+        ev(1, 'session.reasoning.ended', '2026-09-01T12:01:20Z', 'short summary then'),
+        ev(2, 'session.text.ended', '2026-09-01T12:01:30Z', 'Done.'),
+      ],
+    );
+    expect(t.map((e) => (e.kind === 'event' ? e.name : e.kind === 'message' ? e.text : e.id))).toEqual([
+      'go',
+      'session.reasoning.ended',
+      'Done.',
+    ]);
+    expect(t[2].key).toBe('m0.1');
+  });
+
+  // @decision(DL-166)
+  test('two messages with the same words each take their own text event', () => {
+    const t = buildTimeline(
+      conv(
+        { role: 'assistant', text: 'ok', at: '2026-09-01T12:00:00Z' },
+        { role: 'assistant', text: 'ok', at: '2026-09-01T12:02:00Z' },
+      ),
+      [
+        ev(1, 'session.reasoning.ended', '2026-09-01T12:00:10Z', 'first'),
+        ev(2, 'session.text.ended', '2026-09-01T12:00:20Z', 'ok'),
+        ev(3, 'session.reasoning.ended', '2026-09-01T12:02:10Z', 'second'),
+        ev(4, 'session.text.ended', '2026-09-01T12:02:20Z', 'ok'),
+      ],
+    );
+    expect(t.map((e) => (e.kind === 'event' ? e.text : e.kind === 'message' ? e.key : ''))).toEqual([
+      'first',
+      'm0.0',
+      'second',
+      'm0.1',
+    ]);
+  });
+
   test('the same words promoted twice are spoken once', () => {
     const t = buildTimeline([], [
       ev(0, 'session.text.ended', '', 'here you go'),

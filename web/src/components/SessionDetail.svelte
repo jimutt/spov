@@ -1324,7 +1324,13 @@
                  summary alone; a tool call is one line however many events
                  OpenCode sent about it. @decision(DL-057) @decision(DL-058) -->
             <div class="{row} -mt-1.5 mb-5">
-              <EventRun events={block.events} open={showAll} ontoggle={() => (showAll ? expanded.delete(block.key) : expanded.add(block.key))} />
+              <!-- @decision(DL-168) -->
+              <EventRun
+                events={block.events}
+                open={showAll}
+                live={!viewing && inFlight && block === windowed.shown[windowed.shown.length - 1]}
+                ontoggle={() => (showAll ? expanded.delete(block.key) : expanded.add(block.key))}
+              />
             </div>
           {/if}
         {/each}

@@ -672,6 +672,14 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
     }
     said.add(body);
   };
+  // The agent's stored messages by their words, waiting for the log's
+  // `.text.ended` that carries the same words. A stored message is dated
+  // when OpenCode opened it, before the step's reasoning and tool calls;
+  // its text event is where the words were finished, so that is where it
+  // is drawn.
+  //
+  // @decision(DL-166)
+  const unplaced = new Map<string, MessageEntry[]>();
   let seq = 0;
   conversations.forEach((conv, c) => {
     (conv.messages ?? []).forEach((m, i) => {
@@ -704,6 +712,7 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
         entry.id = m.id;
         entry.key = messageKey(m.id);
       }
+      if (role === "assistant") unplaced.set(text.trim(), [...(unplaced.get(text.trim()) ?? []), entry]);
       out.push(entry);
     });
   });
@@ -767,7 +776,15 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       // are ids to decide with. Everything else keeps the text rule.
       const id = spoke === "user" ? (ev.message ?? "") : "";
       const already = id ? ids.has(id) || (!identified && said.has(body)) : said.has(body);
-      if (already) continue;
+      if (already) {
+        // @decision(DL-166)
+        const stored = spoke === "assistant" ? unplaced.get(body)?.shift() : undefined;
+        if (stored && at >= stored.at) {
+          stored.at = at;
+          stored.seq = seq + pos;
+        }
+        continue;
+      }
       remember(spoke, id, body);
       const entry: MessageEntry = { kind: "message", key: id ? messageKey(id) : `e${pos}`, at, seq: seq + pos, role: spoke, text };
       if (id) entry.id = id;
