@@ -205,7 +205,21 @@ function reportedChild(ev) {
 // subagent's are its own.
 //
 // @decision(DL-182)
-const shells = { running: new Set() }
+const shells = { running: new Set(), ended: new Set() }
+
+// MAX_ENDED_SHELLS bounds the ids kept of commands that have ended.
+const MAX_ENDED_SHELLS = 500
+
+// endShell records that a command ended, by its result, its exit or its
+// removal, so a backgrounded success read after its end never adds it.
+//
+// @decision(DL-182)
+function endShell(shell, why) {
+  if (typeof shell !== "string" || shell === "") return
+  if (shells.ended.size >= MAX_ENDED_SHELLS) shells.ended.delete(shells.ended.values().next().value)
+  shells.ended.add(shell)
+  if (shells.running.delete(shell)) record(why, { shell })
+}
 
 // backgroundedShell is the shell id a tool call of the job's session
 // left running in the background: its success says status "running"
@@ -1294,8 +1308,7 @@ export default {
             const child = reportedChild(ev)
             if (child && subagents.running.delete(child)) record("subagent.reported", { session: child })
             // @decision(DL-182)
-            const shell = reportedShell(ev)
-            if (shell && shells.running.delete(shell)) record("shell.reported", { shell })
+            endShell(reportedShell(ev), "shell.reported")
           }
           // A background command of the job's: its call returned while it
           // ran, and it holds the job's turn ends until it reports or
@@ -1304,15 +1317,12 @@ export default {
           // @decision(DL-182)
           if (type === "session.tool.success" && loop.session && evSession === loop.session) {
             const shell = backgroundedShell(ev)
-            if (shell && !shells.running.has(shell)) {
+            if (shell && !shells.running.has(shell) && !shells.ended.has(shell)) {
               shells.running.add(shell)
               record("shell.backgrounded", { shell, running: shells.running.size })
             }
           }
-          if (type === "shell.exited") {
-            const shell = data?.id
-            if (typeof shell === "string" && shells.running.delete(shell)) record("shell.exited", { shell })
-          }
+          if (type === "shell.exited" || type === "shell.deleted") endShell(data?.id, type)
           // A person's takeover message holds the loop when it is
           // delivered, which is before its execution's succeeded, so no
           // continuation follows it. It sends nothing: the supervisor's

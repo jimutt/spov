@@ -211,10 +211,10 @@ func writeRefusalSection(b *strings.Builder) {
 
 // writeSubagentSection tells a job's agent that its subagents and its
 // background commands report on their own and that the job ends
-// whatever they are doing. An
-// interactive session has no completion tool and gets none.
+// whatever they are doing. An interactive session has no completion
+// tool and gets none.
 //
-// @decision(DL-143)
+// @decision(DL-143) @decision(DL-182)
 func writeSubagentSection(b *strings.Builder, jobKind string) {
 	if jobKind == "" {
 		return
@@ -225,7 +225,6 @@ func writeSubagentSection(b *strings.Builder, jobKind string) {
 	b.WriteString("your next turn. You need not poll or sleep for it. The job ends when you call\n")
 	fmt.Fprintf(b, "`%s`, whatever is still running then, and work a subagent has not reported\n", CompletionTool)
 	b.WriteString("by then is lost, so wait for the reports you need before calling it.\n")
-	// @decision(DL-182)
 	b.WriteString("\nA shell command you run in the background, or one moved there when it outran\n")
 	b.WriteString("its timeout, works the same way: its result reaches you as a message of its\n")
 	b.WriteString("own when it ends, which starts your next turn. A command still running when\n")

@@ -95,16 +95,72 @@ func TestTheWaitNamesABackgroundCommandAndKeepsIt(t *testing.T) {
 	}
 }
 
-// The note says what is still running, each kind counted.
+// The bounded note names what is still running, each kind counted, and
+// the guide says how a background command reports.
 //
 // @decision(DL-182)
 func TestTheWaitNoteCountsBothKinds(t *testing.T) {
-	if !strings.Contains(subagentWaitNote, "{n}") {
-		t.Fatalf("the wait note has no place for what still runs: %q", subagentWaitNote)
+	kidWorking := `{ type: "session.tool.called", data: { sessionID: "ses_kid", id: "call_k" } }`
+	second := strings.ReplaceAll(strings.ReplaceAll(shellBackgrounded, "sh_1", "sh_2"), "call_s", "call_t")
+	for want, events := range map[string][]string{
+		": 1 subagent and 1 background command.": {holdStarted, kidCreated, kidStarted, shellBackgrounded, holdSucceeded, kidWorking},
+		": 2 background commands.":               {holdStarted, shellBackgrounded, second, holdSucceeded},
+	} {
+		run := driveEventsPaced(t, events, "", 30, withSubagentWait(120))
+		got := continuations(run)
+		if len(got) != 1 {
+			t.Errorf("%q: the plugin sent %v, want one bounded continuation", want, got)
+			continue
+		}
+		if text, _ := got[0]["text"].(string); !strings.Contains(text, want) {
+			t.Errorf("the bounded continuation says %q, want it to contain %q", text, want)
+		}
+	}
+	if !strings.Contains(SubagentNote, "background") || !strings.Contains(continueText, SubagentNote) {
+		t.Errorf("the continuation and the completion tool do not say how a background command reports: %q", SubagentNote)
 	}
 	var b strings.Builder
 	writeSubagentSection(&b, "report")
 	if !strings.Contains(b.String(), "background") {
 		t.Errorf("a job's guide does not say how a background command reports: %q", b.String())
+	}
+}
+
+// An end read before the call's own success (a short command, or one
+// moved to the background just as it finished) never leaves it held;
+// a removed shell has ended too.
+//
+// @decision(DL-182)
+func TestACommandWhoseEndCameFirstIsNeverHeld(t *testing.T) {
+	deleted := strings.ReplaceAll(shellExited, "shell.exited", "shell.deleted")
+	for name, events := range map[string][]string{
+		"exit first":   {holdStarted, shellExited, shellBackgrounded, holdSucceeded},
+		"result first": {holdStarted, shellResult, shellBackgrounded, holdSucceeded},
+		"removed":      {holdStarted, shellBackgrounded, deleted, holdSucceeded},
+	} {
+		if got := continuations(driveEvents(t, events, "")); len(got) != 1 {
+			t.Errorf("%s: the plugin sent %d continuations, want 1", name, len(got))
+		}
+	}
+}
+
+// A person's own command, which no call of the job's started, changes
+// nothing; a stop during a hold is announced at once.
+//
+// @decision(DL-182)
+func TestAPersonsCommandAndAStopAreNotHeld(t *testing.T) {
+	persons := strings.ReplaceAll(strings.ReplaceAll(shellResult, "sh_1", "sh_9"), `description: "make", `, "")
+	if got := continuations(driveEvents(t, []string{holdStarted, persons, holdSucceeded}, "")); len(got) != 1 {
+		t.Errorf("a person's command changed the loop: %d continuations", len(got))
+	}
+	run := driveEvents(t, []string{holdStarted, shellBackgrounded}, "stop")
+	stopped := false
+	for _, m := range run.Synth {
+		if text, _ := m["text"].(string); strings.HasPrefix(text, LoopStoppedMarker) {
+			stopped = true
+		}
+	}
+	if !stopped {
+		t.Errorf("a running background command kept the stop from being announced: %v", run.Synth)
 	}
 }
