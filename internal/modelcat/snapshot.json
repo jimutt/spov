@@ -2246,7 +2246,7 @@
     "name": "GLM-5.3-Flash",
     "released": "2026-08-26",
     "context": 1048576,
-    "output": 131072
+    "output": 943717
    },
    {
     "id": "ibm-granite/granite-4.2-8b",
@@ -2281,7 +2281,7 @@
     "name": "Qwen3.8 27B",
     "released": "2026-08-14",
     "context": 1024000,
-    "output": 235929
+    "output": 131072
    },
    {
     "id": "z-ai/glm-5.3",
@@ -2498,7 +2498,7 @@
     "name": "Hy3",
     "released": "2026-07-06",
     "context": 262144,
-    "output": 128000
+    "output": 235929
    },
    {
     "id": "anthropic/claude-sonnet-5",
@@ -2939,7 +2939,7 @@
     "name": "Qwen3.5 27B",
     "released": "2026-02-23",
     "context": 262144,
-    "output": 65536
+    "output": 81920
    },
    {
     "id": "qwen/qwen3.5-35b-a3b",
@@ -3373,7 +3373,7 @@
     "name": "GPT OSS 20B",
     "released": "2025-08-05",
     "context": 131072,
-    "output": 117964
+    "output": 65536
    },
    {
     "id": "qwen/qwen3-coder-30b-a3b-instruct",
@@ -3936,5 +3936,5 @@
    "z-ai/glm-4.5"
   ]
  },
- "as_of": "2026-11-21T00:00:00Z"
+ "as_of": "2026-11-22T00:00:00Z"
 }
