@@ -131,6 +131,7 @@
   import Composer from './Composer.svelte';
   import ConfirmAct from './ConfirmAct.svelte';
   import Icon from './Icon.svelte';
+  import InjectedMessage from './InjectedMessage.svelte';
   import InfoToggle from './InfoToggle.svelte';
   import Problem from './Problem.svelte';
   import StateMark from './StateMark.svelte';
@@ -514,7 +515,8 @@
 
   const s = $derived(session.data);
   // spov sends synthetic messages only into a job's session, so in any
-  // other one a synthetic is OpenCode's or a plugin's. @decision(DL-173)
+  // other one a synthetic is OpenCode's or a plugin's; in a job's, the
+  // server names those that are. @decision(DL-173) @decision(DL-180)
   const jobSession = $derived(Boolean(s?.job));
   // The document title leads with the session's title when it has one.
   //
@@ -1192,16 +1194,12 @@
             <!-- What the parent agent asked this subagent: in its view
                  only. @decision(DL-111) @decision(DL-113) -->
             <div class="{row} mb-5"><SubagentPrompt text={block.entry.text} /></div>
-          {:else if block.kind === 'message' && block.entry.role === 'synthetic' && !jobSession}
-            <!-- Context OpenCode or a plugin added, never spov's words:
-                 folded, and said to be neither yours nor the agent's.
-                 @decision(DL-173) -->
-            <details class="{row} group/injected mb-5" data-testid="injected">
-              <summary class="{textButton} list-none [&::-webkit-details-marker]:hidden">
-                <Icon name="chevron" class="chevron size-3" />Added by OpenCode or a plugin
-              </summary>
-              <div class="mt-1.5 border-l-2 border-rule-2 pl-3">{@render markdown(block.entry.text, 'text-md text-soft')}</div>
-            </details>
+          {:else if block.kind === 'message' && block.entry.role === 'synthetic' && (!jobSession || block.entry.injected)}
+            <!-- Context OpenCode or a plugin added, never spov's words.
+                 In a job's session only what the server names as
+                 injected is; spov's own stays tagged.
+                 @decision(DL-173) @decision(DL-180) -->
+            <InjectedMessage entry={block.entry} {markdown} class="{row} mb-5" />
           {:else if block.kind === 'message'}
             {@const synthetic = block.entry.role === 'synthetic'}
             {@const mine = block.entry.role === 'user'}

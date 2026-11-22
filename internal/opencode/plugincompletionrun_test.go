@@ -324,6 +324,13 @@ func TestCallingTheCompletionToolEndsTheRun(t *testing.T) {
 	// the job stranded, and nothing else here would notice.
 	var marker string
 	for _, m := range run.Synth {
+		// Bare, or the page reads spov's marker as OpenCode's. @decision(DL-180)
+		if _, ok := m["metadata"]; ok {
+			t.Errorf("a synthetic the plugin sent carries metadata: %v", m)
+		}
+		if _, ok := m["description"]; ok {
+			t.Errorf("a synthetic the plugin sent carries a description: %v", m)
+		}
 		text, _ := m["text"].(string)
 		if strings.HasPrefix(text, LoopStoppedMarker) {
 			marker = text

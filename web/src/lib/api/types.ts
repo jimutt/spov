@@ -1261,6 +1261,16 @@ export interface components {
             email?: string;
             name?: string;
         };
+        Injected: {
+            /**
+             * @description What was added: a shell command's result, a directory's instructions, or anything else
+             * @enum {string}
+             */
+            kind: "shell" | "instructions" | "other";
+            shell?: components["schemas"]["ShellResult"];
+            /** @description OpenCode's one-line description of what it added, absent when it gave none */
+            summary?: string;
+        };
         InterruptRequest: {
             /**
              * Format: uri
@@ -1508,6 +1518,7 @@ export interface components {
             call?: string;
             child?: string;
             delivery?: string;
+            injected?: components["schemas"]["Injected"];
             message?: string;
             model?: string;
             name: string;
@@ -1548,6 +1559,7 @@ export interface components {
             /** Format: date-time */
             at?: string;
             id?: string;
+            injected?: components["schemas"]["Injected"];
             report?: components["schemas"]["SubagentReport"];
             /** @description Who spoke: user or assistant */
             role?: string;
@@ -2230,6 +2242,21 @@ export interface components {
             /** Format: date-time */
             at: string;
             sessions: components["schemas"]["SessionView"][] | null;
+        };
+        ShellResult: {
+            /** @description A person ran it from their own client, not the agent */
+            by_person?: boolean;
+            /** @description The command that ran */
+            command: string;
+            /**
+             * Format: int64
+             * @description Its exit code, when it exited
+             */
+            exit?: number;
+            /** @description How it ended, as OpenCode says: completed, cancelled or error */
+            state?: string;
+            /** @description OpenCode kept only part of the command's output */
+            truncated?: boolean;
         };
         SteerRequest: {
             /**

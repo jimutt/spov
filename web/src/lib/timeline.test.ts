@@ -29,6 +29,7 @@ import {
   type Block,
   type Conversation,
   type Entry,
+  type MessageEntry,
   type EventEntry,
 } from './timeline';
 import {
@@ -49,6 +50,7 @@ import {
 import { callFrames, childEnd, childStart, frame, toolFrames } from './subagent.frames';
 import { pendingAskIds, latestAction, renamesMain } from './timeline';
 import { windowOf } from './transcriptwindow';
+import { injectedConversations, injectedLog, Root as InjectedRoot } from './injected.fixture';
 import { unseen } from './steer';
 
 /** ev builds one frame of the log, at the position the store gave it. */
@@ -927,6 +929,25 @@ describe('condense', () => {
     expect(t.map((e) => (e.kind === 'event' ? e.name : ''))).toEqual(['session.retry.scheduled']);
   });
 
+  // A provider that keeps its reasoning to itself sends a thought with
+  // no words: nothing to draw, and nothing to count in a run's summary.
+  //
+  // @decision(DL-181)
+  test('drops a thought with no words and keeps one that has them', () => {
+    const t = condense(buildTimeline([], [
+      ev(1, 'session.reasoning.ended'),
+      ev(2, 'session.reasoning.ended', '', '  \n'),
+      ev(3, 'session.reasoning.ended', '', 'check the tests first'),
+    ]));
+    expect(t.map((e) => (e.kind === 'event' ? e.text : ''))).toEqual(['check the tests first']);
+    const blocks = blocksOf(condense(buildTimeline([], [
+      tool(4, 'input.started', 'call_a', { tool: 'shell' }),
+      ev(5, 'session.reasoning.ended'),
+    ])));
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].kind === 'events' && runSummary(blocks[0].events)).toBe('1 tool call');
+  });
+
   test('joins a call into one line at its first event', () => {
     const t = condense(buildTimeline([], [
       tool(1, 'input.started', 'call_a', { tool: 'shell' }),
@@ -1697,5 +1718,66 @@ describe("a tool call opened on its own", () => {
     expect(big).toMatch(/… 1,2\d\d more characters not shown$/);
     expect(clipDetail("short")).toBe("short");
     expect(clipDetail("y".repeat(DetailLimit + 1))).toMatch(/… 1 more character not shown$/);
+  });
+});
+
+// Spike S-OI1's 2.3.0 capture: two shell results, a directory's
+// AGENTS.md OpenCode loaded, and one synthetic as spov sends one.
+//
+// @decision(DL-180)
+describe('what OpenCode added to a conversation', () => {
+  const synthetics = (entries: Entry[]) =>
+    entries.filter((e): e is MessageEntry => e.kind === 'message' && e.role === 'synthetic');
+
+  test('is named on every entry, once each, and spov\'s own is not', () => {
+    const drawn = synthetics(buildTimeline(injectedConversations, injectedLog));
+    expect(drawn.map((e) => e.injected?.kind ?? 'spov')).toEqual(['instructions', 'shell', 'shell', 'spov']);
+    const [instructions, background, byHand] = drawn;
+    expect(instructions.injected?.summary).toBe('Loaded app/AGENTS.md');
+    expect(background.injected?.shell).toMatchObject({ command: "sleep 1; printf 'built\\n'; exit 3", exit: 3 });
+    expect(background.text).toBe('built\n\n\nExit code: 3');
+    expect(byHand.injected?.shell?.by_person).toBe(true);
+    for (const e of drawn) expect(e.text).not.toContain('<shell');
+  });
+
+  // A shell result's words are short and repeat; it is joined by its id.
+  test('keeps two results with the same output, and never hides a message that says the same', () => {
+    const shell = (pos: number, id: string): Activity => ({
+      pos,
+      at: `2026-11-22T14:05:0${pos}Z`,
+      name: 'session.inbox.enqueued',
+      source: 'opencode',
+      role: 'synthetic',
+      message: id,
+      text: 'ok',
+      injected: { kind: 'shell', shell: { command: 'make', state: 'completed', exit: 0 } },
+    });
+    const said: Activity = { pos: 3, at: '2026-11-22T14:05:03Z', name: 'session.text.ended', source: 'opencode', text: 'ok' };
+    const drawn = buildTimeline([{ id: InjectedRoot, messages: [] }], [shell(1, 'msg_a'), shell(2, 'msg_b'), said]);
+    expect(drawn.filter((e) => e.kind === 'message').map((e) => (e as MessageEntry).role)).toEqual(['synthetic', 'synthetic', 'assistant']);
+    // The stored copy of the first joins its log event by id.
+    const stored = [{ id: InjectedRoot, messages: [{ id: 'msg_a', role: 'synthetic', text: 'ok', at: '2026-11-22T14:05:01Z', injected: shell(1, 'msg_a').injected }] }];
+    expect(synthetics(buildTimeline(stored, [shell(1, 'msg_a'), shell(2, 'msg_b')]))).toHaveLength(2);
+  });
+
+  test('keeps a shell result with no output', () => {
+    const quiet: Activity = {
+      pos: 1,
+      at: '2026-11-22T14:05:01Z',
+      name: 'session.inbox.enqueued',
+      source: 'opencode',
+      role: 'synthetic',
+      message: 'msg_q',
+      text: '',
+      injected: { kind: 'shell', shell: { command: 'true', state: 'completed', exit: 0 } },
+    };
+    expect(synthetics(buildTimeline([{ id: InjectedRoot, messages: [] }], [quiet]))).toHaveLength(1);
+    const stored = [{ id: InjectedRoot, messages: [{ id: 'msg_q', role: 'synthetic', text: '', injected: quiet.injected }] }];
+    expect(synthetics(buildTimeline(stored, [quiet]))).toHaveLength(1);
+  });
+
+  test('is drawn from the log before the transcript is read', () => {
+    const drawn = synthetics(buildTimeline([{ id: InjectedRoot, messages: [] }], injectedLog));
+    expect(drawn.map((e) => e.injected?.kind ?? 'spov')).toEqual(['instructions', 'shell', 'shell', 'spov']);
   });
 });
