@@ -87,6 +87,33 @@ func TestPluginContinuesWithSyntheticAndNeverPrompt(t *testing.T) {
 	}
 }
 
+// Every synthetic the plugin sends is bare (no metadata, no
+// description): that is how the server tells spov's own from what
+// OpenCode added, which carries one or the other.
+//
+// @decision(DL-180)
+func TestThePluginsSyntheticsCarryNoMetadataOrDescription(t *testing.T) {
+	source, err := testPlugin().Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := strings.Split(source, "ctx.session.synthetic(")[1:]
+	if len(calls) == 0 {
+		t.Fatal("the plugin never calls ctx.session.synthetic")
+	}
+	for _, rest := range calls {
+		arg, _, ok := strings.Cut(rest, "})")
+		if !ok {
+			t.Fatalf("a synthetic call's argument does not end: %.200s", rest)
+		}
+		for _, key := range []string{"metadata", "description", "..."} {
+			if strings.Contains(arg, key) {
+				t.Errorf("a synthetic call may set %s: %s", key, arg)
+			}
+		}
+	}
+}
+
 // The plugin must not import the published package: its V2 context is
 // narrower than the in-repo one and cannot drive a loop.
 func TestPluginImportsNoOpenCodePackage(t *testing.T) {

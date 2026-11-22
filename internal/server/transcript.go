@@ -50,6 +50,11 @@ type MessageView struct {
 	//
 	// @decision(DL-144)
 	Report *SubagentReport `json:"report,omitempty"`
+	// Injected says OpenCode or a plugin added this synthetic message,
+	// and what it is.
+	//
+	// @decision(DL-180)
+	Injected *Injected `json:"injected,omitempty"`
 }
 
 type messagesOutput struct {
@@ -161,6 +166,8 @@ func messageViewOf(m store.Message) MessageView {
 	}
 	// @decision(DL-144)
 	v.Report = messageReport(m)
+	// @decision(DL-180)
+	v.Injected, v.Text = messageInjected(m)
 	return v
 }
 

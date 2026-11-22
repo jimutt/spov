@@ -29,6 +29,7 @@ import {
   type Block,
   type Conversation,
   type Entry,
+  type MessageEntry,
   type EventEntry,
 } from './timeline';
 import {
@@ -49,6 +50,7 @@ import {
 import { callFrames, childEnd, childStart, frame, toolFrames } from './subagent.frames';
 import { pendingAskIds, latestAction, renamesMain } from './timeline';
 import { windowOf } from './transcriptwindow';
+import { injectedConversations, injectedLog, Root as InjectedRoot } from './injected.fixture';
 import { unseen } from './steer';
 
 /** ev builds one frame of the log, at the position the store gave it. */
@@ -1697,5 +1699,30 @@ describe("a tool call opened on its own", () => {
     expect(big).toMatch(/… 1,2\d\d more characters not shown$/);
     expect(clipDetail("short")).toBe("short");
     expect(clipDetail("y".repeat(DetailLimit + 1))).toMatch(/… 1 more character not shown$/);
+  });
+});
+
+// Spike S-OI1's 2.3.0 capture: two shell results, a directory's
+// AGENTS.md OpenCode loaded, and one synthetic as spov sends one.
+//
+// @decision(DL-180)
+describe('what OpenCode added to a conversation', () => {
+  const synthetics = (entries: Entry[]) =>
+    entries.filter((e): e is MessageEntry => e.kind === 'message' && e.role === 'synthetic');
+
+  test('is named on every entry, once each, and spov\'s own is not', () => {
+    const drawn = synthetics(buildTimeline(injectedConversations, injectedLog));
+    expect(drawn.map((e) => e.injected?.kind ?? 'spov')).toEqual(['instructions', 'shell', 'shell', 'spov']);
+    const [instructions, background, byHand] = drawn;
+    expect(instructions.injected?.summary).toBe('Loaded app/AGENTS.md');
+    expect(background.injected?.shell).toMatchObject({ command: "sleep 1; printf 'built\\n'; exit 3", exit: 3 });
+    expect(background.text).toBe('built\n\n\nExit code: 3');
+    expect(byHand.injected?.shell?.by_person).toBe(true);
+    for (const e of drawn) expect(e.text).not.toContain('<shell');
+  });
+
+  test('is drawn from the log before the transcript is read', () => {
+    const drawn = synthetics(buildTimeline([{ id: InjectedRoot, messages: [] }], injectedLog));
+    expect(drawn.map((e) => e.injected?.kind ?? 'spov')).toEqual(['instructions', 'shell', 'shell', 'spov']);
   });
 });

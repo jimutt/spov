@@ -239,6 +239,7 @@ const stub = vi.hoisted(() => {
 import SessionDetail from "./SessionDetail.svelte";
 import { Child, foregroundConversations, foregroundLog, subagentConversations, subagentLog } from "../lib/subagent.fixture";
 import { callFrames, childEnd, childStart } from "../lib/subagent.frames";
+import { injectedConversations, injectedLog } from "../lib/injected.fixture";
 
 beforeEach(() => {
   stub.reset();
@@ -1664,6 +1665,36 @@ describe("a synthetic message in a session without a job", () => {
     await settle();
     expect(page.target.querySelector('[data-testid="injected"]')).toBeNull();
     expect(page.target.querySelectorAll('[data-testid="spov-tag"]')).toHaveLength(1);
+    page.done();
+  });
+});
+
+// Spike S-OI1's 2.3.0 capture, in a job's session: what OpenCode added
+// is folded and never tagged spov; spov's own synthetic still is.
+//
+// @decision(DL-180) @decision(DL-173)
+describe("what OpenCode added in a job's session", () => {
+  it("folds a shell result to one line and instructions to their summary, and tags only spov's own", async () => {
+    stub.withConversations(injectedConversations);
+    stub.setSession({ job: { id: "j1", kind: "pr", state: "running" } });
+    const page = await open();
+    for (const ev of injectedLog) stub.say(ev);
+    await settle();
+
+    const shells = [...page.target.querySelectorAll('[data-testid="shell-result"]')] as HTMLDetailsElement[];
+    expect(shells).toHaveLength(2);
+    expect(shells.every((d) => !d.open)).toBe(true);
+    const lines = shells.map((d) => d.querySelector("summary")?.textContent?.replace(/\s+/g, " ").trim());
+    expect(lines[0]).toBe("Background command sleep 1; printf 'built\\n'; exit 3 exit 3");
+    expect(lines[1]).toBe("Run by a person echo by-hand; exit 2 exit 2");
+    expect(shells[0].querySelector('[data-testid="shell-output"]')?.textContent).toBe("built\n\n\nExit code: 3");
+
+    const folds = [...page.target.querySelectorAll('[data-testid="injected"]')];
+    expect(folds).toHaveLength(1);
+    expect(folds[0].querySelector("summary")?.textContent?.trim()).toBe("Loaded app/AGENTS.md");
+
+    expect(page.target.querySelectorAll('[data-testid="spov-tag"]')).toHaveLength(1);
+    expect(page.target.textContent).not.toContain("<shell");
     page.done();
   });
 });

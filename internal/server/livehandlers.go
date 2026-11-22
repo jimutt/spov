@@ -50,10 +50,11 @@ type LogEvent struct {
 	Source string `json:"source" enum:"opencode,ephemeral,spov"`
 	// Role is who spoke, where the frame says: "user" for a person's
 	// prompt, "synthetic" for one sent by spov in a job's session or by
-	// OpenCode or a plugin anywhere, "assistant" for the agent. Empty
-	// when the frame names nobody, which is most of them.
+	// OpenCode or a plugin anywhere (Injected tells them apart),
+	// "assistant" for the agent. Empty when the frame names nobody, which
+	// is most of them.
 	//
-	// @decision(DL-173)
+	// @decision(DL-173) @decision(DL-180)
 	//
 	// @decision(DL-058)
 	Role string `json:"role,omitempty"`
@@ -99,6 +100,12 @@ type LogEvent struct {
 	//
 	// @decision(DL-144)
 	Report *SubagentReport `json:"report,omitempty"`
+	// Injected says a synthetic item or frame was added by OpenCode or a
+	// plugin, never by spov, and what it is; its Text is then what the
+	// page draws.
+	//
+	// @decision(DL-180)
+	Injected *Injected `json:"injected,omitempty"`
 	// Ask is a permission request or question form, or its answer, on
 	// the five ask frames only.
 	//
@@ -307,6 +314,7 @@ func (s *Server) logEvent(ctx context.Context, names *conversationNames, ev stor
 	call, tool := storedToolCall(ev)
 	role := storedRole(ev)
 	delivery, after := storedInbox(ev, role)
+	injected, text := storedInjected(ev, role)
 	return LogEvent{
 		Name:     ev.Name,
 		Session:  names.name(ctx, ev.ConversationID),
@@ -316,11 +324,12 @@ func (s *Server) logEvent(ctx context.Context, names *conversationNames, ev stor
 		Message:  storedMessage(ev),
 		Delivery: delivery,
 		After:    after,
-		Text:     ev.Text,
+		Text:     text,
 		Call:     call,
 		Tool:     tool,
 		Child:    storedChild(ev),
 		Report:   storedReport(ev, role),
+		Injected: injected,
 		Ask:      storedAsk(ev),
 		Model:    storedModel(ev),
 		At:       ev.At,
@@ -331,10 +340,14 @@ func (s *Server) logEvent(ctx context.Context, names *conversationNames, ev stor
 // storedRole re-derives who spoke from the event's raw frame; store.Event
 // has no role column. It must be set here, not in projectFrame, whose
 // output is stored and never sent. Only inbox events are parsed: they
-// are the one name where a person and spov share an event.
+// are the one name where a person and spov share an event. A
+// `session.synthetic` frame is OpenCode's own synthetic message.
 //
-// @decision(DL-058) @decision(DL-018)
+// @decision(DL-058) @decision(DL-018) @decision(DL-180)
 func storedRole(ev store.Event) string {
+	if ev.Name == syntheticEvent && ev.Source == store.SourceOpenCode {
+		return "synthetic"
+	}
 	if ev.Name != jobs.EventInboxEnqueued || len(ev.Raw) == 0 {
 		return ""
 	}

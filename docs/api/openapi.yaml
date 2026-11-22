@@ -654,6 +654,24 @@ components:
         name:
           type: string
       type: object
+    Injected:
+      additionalProperties: false
+      properties:
+        kind:
+          description: "What was added: a shell command's result, a directory's instructions, or anything else"
+          enum:
+            - shell
+            - instructions
+            - other
+          type: string
+        shell:
+          $ref: "#/components/schemas/ShellResult"
+        summary:
+          description: OpenCode's one-line description of what it added, absent when it gave none
+          type: string
+      required:
+        - kind
+      type: object
     InterruptRequest:
       additionalProperties: false
       properties:
@@ -1097,6 +1115,8 @@ components:
           type: string
         delivery:
           type: string
+        injected:
+          $ref: "#/components/schemas/Injected"
         message:
           type: string
         model:
@@ -1183,6 +1203,8 @@ components:
           type: string
         id:
           type: string
+        injected:
+          $ref: "#/components/schemas/Injected"
         report:
           $ref: "#/components/schemas/SubagentReport"
         role:
@@ -2559,6 +2581,25 @@ components:
       required:
         - sessions
         - at
+      type: object
+    ShellResult:
+      additionalProperties: false
+      properties:
+        by_person:
+          description: A person ran it from their own client, not the agent
+          type: boolean
+        command:
+          description: The command that ran
+          type: string
+        exit:
+          description: Its exit code, when it exited
+          format: int64
+          type: integer
+        state:
+          description: "How it ended, as OpenCode says: completed, cancelled or error"
+          type: string
+      required:
+        - command
       type: object
     SteerRequest:
       additionalProperties: false

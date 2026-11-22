@@ -30,6 +30,13 @@ export type Message = {
    * @decision(DL-144)
    */
   report?: Activity["report"];
+  /**
+   * Set on a synthetic message OpenCode or a plugin added, never on
+   * spov's own.
+   *
+   * @decision(DL-180)
+   */
+  injected?: Activity["injected"];
 };
 /**
  * `parent` is the OpenCode id of the conversation that started this one as
@@ -406,7 +413,17 @@ export interface MessageEntry {
   /** How it was sent and what follows it, from its enqueue. */
   delivery?: string;
   after?: string;
+  /**
+   * What OpenCode or a plugin added, on a synthetic message spov did not
+   * send: the page folds it and never tags it spov.
+   *
+   * @decision(DL-180)
+   */
+  injected?: Injected;
 }
+
+/** What OpenCode or a plugin added to a conversation by itself. */
+export type Injected = NonNullable<LogEvent["injected"]>;
 
 /**
  * Where a person's message stands. `unprocessed` is a queued message on
@@ -569,6 +586,9 @@ function spokenBy(name: string, role?: string): string {
   // the predicate to any future frame carrying an item type and text.
   if (name.endsWith(".text.ended")) return (role ?? "").trim() || "assistant";
   if (name.endsWith(".inbox.enqueued")) return (role ?? "").trim() || "user";
+  // OpenCode's own synthetic message, published without the inbox: the
+  // stored message repeats it. @decision(DL-180)
+  if (name === "session.synthetic" && role === "synthetic") return role;
   return "";
 }
 
@@ -712,6 +732,8 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
         entry.id = m.id;
         entry.key = messageKey(m.id);
       }
+      // @decision(DL-180)
+      if (role === "synthetic" && m.injected) entry.injected = m.injected;
       if (role === "assistant") unplaced.set(text.trim(), [...(unplaced.get(text.trim()) ?? []), entry]);
       out.push(entry);
     });
@@ -792,6 +814,8 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       remember(spoke, id, body);
       const entry: MessageEntry = { kind: "message", key: id ? messageKey(id) : `e${pos}`, at, seq: seq + pos, role: spoke, text };
       if (id) entry.id = id;
+      // @decision(DL-180)
+      if (spoke === "synthetic" && ev.injected) entry.injected = ev.injected;
       out.push(entry);
       continue;
     }
@@ -1202,7 +1226,7 @@ export const Plumbing = new Set<string>([
  * Speech events that reached the timeline as events because they said
  * nothing, or nothing new: `buildTimeline` promotes the ones with words.
  */
-const Spoken = new Set<string>(["session.text.ended", "session.inbox.enqueued"]);
+const Spoken = new Set<string>(["session.text.ended", "session.inbox.enqueued", "session.synthetic"]);
 
 const ToolPrefix = "session.tool.";
 
