@@ -78,8 +78,12 @@ func TestIntegrationSOI1InjectedMessages(t *testing.T) {
 	if !probeWait(ctx, func() bool { return frames.syntheticWith(id, "source") >= 1 }) {
 		t.Fatalf("no shell result reached the conversation:\n%s", frames.summary())
 	}
-	if code, out := run.do(http.MethodPost, "/shell", map[string]any{"command": "echo by-hand; exit 2"}); code >= 300 {
-		t.Fatalf("the shell route: %d %s", code, clip(string(out), 300))
+	// A command that fails, one that says nothing, and one that cannot
+	// start, as a person runs them.
+	for _, command := range []string{"echo by-hand; exit 2", "true", "./no-such-program"} {
+		if code, out := run.do(http.MethodPost, "/shell", map[string]any{"command": command}); code >= 300 {
+			t.Fatalf("the shell route: %d %s", code, clip(string(out), 300))
+		}
 	}
 	run.synthetic("SPOV-OWN a continuation as spov sends one", "queue", false)
 	// Neither starts a turn; a person's next message delivers both.
@@ -138,8 +142,8 @@ func TestIntegrationSOI1InjectedMessages(t *testing.T) {
 		}
 	}
 	t.Logf("synthetics by kind: %v", kinds)
-	if kinds["shell"] < 2 || kinds["instructions"] < 1 || kinds["spov"] != 1 {
-		t.Errorf("want two shell results, an instruction load and spov's own, got %v", kinds)
+	if kinds["shell"] < 4 || kinds["instructions"] < 1 || kinds["spov"] != 1 {
+		t.Errorf("want four shell results, an instruction load and spov's own, got %v", kinds)
 	}
 	t.Logf("the shell tool's parameters: %v", model.shellParams())
 	t.Logf("model requests:\n%s", model.log())

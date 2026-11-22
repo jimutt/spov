@@ -2598,6 +2598,9 @@ components:
         state:
           description: "How it ended, as OpenCode says: completed, cancelled or error"
           type: string
+        truncated:
+          description: OpenCode kept only part of the command's output
+          type: boolean
       required:
         - command
       type: object

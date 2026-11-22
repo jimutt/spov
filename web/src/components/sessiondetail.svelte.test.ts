@@ -691,6 +691,43 @@ describe("a subagent's card on the session page", () => {
     page.done();
   });
 
+  // What OpenCode added to the child is folded in the card too, never
+  // drawn as the child's own words.
+  //
+  // @decision(DL-180)
+  it("folds what OpenCode added to the child", async () => {
+    stub.withConversations(
+      subagentConversations.map((c) =>
+        c.id !== Child
+          ? c
+          : {
+              ...c,
+              messages: [
+                ...(c.messages ?? []),
+                {
+                  id: "msg_shell",
+                  role: "synthetic",
+                  text: "ok",
+                  at: c.messages?.[c.messages.length - 1]?.at,
+                  injected: { kind: "shell", shell: { command: "go test ./...", state: "completed", exit: 1 } },
+                },
+              ],
+            },
+      ),
+    );
+    const page = await open();
+    for (const ev of subagentLog) stub.say(ev);
+    await settle();
+    toggle(page).click();
+    await settle();
+    const work = card(page).querySelector('[data-testid="subagent-work"]')!;
+    expect(work.querySelector('[data-testid="shell-result"] summary')?.textContent?.replace(/\s+/g, " ").trim()).toBe(
+      "Background command go test ./... exit 1",
+    );
+    expect(work.querySelectorAll('[data-testid="subagent-message"]')).toHaveLength(1);
+    page.done();
+  });
+
   it("is delegating before the child exists, with nothing to open yet", async () => {
     stub.withConversations(subagentConversations.filter((c) => !c.parent));
     const page = await open();

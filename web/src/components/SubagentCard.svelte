@@ -15,6 +15,7 @@
   import { earlier, earlierLabel, windowOf, type Start } from '../lib/transcriptwindow';
   import EventRun from './EventRun.svelte';
   import Icon from './Icon.svelte';
+  import InjectedMessage from './InjectedMessage.svelte';
   import StateMark from './StateMark.svelte';
   import SubagentPrompt from './SubagentPrompt.svelte';
   import { secondary, textButton } from './ui';
@@ -111,6 +112,9 @@
       {#each windowed.shown as block (block.key)}
         {#if block.kind === 'message' && block.entry.role === 'prompt'}
           <SubagentPrompt text={block.entry.text} />
+        {:else if block.kind === 'message' && block.entry.injected}
+          <!-- What OpenCode added to the child, never its words. @decision(DL-180) -->
+          <InjectedMessage entry={block.entry} {markdown} />
         {:else if block.kind === 'message'}
           <div class="min-w-0" data-testid="subagent-message">{@render markdown(block.entry.text, 'text-read')}</div>
         {:else if block.kind === 'subagent'}

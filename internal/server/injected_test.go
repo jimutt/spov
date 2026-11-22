@@ -142,9 +142,24 @@ func TestAShellResultIsReadFromItsMetadataAndItsWrapper(t *testing.T) {
 			command: "ls", text: "a\nb", exit: intp(0), byPerson: true, unwrapped: true,
 		},
 		{
-			name:    "a command that failed to start",
-			parts:   syntheticParts{Metadata: map[string]any{"source": "shell", "state": "error"}, Text: "User shell command failed to start:\nnope\n\nENOENT"},
-			command: "", text: "User shell command failed to start:\nnope\n\nENOENT",
+			name:    "a person's command that failed to start",
+			parts:   syntheticParts{Metadata: map[string]any{"source": "shell", "state": "error"}, Text: shellNotStarted + "nope\n\nENOENT"},
+			command: "nope", text: "ENOENT", byPerson: true,
+		},
+		{
+			name:    "a command with no output, its wrapper's lines apart",
+			parts:   syntheticParts{Description: "true", Metadata: shell, Text: "<shell id=\"sh_4\" state=\"completed\" command=\"true\">\n\n</shell>"},
+			command: "true", text: "", exit: intp(0),
+		},
+		{
+			name:    "a command with no output, its wrapper's lines together",
+			parts:   syntheticParts{Description: "true", Metadata: shell, Text: "<shell id=\"sh_5\" state=\"completed\" command=\"true\">\n</shell>"},
+			command: "true", text: "", exit: intp(0),
+		},
+		{
+			name:    "a description that differs from the wrapper's attribute",
+			parts:   syntheticParts{Description: `echo "hi"`, Metadata: shell, Text: "<shell id=\"sh_6\" state=\"completed\" command=\"echo &quot;hi&quot;\">\nhi\n</shell>"},
+			command: `echo "hi"`, text: "hi", exit: intp(0),
 		},
 		{
 			name:    "a wrapper with no end",

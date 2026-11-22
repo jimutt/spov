@@ -685,6 +685,14 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
   // @decision(DL-059) @decision(DL-019)
   const ids = new Set<string>();
   let identified = false;
+  // What OpenCode added is joined apart from everything else: by its
+  // message id where the frame names one (an inbox item), else by its
+  // words among its own kind only, so a short shell output never hides,
+  // or is hidden by, someone's message that says the same.
+  //
+  // @decision(DL-180)
+  const injectedIds = new Set<string>();
+  const injectedSaid = new Set<string>();
   const remember = (role: string, id: string, body: string) => {
     if (id && role === "user") {
       ids.add(id);
@@ -709,7 +717,10 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       // tool's output is already on its own event row.
       //
       // @decision(DL-058)
-      if (!text.trim()) return;
+      // A shell result with no output still says a command ended.
+      //
+      // @decision(DL-180)
+      if (!text.trim() && !m.injected?.shell) return;
       // A subagent's report: its card says what the child concluded.
       //
       // @decision(DL-144)
@@ -719,7 +730,11 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       //
       // @decision(DL-111)
       const role = child && m.role === "user" ? "prompt" : (m.role ?? "");
-      remember(role, m.id ?? "", text.trim());
+      const injected = role === "synthetic" ? m.injected : undefined;
+      if (injected) {
+        if (m.id) injectedIds.add(m.id);
+        injectedSaid.add(text.trim());
+      } else remember(role, m.id ?? "", text.trim());
       const entry: MessageEntry = {
         kind: "message",
         key: `m${c}.${i}`,
@@ -733,7 +748,7 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
         entry.key = messageKey(m.id);
       }
       // @decision(DL-180)
-      if (role === "synthetic" && m.injected) entry.injected = m.injected;
+      if (injected) entry.injected = injected;
       if (role === "assistant") unplaced.set(text.trim(), [...(unplaced.get(text.trim()) ?? []), entry]);
       out.push(entry);
     });
@@ -788,6 +803,16 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
     // @decision(DL-111)
     if (child && spoke === "user") {
       if (said.has(text.trim())) continue;
+    } else if (spoke === "synthetic" && ev.injected) {
+      // @decision(DL-180)
+      const body = text.trim();
+      const id = ev.message ?? "";
+      if (id ? injectedIds.has(id) : injectedSaid.has(body)) continue;
+      if (!body && !ev.injected.shell) continue;
+      if (id) injectedIds.add(id);
+      injectedSaid.add(body);
+      out.push({ kind: "message", key: `e${pos}`, at, seq: seq + pos, role: spoke, text, injected: ev.injected });
+      continue;
     } else if (spoke && text.trim()) {
       // `.trim()`, not raw truthiness: "\n" is truthy and would promote a
       // bare newline to a speaker block with nothing readable in it.
@@ -814,8 +839,6 @@ function lay(conversations: Conversation[], activity: Activity[], child: boolean
       remember(spoke, id, body);
       const entry: MessageEntry = { kind: "message", key: id ? messageKey(id) : `e${pos}`, at, seq: seq + pos, role: spoke, text };
       if (id) entry.id = id;
-      // @decision(DL-180)
-      if (spoke === "synthetic" && ev.injected) entry.injected = ev.injected;
       out.push(entry);
       continue;
     }

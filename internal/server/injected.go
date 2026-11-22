@@ -30,6 +30,8 @@ type ShellResult struct {
 	State    string `json:"state,omitempty" doc:"How it ended, as OpenCode says: completed, cancelled or error"`
 	Exit     *int   `json:"exit,omitempty" doc:"Its exit code, when it exited"`
 	ByPerson bool   `json:"by_person,omitempty" doc:"A person ran it from their own client, not the agent"`
+	// Truncated says OpenCode kept only part of the output.
+	Truncated bool `json:"truncated,omitempty" doc:"OpenCode kept only part of the command's output"`
 }
 
 // syntheticEvent is the frame OpenCode publishes a synthetic message
@@ -45,6 +47,11 @@ const maxInjectedSummary = 200
 // shellPreamble is the line OpenCode puts before a person's own shell
 // command's result (spike S-OI1).
 const shellPreamble = "The following shell command was executed by the user:\n"
+
+// shellNotStarted begins a person's own shell command that failed to
+// start, followed by the command, a blank line and the error; it has no
+// wrapper.
+const shellNotStarted = "User shell command failed to start:\n"
 
 // syntheticParts are the fields of a synthetic message that say who
 // added it: what spov sends carries neither metadata nor a description.
@@ -85,11 +92,23 @@ func injectedOf(p syntheticParts, text string) (*Injected, string) {
 func shellResultOf(p syntheticParts, text string) (*ShellResult, string) {
 	r := &ShellResult{Command: p.Description}
 	r.State, _ = p.Metadata["state"].(string)
+	r.Truncated, _ = p.Metadata["truncated"].(bool)
 	if exit, ok := p.Metadata["exit"].(float64); ok && exit == math.Trunc(exit) && math.Abs(exit) < 1<<31 {
 		n := int(exit)
 		r.Exit = &n
 	}
 	body := text
+	if rest, ok := strings.CutPrefix(body, shellNotStarted); ok {
+		r.ByPerson = true
+		command, why, ok := strings.Cut(rest, "\n\n")
+		if !ok {
+			return r, text
+		}
+		if r.Command == "" {
+			r.Command = command
+		}
+		return r, strings.TrimSpace(why)
+	}
 	if rest, ok := strings.CutPrefix(body, shellPreamble); ok {
 		r.ByPerson = true
 		body = rest
@@ -109,10 +128,15 @@ func shellResultOf(p syntheticParts, text string) (*ShellResult, string) {
 		return r, text
 	}
 	output, ok := strings.CutSuffix(rest, "\n</shell>")
+	if !ok && rest == "</shell>" {
+		output, ok = "", true
+	}
 	if !ok {
 		return r, text
 	}
-	r.Command = command
+	if r.Command == "" {
+		r.Command = command
+	}
 	return r, strings.TrimSpace(output)
 }
 

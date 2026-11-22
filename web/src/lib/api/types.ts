@@ -2255,6 +2255,8 @@ export interface components {
             exit?: number;
             /** @description How it ended, as OpenCode says: completed, cancelled or error */
             state?: string;
+            /** @description OpenCode kept only part of the command's output */
+            truncated?: boolean;
         };
         SteerRequest: {
             /**

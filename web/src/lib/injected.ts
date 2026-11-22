@@ -19,17 +19,24 @@ export function shellWho(shell: ShellResult): string {
   return shell.by_person ? "Run by a person" : "Background command";
 }
 
+/** The states a shell result's words are known for; any other is shown as OpenCode names it. */
+const KnownStates = new Set(["", "completed", "cancelled", "error"]);
+
 /** How a shell command ended, in a few words. */
 export function shellEnd(shell: ShellResult): string {
-  if (shell.state === "cancelled") return "cancelled";
-  if (shell.state === "error") return "failed to start";
+  const state = shell.state ?? "";
+  if (state === "cancelled") return "cancelled";
+  if (state === "error") return shell.by_person ? "failed to start" : "failed";
+  if (!KnownStates.has(state)) return state;
   if (shell.exit !== undefined && shell.exit !== 0) return `exit ${shell.exit}`;
   return "finished";
 }
 
-/** A shell result's end reads as a failure. */
+/** A shell result's end reads as a failure: anything but a clean finish or a cancel. */
 export function shellFailed(shell: ShellResult): boolean {
-  return shell.state === "error" || (shell.exit !== undefined && shell.exit !== 0);
+  const state = shell.state ?? "";
+  if (state === "cancelled") return false;
+  return !KnownStates.has(state) || state === "error" || (shell.exit !== undefined && shell.exit !== 0);
 }
 
 /** The command's first line, for the folded line; the whole is shown opened. */

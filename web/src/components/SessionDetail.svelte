@@ -99,7 +99,6 @@
     ended,
   } from '../lib/jobcontrols';
   import { askStates, pendingAsks } from '../lib/asks';
-  import { commandLine, injectedLabel, shellEnd, shellFailed, shellWho } from '../lib/injected';
   import {
     ResumeWatchEvery,
     followsAResume,
@@ -132,6 +131,7 @@
   import Composer from './Composer.svelte';
   import ConfirmAct from './ConfirmAct.svelte';
   import Icon from './Icon.svelte';
+  import InjectedMessage from './InjectedMessage.svelte';
   import InfoToggle from './InfoToggle.svelte';
   import Problem from './Problem.svelte';
   import StateMark from './StateMark.svelte';
@@ -1194,44 +1194,12 @@
             <!-- What the parent agent asked this subagent: in its view
                  only. @decision(DL-111) @decision(DL-113) -->
             <div class="{row} mb-5"><SubagentPrompt text={block.entry.text} /></div>
-          {:else if block.kind === 'message' && block.entry.role === 'synthetic' && block.entry.injected?.shell}
-            <!-- A shell command's result OpenCode reported: one quiet
-                 line, opened to the command and its output.
-                 @decision(DL-180) -->
-            {@const shell = block.entry.injected.shell}
-            <details class="{row} group/injected mb-5" data-testid="shell-result">
-              <summary
-                class="flex min-w-0 cursor-pointer list-none items-baseline gap-1.5 text-sm text-soft hover:text-ink [&::-webkit-details-marker]:hidden"
-                title={shell.command}
-              >
-                <Icon name="chevron" class="chevron size-3 shrink-0 self-center" />
-                <span class="shrink-0">{shellWho(shell)}</span>
-                <code class="min-w-0 truncate font-mono text-sm">{commandLine(shell.command)}</code>
-                <span class="shrink-0 {shellFailed(shell) ? 'text-rust' : 'text-faint'}" data-testid="shell-end">{shellEnd(shell)}</span>
-              </summary>
-              <div class="mt-1.5 border-l-2 border-rule-2 pl-3">
-                <pre
-                  class="m-0 max-h-40 overflow-auto font-mono text-sm whitespace-pre-wrap break-words text-ink"
-                  data-testid="shell-command">{shell.command}</pre>
-                {#if block.entry.text.trim()}
-                  <pre
-                    class="m-0 mt-2 max-h-80 overflow-auto rounded-ctl border border-rule bg-sunk px-3 py-2 font-mono text-sm whitespace-pre-wrap break-words text-ink"
-                    data-testid="shell-output">{block.entry.text}</pre>
-                {/if}
-              </div>
-            </details>
           {:else if block.kind === 'message' && block.entry.role === 'synthetic' && (!jobSession || block.entry.injected)}
-            <!-- Context OpenCode or a plugin added, never spov's words:
-                 folded, and said to be neither yours nor the agent's.
+            <!-- Context OpenCode or a plugin added, never spov's words.
                  In a job's session only what the server names as
                  injected is; spov's own stays tagged.
                  @decision(DL-173) @decision(DL-180) -->
-            <details class="{row} group/injected mb-5" data-testid="injected">
-              <summary class="{textButton} list-none [&::-webkit-details-marker]:hidden">
-                <Icon name="chevron" class="chevron size-3" />{injectedLabel(block.entry.injected)}
-              </summary>
-              <div class="mt-1.5 border-l-2 border-rule-2 pl-3">{@render markdown(block.entry.text, 'text-md text-soft')}</div>
-            </details>
+            <InjectedMessage entry={block.entry} {markdown} class="{row} mb-5" />
           {:else if block.kind === 'message'}
             {@const synthetic = block.entry.role === 'synthetic'}
             {@const mine = block.entry.role === 'user'}

@@ -1740,6 +1740,42 @@ describe('what OpenCode added to a conversation', () => {
     for (const e of drawn) expect(e.text).not.toContain('<shell');
   });
 
+  // A shell result's words are short and repeat; it is joined by its id.
+  test('keeps two results with the same output, and never hides a message that says the same', () => {
+    const shell = (pos: number, id: string): Activity => ({
+      pos,
+      at: `2026-11-22T14:05:0${pos}Z`,
+      name: 'session.inbox.enqueued',
+      source: 'opencode',
+      role: 'synthetic',
+      message: id,
+      text: 'ok',
+      injected: { kind: 'shell', shell: { command: 'make', state: 'completed', exit: 0 } },
+    });
+    const said: Activity = { pos: 3, at: '2026-11-22T14:05:03Z', name: 'session.text.ended', source: 'opencode', text: 'ok' };
+    const drawn = buildTimeline([{ id: InjectedRoot, messages: [] }], [shell(1, 'msg_a'), shell(2, 'msg_b'), said]);
+    expect(drawn.filter((e) => e.kind === 'message').map((e) => (e as MessageEntry).role)).toEqual(['synthetic', 'synthetic', 'assistant']);
+    // The stored copy of the first joins its log event by id.
+    const stored = [{ id: InjectedRoot, messages: [{ id: 'msg_a', role: 'synthetic', text: 'ok', at: '2026-11-22T14:05:01Z', injected: shell(1, 'msg_a').injected }] }];
+    expect(synthetics(buildTimeline(stored, [shell(1, 'msg_a'), shell(2, 'msg_b')]))).toHaveLength(2);
+  });
+
+  test('keeps a shell result with no output', () => {
+    const quiet: Activity = {
+      pos: 1,
+      at: '2026-11-22T14:05:01Z',
+      name: 'session.inbox.enqueued',
+      source: 'opencode',
+      role: 'synthetic',
+      message: 'msg_q',
+      text: '',
+      injected: { kind: 'shell', shell: { command: 'true', state: 'completed', exit: 0 } },
+    };
+    expect(synthetics(buildTimeline([{ id: InjectedRoot, messages: [] }], [quiet]))).toHaveLength(1);
+    const stored = [{ id: InjectedRoot, messages: [{ id: 'msg_q', role: 'synthetic', text: '', injected: quiet.injected }] }];
+    expect(synthetics(buildTimeline(stored, [quiet]))).toHaveLength(1);
+  });
+
   test('is drawn from the log before the transcript is read', () => {
     const drawn = synthetics(buildTimeline([{ id: InjectedRoot, messages: [] }], injectedLog));
     expect(drawn.map((e) => e.injected?.kind ?? 'spov')).toEqual(['instructions', 'shell', 'shell', 'spov']);
