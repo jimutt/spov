@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-181 | A thought with no words is neither drawn nor counted | accepted | web | session-page, transcript |
 | DL-180 | A synthetic message OpenCode added is named by the server and drawn folded in every session, a shell result as one line | accepted | web | session-page, transcript, opencode-2-3 |
 | DL-179 | The browser's repository picker draws no note on a public repository a fine-grained token may only read | accepted | web | repo-picker, github-access, wording |
 | DL-178 | The CLI spools a sync archive to disk and lands it from files | accepted | cli | sync-streaming, sync, cli |

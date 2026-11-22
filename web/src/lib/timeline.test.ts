@@ -929,6 +929,25 @@ describe('condense', () => {
     expect(t.map((e) => (e.kind === 'event' ? e.name : ''))).toEqual(['session.retry.scheduled']);
   });
 
+  // A provider that keeps its reasoning to itself sends a thought with
+  // no words: nothing to draw, and nothing to count in a run's summary.
+  //
+  // @decision(DL-181)
+  test('drops a thought with no words and keeps one that has them', () => {
+    const t = condense(buildTimeline([], [
+      ev(1, 'session.reasoning.ended'),
+      ev(2, 'session.reasoning.ended', '', '  \n'),
+      ev(3, 'session.reasoning.ended', '', 'check the tests first'),
+    ]));
+    expect(t.map((e) => (e.kind === 'event' ? e.text : ''))).toEqual(['check the tests first']);
+    const blocks = blocksOf(condense(buildTimeline([], [
+      tool(4, 'input.started', 'call_a', { tool: 'shell' }),
+      ev(5, 'session.reasoning.ended'),
+    ])));
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].kind === 'events' && runSummary(blocks[0].events)).toBe('1 tool call');
+  });
+
   test('joins a call into one line at its first event', () => {
     const t = condense(buildTimeline([], [
       tool(1, 'input.started', 'call_a', { tool: 'shell' }),

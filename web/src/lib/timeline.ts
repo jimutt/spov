@@ -1249,6 +1249,9 @@ export function condense(entries: Entry[]): Entry[] {
     }
     if (Plumbing.has(e.name)) continue;
     if (Spoken.has(e.name) && !e.text.trim()) continue;
+    // A thought with no words (a provider that keeps its reasoning to
+    // itself) has nothing to draw or count. @decision(DL-181)
+    if (e.name === Thought && !e.text.trim()) continue;
     if (e.call && e.name.startsWith(ToolPrefix)) {
       let call = calls.get(e.call);
       if (!call) {
