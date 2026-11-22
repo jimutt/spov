@@ -199,6 +199,36 @@ function reportedChild(ev) {
   return typeof metadata?.childID === "string" ? metadata.childID : ""
 }
 
+// The job session's shell commands that run in the background: the
+// shell ids of tool calls that returned while their command still ran,
+// until the command's result reaches the job or its shell exits. A
+// subagent's are its own.
+//
+// @decision(DL-182)
+const shells = { running: new Set() }
+
+// backgroundedShell is the shell id a tool call of the job's session
+// left running in the background: its success says status "running"
+// (spike S-OI1).
+//
+// @decision(DL-182)
+function backgroundedShell(ev) {
+  const metadata = (ev?.data ?? ev?.properties ?? {})?.metadata
+  if (metadata?.status !== "running") return ""
+  return typeof metadata?.shellID === "string" ? metadata.shellID : ""
+}
+
+// reportedShell is the shell a command's result to the job names: a
+// synthetic item whose metadata's source is "shell".
+//
+// @decision(DL-182)
+function reportedShell(ev) {
+  const item = findItem(ev, 0)
+  const metadata = item?.payload?.metadata
+  if (item?.type !== "synthetic" || metadata?.source !== "shell") return ""
+  return typeof metadata?.shellID === "string" ? metadata.shellID : ""
+}
+
 // trackSubagent follows a frame of one of the job's subagents, and
 // reports whether the frame was one.
 //
@@ -226,14 +256,26 @@ function trackSubagent(type, ev) {
   return true
 }
 
-// waitForSubagents holds the continuation of a turn that ended while a
-// subagent of the job runs: the child's report starts the next turn. At
-// CONFIG.subagentWaitMs with no turn of the job's started since, the
-// ordinary continuation goes out, saying how many still run.
+// stillRunning names what a hold still waits for, as the wait note's
+// {n}: "1 subagent and 2 background commands".
 //
-// @decision(DL-143)
-function waitForSubagents(ctx, sessionID) {
-  record("continue.waiting", { running: subagents.running.size })
+// @decision(DL-143) @decision(DL-182)
+function stillRunning(kids, commands) {
+  const parts = []
+  if (kids > 0) parts.push(kids === 1 ? "1 subagent" : kids + " subagents")
+  if (commands > 0) parts.push(commands === 1 ? "1 background command" : commands + " background commands")
+  return parts.join(" and ")
+}
+
+// waitForBackground holds the continuation of a turn that ended while a
+// subagent or a background command of the job runs: the report or the
+// command's result starts the next turn. At CONFIG.subagentWaitMs with no
+// turn of the job's started since, the ordinary continuation goes out,
+// saying what still runs.
+//
+// @decision(DL-143) @decision(DL-182)
+function waitForBackground(ctx, sessionID) {
+  record("continue.waiting", { running: subagents.running.size, shells: shells.running.size })
   const started = loop.started
   const since = loop.frames
   if (loop.subagentTimer !== null) clearTimeout(loop.subagentTimer)
@@ -251,10 +293,12 @@ function waitForSubagents(ctx, sessionID) {
         record("subagent.dropped", { session: id })
       }
     }
+    // A background command is kept: its end is always seen.
     const n = subagents.running.size
-    const note = n > 0 ? String(CONFIG.subagentWaitNote ?? "").replace("{n}", n === 1 ? "1 subagent" : n + " subagents") : ""
+    const m = shells.running.size
+    const note = n + m > 0 ? String(CONFIG.subagentWaitNote ?? "").replace("{n}", stillRunning(n, m)) : ""
     continueRun(ctx, sessionID, note).then(
-      () => record("continue.sent", { continuations: loop.continuations, waited: true, running: n }),
+      () => record("continue.sent", { continuations: loop.continuations, waited: true, running: n, shells: m }),
       (e) => {
         record("continue.failed", { error: String(e) })
         return announceStop(ctx, sessionID, "continue-failed")
@@ -1249,6 +1293,25 @@ export default {
           if (type === "session.inbox.enqueued" && loop.session && evSession === loop.session) {
             const child = reportedChild(ev)
             if (child && subagents.running.delete(child)) record("subagent.reported", { session: child })
+            // @decision(DL-182)
+            const shell = reportedShell(ev)
+            if (shell && shells.running.delete(shell)) record("shell.reported", { shell })
+          }
+          // A background command of the job's: its call returned while it
+          // ran, and it holds the job's turn ends until it reports or
+          // exits.
+          //
+          // @decision(DL-182)
+          if (type === "session.tool.success" && loop.session && evSession === loop.session) {
+            const shell = backgroundedShell(ev)
+            if (shell && !shells.running.has(shell)) {
+              shells.running.add(shell)
+              record("shell.backgrounded", { shell, running: shells.running.size })
+            }
+          }
+          if (type === "shell.exited") {
+            const shell = data?.id
+            if (typeof shell === "string" && shells.running.delete(shell)) record("shell.exited", { shell })
           }
           // A person's takeover message holds the loop when it is
           // delivered, which is before its execution's succeeded, so no
@@ -1355,9 +1418,9 @@ export default {
             }
             continue
           }
-          // @decision(DL-143)
-          if (subagents.running.size > 0) {
-            waitForSubagents(ctx, sessionID)
+          // @decision(DL-143) @decision(DL-182)
+          if (subagents.running.size > 0 || shells.running.size > 0) {
+            waitForBackground(ctx, sessionID)
             continue
           }
           try {

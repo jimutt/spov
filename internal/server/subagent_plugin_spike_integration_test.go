@@ -683,3 +683,65 @@ func TestIntegrationSSA3TheLoopWaitsForItsSubagent(t *testing.T) {
 		t.Errorf("the run stopped as %v", got)
 	}
 }
+
+// The real plugin at the pin, against DL-182: the job's turn ends while
+// a shell command it ran in the background works, no continuation is
+// sent, the command's result starts the next turn, and the job ends on
+// it.
+//
+//	SPOV_PROBE=1 go test -tags integration ./internal/server/ -run SSA3 -v
+//
+// @decision(DL-182)
+func TestIntegrationSSA3TheLoopWaitsForItsBackgroundCommand(t *testing.T) {
+	if os.Getenv("SPOV_PROBE") == "" && os.Getenv("SPOV_PROBE_OPENCODE") == "" {
+		t.Skip("set SPOV_PROBE=1 to run the spike")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	model := newTaggedModel(t, func(q taggedRequest) taggedAnswer {
+		switch {
+		case !q.offered:
+			return taggedAnswer{text: "title"}
+		case strings.Contains(q.latest, opencode.LoopStoppedMarker):
+			return taggedAnswer{text: "stopped"}
+		// The command's result, whose output only it carries (the
+		// request is JSON, where "<" is escaped).
+		case strings.Contains(q.latest, "built-ok"):
+			return taggedAnswer{tool: opencode.CompletionTool, args: `{"summary":"built"}`}
+		case strings.Contains(q.latest, "Continue working"):
+			return taggedAnswer{text: "continued"}
+		case q.tools > 0:
+			return taggedAnswer{text: "waiting"}
+		case q.tag == "JOB-B":
+			return taggedAnswer{tool: "shell", args: `{"command":"sleep 6; echo built-ok","background":true}`}
+		}
+		return taggedAnswer{text: "ok"}
+	})
+	j := startJobProbe(ctx, t, model, opencode.Plugin{Kind: "report", Goal: "JOB-B build in the background"})
+	if !probeWait(ctx, func() bool { return len(j.evidence("loop.stopped")) == 1 }) {
+		t.Fatalf("the job never ended; model requests:\n%s\nevidence:\n%s", model.log(), j.evidenceLog())
+	}
+	answers := []string{}
+	for _, line := range strings.Split(model.log(), "\n") {
+		if strings.HasPrefix(line, "JOB-B") {
+			_, a, _ := strings.Cut(line, "-> ")
+			answers = append(answers, a)
+		}
+	}
+	answers = slices.DeleteFunc(answers, func(a string) bool { return a == "title" })
+	t.Logf("the job's model requests, in order: %v", answers)
+	want := []string{"shell", "waiting", opencode.CompletionTool}
+	if len(answers) < len(want) || !slices.Equal(answers[:len(want)], want) {
+		t.Errorf("the job's requests were %v, want %v: a continuation went out while the command ran", answers, want)
+	}
+	waiting := j.evidence("continue.waiting")
+	if len(waiting) != 1 || waiting[0]["shells"] != float64(1) {
+		t.Errorf("continue.waiting = %v, want one with one background command; evidence:\n%s", waiting, j.evidenceLog())
+	}
+	if len(j.evidence("shell.backgrounded")) != 1 || len(j.evidence("shell.reported"))+len(j.evidence("shell.exited")) == 0 {
+		t.Errorf("the command was not followed from its call to its end; evidence:\n%s", j.evidenceLog())
+	}
+	if got := j.evidence("loop.stopped"); got[0]["reason"] != opencode.CompletionReason {
+		t.Errorf("the run stopped as %v", got)
+	}
+}

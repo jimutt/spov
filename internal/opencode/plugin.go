@@ -448,10 +448,10 @@ const (
 )
 
 // SubagentWait bounds how long the loop holds its continuation while a
-// subagent of the job's session has a turn in flight, from the turn end
-// that began the hold.
+// subagent or a background shell command of the job's session runs,
+// from the turn end that began the hold.
 //
-// @decision(DL-143)
+// @decision(DL-143) @decision(DL-182)
 const SubagentWait = 10 * time.Minute
 
 // SubagentNote tells the agent how its subagents end and what calling
@@ -464,11 +464,12 @@ const SubagentNote = "Subagents run in the background and report back to you on 
 	"so wait for the reports you need before calling it."
 
 // subagentWaitNote is what a continuation sent at SubagentWait adds; the
-// plugin puts the count of subagents still running in place of {n}.
+// plugin puts what is still running in place of {n} ("1 subagent and 2
+// background commands").
 //
-// @decision(DL-143)
-var subagentWaitNote = fmt.Sprintf(" Still running without a report %d minutes after your last turn ended: {n}. "+
-	"Carry on with work that does not need them, or end your response to wait for their reports.",
+// @decision(DL-143) @decision(DL-182)
+var subagentWaitNote = fmt.Sprintf(" Still running %d minutes after your last turn ended: {n}. "+
+	"Carry on with work that does not need them, or end your response to wait for them to report back.",
 	int(SubagentWait/time.Minute))
 
 // continueText is what a continuation says. It carries no goal of its
