@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-182 | A job's loop waits for its own background shell commands as it waits for its subagents | accepted | jobs | opencode-2-3, jobs, plugin, completion |
 | DL-181 | A thought with no words is neither drawn nor counted | accepted | web | session-page, transcript |
 | DL-180 | A synthetic message OpenCode added is named by the server and drawn folded in every session, a shell result as one line | accepted | web | session-page, transcript, opencode-2-3 |
 | DL-179 | The browser's repository picker draws no note on a public repository a fine-grained token may only read | accepted | web | repo-picker, github-access, wording |

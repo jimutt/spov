@@ -448,27 +448,31 @@ const (
 )
 
 // SubagentWait bounds how long the loop holds its continuation while a
-// subagent of the job's session has a turn in flight, from the turn end
-// that began the hold.
+// subagent or a background shell command of the job's session runs,
+// from the turn end that began the hold.
 //
-// @decision(DL-143)
+// @decision(DL-143) @decision(DL-182)
 const SubagentWait = 10 * time.Minute
 
-// SubagentNote tells the agent how its subagents end and what calling
-// the completion tool does to them: in the tool's description, every
-// continuation and the generated AGENTS.md.
+// SubagentNote tells the agent how its subagents and its background
+// shell commands end and what calling the completion tool does to them:
+// in the tool's description and every continuation.
 //
-// @decision(DL-143)
+// @decision(DL-143) @decision(DL-182)
 const SubagentNote = "Subagents run in the background and report back to you on their own when they finish. " +
 	"Work a subagent has not reported when you call the " + CompletionTool + " tool is lost, " +
-	"so wait for the reports you need before calling it."
+	"so wait for the reports you need before calling it. " +
+	"A shell command you run in the background reports its result to you the same way, " +
+	"and one still running when you call the tool is ended."
 
 // subagentWaitNote is what a continuation sent at SubagentWait adds; the
-// plugin puts the count of subagents still running in place of {n}.
+// plugin puts what is still running in place of {n} ("1 subagent and 2
+// background commands").
 //
-// @decision(DL-143)
-var subagentWaitNote = fmt.Sprintf(" Still running without a report %d minutes after your last turn ended: {n}. "+
-	"Carry on with work that does not need them, or end your response to wait for their reports.",
+// @decision(DL-143) @decision(DL-182)
+var subagentWaitNote = fmt.Sprintf(" Still running %d minutes after your last turn ended: {n}. "+
+	"Carry on with work that does not need them, stop a background command you no longer need, "+
+	"or end your response to wait for what you need to report back.",
 	int(SubagentWait/time.Minute))
 
 // continueText is what a continuation says. It carries no goal of its
