@@ -80,7 +80,6 @@ func TestTheReasoningFieldIsTheResolvedModelsMode(t *testing.T) {
 		{"", "max", `\"max\" is not a reasoning mode`},
 		{testModel + "#low", "high", "not both"},
 		{"", "bad mode", "is not a reasoning mode"},
-		{"", "default", "is not a reasoning mode"},
 	} {
 		if resp, body := create(c.model, c.reasoning); resp.StatusCode != http.StatusUnprocessableEntity ||
 			!strings.Contains(string(body), c.want) {
@@ -269,6 +268,10 @@ func TestOnlyAModeTheRequestNamesIsChecked(t *testing.T) {
 		{"p/m", " high ", modelFromRequest, "p/m#high", true},
 		// The request's mode takes the place of the default's own.
 		{"p/m#high", "low", modelFromProfile, "p/m#low", true},
+		// "default" is the model's own default.
+		{"p/m#high", "default", modelFromProfile, "p/m", false},
+		{"p/m", "default", modelFromRequest, "p/m", false},
+		{"", "default", modelFromProfile, "", false},
 	} {
 		got, named, err := resolveMode(c.model, c.reasoning, c.src)
 		if err != nil || got != c.want || named != c.named {

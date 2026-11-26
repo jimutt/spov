@@ -868,7 +868,7 @@ components:
             - goal
           type: string
         reasoning:
-          description: Reasoning mode of the resolved model, one GET /api/v1/models offers for it; the model's default when empty
+          description: Reasoning mode of the resolved model, one GET /api/v1/models offers for it, or default for the model's own; as the model says when empty
           maxLength: 64
           type: string
         repos:
@@ -2332,7 +2332,7 @@ components:
             - array
             - "null"
         reasoning:
-          description: Reasoning mode of the resolved model, one GET /api/v1/models offers for it; the model's default when empty
+          description: Reasoning mode of the resolved model, one GET /api/v1/models offers for it, or default for the model's own; as the model says when empty
           maxLength: 64
           type: string
         repos:

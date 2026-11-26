@@ -35,7 +35,8 @@ func (s *Service) modeLookup(ctx context.Context, orgID string) (func(ref string
 
 // resolveMode folds a request's reasoning field into the resolved model
 // and says whether the request named the mode, in either place: only
-// such a mode is checked at create.
+// such a mode is checked at create. A reasoning of "default" is the
+// model's own default, any mode the model carries dropped.
 //
 // @decision(DL-187)
 func resolveMode(model, reasoning string, src modelSource) (string, bool, error) {
@@ -45,18 +46,29 @@ func resolveMode(model, reasoning string, src modelSource) (string, bool, error)
 		return model, named && src != modelFromProfile, nil
 	}
 	switch {
+	case reasoning == DefaultReasoning && model == "":
+		return "", false, nil
 	case model == "":
 		return "", false, fmt.Errorf("%w: a reasoning mode needs a model: name one, or store a default model", ErrInvalidRequest)
 	case named && src == modelFromRequest:
 		return "", false, fmt.Errorf("%w: the model names a reasoning mode already; send it in model or in reasoning, not both",
 			ErrInvalidRequest)
-	case modelcat.ValidID(reasoning) != nil || reasoning == "default":
+	case modelcat.ValidID(reasoning) != nil:
 		return "", false, fmt.Errorf("%w: %q is not a reasoning mode", ErrInvalidRequest, reasoning)
 	}
 	// The request's mode takes the place of a default's own.
 	bare, _, _ := strings.Cut(model, "#")
+	if reasoning == DefaultReasoning {
+		return bare, false, nil
+	}
 	return bare + "#" + reasoning, true, nil
 }
+
+// DefaultReasoning is the reasoning field's word for the model's own
+// default, which a mode may never be called (DL-159 drops one).
+//
+// @decision(DL-190)
+const DefaultReasoning = "default"
 
 // checkMode refuses a mode the model is not offered with, in DL-160's
 // words, naming the modes it is offered with.

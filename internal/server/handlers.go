@@ -265,7 +265,7 @@ type SessionRequest struct {
 	// (provider/model#mode) is refused beside it.
 	//
 	// @decision(DL-187)
-	Reasoning string `json:"reasoning,omitempty" maxLength:"64" doc:"Reasoning mode of the resolved model, one GET /api/v1/models offers for it; the model's default when empty"`
+	Reasoning string `json:"reasoning,omitempty" maxLength:"64" doc:"Reasoning mode of the resolved model, one GET /api/v1/models offers for it, or default for the model's own; as the model says when empty"`
 	// Git is the author of commits made in the sandbox. The client
 	// resolves it, since only the client can read the user's own git
 	// configuration; unset halves fall back to the server's identity.

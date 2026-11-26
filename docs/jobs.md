@@ -31,6 +31,7 @@ spov jobs apply <id>
 | `--check <command>` | A command that verifies the work, run at `/workspace` (in the repository for a sync job). Its exit status is one of the job's gates. |
 | `--max-duration 45m` | How long the job may run unattended. When unset: `sandbox.job_max_duration` in your config, then your default from Settings, then 1 h. Never more than your limit. |
 | `--model provider/model` | Model to run on; your account's default when unset |
+| `--reasoning <mode>` | Reasoning mode of that model, or of your default model, e.g. `high`; `default` for the model's own. A mode the server does not list for the model is refused when the job is created; one the job's sandbox does not offer is dropped with a note in the transcript, and the job runs on the model's default. |
 | `--template name`, `--no-template` | Launch from a [sandbox template](sandbox.md#sandbox-templates). A job takes its default from `sandbox.job_template`, never `sandbox.template`. |
 | `--repo`, `--git-access`, `--env`, `--credentials`, `--no-credentials` | As for sessions. A job takes its git access from `sandbox.job_git_access` and your Settings, and its credentials from `sandbox.job_credentials`, never from the interactive defaults. |
 | `--landing <dir>` | Start in one repository's directory rather than `/workspace` |

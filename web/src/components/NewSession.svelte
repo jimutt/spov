@@ -12,6 +12,8 @@
   import { sentence } from '../lib/format';
   import { listTemplates } from '../lib/templates';
   import ModelPicker from './ModelPicker.svelte';
+  import ReasoningPicker from './ReasoningPicker.svelte';
+  import { formModes, keptMode } from '../lib/reasoning';
   import Problem from './Problem.svelte';
   import RepoPicker from './RepoPicker.svelte';
   import TemplatePicker from './TemplatePicker.svelte';
@@ -29,6 +31,9 @@
   // None on every load, and never remembered. @decision(DL-121)
   let template = $state('');
   let model = $state('');
+  // @decision(DL-189)
+  let mode = $state('');
+  const modes = $derived(formModes(models.data?.providers, model));
   const groups = $derived(modelGroups(models.data?.providers));
   const keys = $derived(keyNote(groups));
   const inheritLabel = $derived(defaultOptionLabel(me.data?.default_model ?? '', me.loaded));
@@ -44,7 +49,7 @@
     try {
       // The new session's page takes the form's place in the history.
       // @decision(DL-156)
-      await startAndGo(selected, (body) => api.POST('/api/v1/sessions', { body }), nav.replace, model, template);
+      await startAndGo(selected, (body) => api.POST('/api/v1/sessions', { body }), nav.replace, model, template, mode);
     } catch (err) {
       failure = err;
       // Re-enabled only for a refusal: a Committed session exists, and a
@@ -87,10 +92,19 @@
          @decision(DL-061) -->
     <div class="mb-7 max-w-[46ch]">
       <label class={label} for="session-model">Model <span class="font-normal text-soft">(optional)</span></label>
-      <ModelPicker id="session-model" bind:value={model} {groups} defaultLabel={inheritLabel} describedby="session-model-note" />
+      <ModelPicker
+        id="session-model"
+        bind:value={model}
+        {groups}
+        defaultLabel={inheritLabel}
+        describedby="session-model-note"
+        onchange={() => (mode = keptMode(mode, formModes(models.data?.providers, model)))}
+      />
       {#if keys}<p id="session-model-note" class={help}>{keys}</p>{/if}
       {#if models.error}<div class="mt-2"><Problem error={models.error} what="the model list" /></div>{/if}
     </div>
+    <!-- @decision(DL-189) -->
+    <div class="max-w-[46ch]"><ReasoningPicker id="session-reasoning" bind:value={mode} {modes} known={models.loaded} /></div>
 
     <div class="mt-9 flex flex-wrap items-center justify-between gap-x-5 gap-y-2.5 border-t border-rule pt-3.5 pb-4">
       <p class="m-0 max-w-[52ch] text-md text-soft">

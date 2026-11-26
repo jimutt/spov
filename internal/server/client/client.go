@@ -427,6 +427,20 @@ func (c *Client) DeleteRoutedCredential(ctx context.Context, name string) error 
 	return c.do(ctx, http.MethodDelete, "me/routed-credentials/"+url.PathEscape(name), nil, nil)
 }
 
+// ListModels reads what the caller can run a session or job on, each
+// provider's models with their reasoning modes.
+//
+// @decision(DL-190)
+func (c *Client) ListModels(ctx context.Context) ([]server.ModelProviderView, error) {
+	var out struct {
+		Providers []server.ModelProviderView `json:"providers"`
+	}
+	if err := c.do(ctx, http.MethodGet, "models", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Providers, nil
+}
+
 // ListTemplates lists the caller's sandbox templates.
 //
 // @decision(DL-119)

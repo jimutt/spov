@@ -2,8 +2,8 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
-| DL-190 | spov fly and spov jobs create take --reasoning | proposed | cli | reasoning-before-launch |
-| DL-189 | The job, session and Settings forms offer the chosen model's reasoning modes | proposed | web | reasoning-before-launch |
+| DL-190 | spov fly and spov jobs create take --reasoning | accepted | cli | reasoning-before-launch |
+| DL-189 | The job, session and Settings forms offer the chosen model's reasoning modes | accepted | web | reasoning-before-launch |
 | DL-188 | A conversation opens on its mode only when its sandbox offers it, and otherwise on the model's default with a note | accepted | server | reasoning-before-launch |
 | DL-187 | The model list offers each model's reasoning modes, and a launch's own mode is checked against them | accepted | server | reasoning-before-launch |
 | DL-186 | The newest reasoning modes a sandbox reported are kept for its organisation and pin | accepted | server | reasoning-before-launch |
