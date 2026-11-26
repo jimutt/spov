@@ -2,6 +2,7 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-184 | A job's sandbox turns OpenCode's automations off | accepted | opencode | jobs, opencode-2.4, automations |
 | DL-183 | Re-read a model list the sandbox has not built yet | accepted | server | models, recorder, opencode-2.4 |
 | DL-182 | A job's loop waits for its own background shell commands as it waits for its subagents | accepted | jobs | opencode-2-3, jobs, plugin, completion |
 | DL-181 | A thought with no words is neither drawn nor counted | accepted | web | session-page, transcript |

@@ -344,3 +344,23 @@ func TestAnUnlistedModelIsDeclared(t *testing.T) {
 		t.Error("a declared id can close the heredoc")
 	}
 }
+
+// A job's config turns OpenCode's automations off; an interactive
+// session's leaves them to OpenCode.
+//
+// @decision(DL-184)
+func TestAJobsConfigTurnsAutomationsOff(t *testing.T) {
+	var job, interactive map[string]any
+	if err := json.Unmarshal([]byte(JobConfigJSON("m", false, nil)), &job); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(SandboxConfigJSON("m", false, nil, nil)), &interactive); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := job["automations"]; !ok || v != false {
+		t.Errorf("a job's config has automations %v, want false", v)
+	}
+	if _, ok := interactive["automations"]; ok {
+		t.Errorf("an interactive session's config sets automations: %v", interactive["automations"])
+	}
+}

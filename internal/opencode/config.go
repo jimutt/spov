@@ -61,6 +61,12 @@ type sandboxConfig struct {
 	//
 	// @decision(DL-174)
 	Instructions []string `json:"instructions,omitempty"`
+	// Automations is false in a job's config, which takes OpenCode's
+	// automation tools out of the agent's Code Mode catalog; unset, an
+	// interactive session keeps them.
+	//
+	// @decision(DL-184)
+	Automations *bool `json:"automations,omitempty"`
 }
 
 // declaredProvider holds the one declared model, by id.
@@ -142,16 +148,20 @@ func SandboxConfigJSON(model string, unlisted bool, plugins, instructions []stri
 // same rule list, and a deny there would short-circuit the plugin's
 // policy without consulting it.
 //
-// An unlisted model is declared (DL-038).
+// An unlisted model is declared (DL-038), and OpenCode's automations
+// are off (DL-184).
 //
-// @decision(DL-038)
+// @decision(DL-038) @decision(DL-184)
 func JobConfigJSON(model string, unlisted bool, instructions []string) string {
+	off := false
 	return marshalConfig(sandboxConfig{
 		Schema:       configSchema,
 		Model:        model,
 		WebSearch:    webSearch{Provider: WebSearchProvider},
 		Providers:    declare(model, unlisted),
 		Instructions: instructions,
+		// @decision(DL-184)
+		Automations: &off,
 	})
 }
 
