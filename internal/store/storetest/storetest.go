@@ -505,6 +505,16 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		if got := seen("org", "2.4.2"); got == nil || len(got) != 0 {
 			t.Fatalf("nothing kept reads %v, want an empty map", got)
 		}
+		// A deployment that names no version keeps and reads one too.
+		if got := seen("fresh", ""); got == nil || len(got) != 0 {
+			t.Fatalf("nothing kept for no version reads %v, want an empty map", got)
+		}
+		if err := modes.Keep(ctx, "fresh", "", map[string][]string{"p/a": {"low"}}); err != nil {
+			t.Fatal(err)
+		}
+		if got := seen("fresh", ""); !reflect.DeepEqual(got, map[string][]string{"p/a": {"low"}}) {
+			t.Errorf("kept for no version: %v", got)
+		}
 		if err := modes.Keep(ctx, "org", "2.4.2", map[string][]string{"p/a": {"low", "high"}, "p/b": {"none"}}); err != nil {
 			t.Fatal(err)
 		}

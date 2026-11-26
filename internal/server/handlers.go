@@ -260,6 +260,12 @@ type SessionRequest struct {
 	//
 	// @decision(DL-014)
 	Model string `json:"model,omitempty" doc:"Model to run on, as provider/model; OpenCode's default when empty"`
+	// Reasoning is a reasoning mode for the model this request resolves
+	// to, its own or the caller's default; a model naming one already
+	// (provider/model#mode) is refused beside it.
+	//
+	// @decision(DL-187)
+	Reasoning string `json:"reasoning,omitempty" maxLength:"64" doc:"Reasoning mode of the resolved model, one GET /api/v1/models offers for it; the model's default when empty"`
 	// Git is the author of commits made in the sandbox. The client
 	// resolves it, since only the client can read the user's own git
 	// configuration; unset halves fall back to the server's identity.
@@ -327,6 +333,7 @@ func (r SessionRequest) toStore() (store.SessionRequest, error) {
 		EgressExtraDomains: r.EgressExtraDomains,
 		Sandbox:            r.Sandbox.toStore(), GitName: r.Git.Name, GitEmail: r.Git.Email,
 		Model:     r.Model,
+		Reasoning: r.Reasoning,
 		GitAccess: r.GitAccess, GitAccessPreferred: r.GitAccessPreferred,
 		// @decision(DL-042)
 		CredentialPreference: r.CredentialPreference,
@@ -1283,6 +1290,12 @@ func (s *Server) registerMe() {
 		if in.Body.DefaultModel != nil {
 			if _, err := s.svc.checkModel(ctx, p,
 				strings.TrimSpace(*in.Body.DefaultModel), modelFromSettings); err != nil {
+				return nil, toHumaError(err)
+			}
+			// A default's mode is checked where its owner chooses it.
+			//
+			// @decision(DL-189)
+			if err := s.svc.checkMode(ctx, p.OrgID, strings.TrimSpace(*in.Body.DefaultModel)); err != nil {
 				return nil, toHumaError(err)
 			}
 		}

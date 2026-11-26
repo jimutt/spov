@@ -857,6 +857,15 @@ describe("spov's own rows", () => {
     expect(blocks.map((b) => b.kind)).toEqual(['note', 'note']);
   });
 
+  // @decision(DL-188)
+  test('a reasoning mode dropped at the opening is a quiet line', () => {
+    const text =
+      "max is not a reasoning mode anthropic/claude-sonnet-5 offers in this sandbox; it runs on the model's default (it offers low, thinking).";
+    const blocks = blocksOf(buildTimeline([], [mark(1, 'spov.session.model.mode.dropped', text)]));
+    expect(blocks.map((b) => b.kind)).toEqual(['note']);
+    expect(noteText({ name: 'spov.session.model.mode.dropped', text })).toBe(text);
+  });
+
   // @decision(DL-021)
   test('a failed token renewal is a quiet line too, drawn in full', () => {
     const text =

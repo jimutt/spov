@@ -867,6 +867,10 @@ components:
             - spov
             - goal
           type: string
+        reasoning:
+          description: Reasoning mode of the resolved model, one GET /api/v1/models offers for it; the model's default when empty
+          maxLength: 64
+          type: string
         repos:
           items:
             $ref: "#/components/schemas/RepoRef"
@@ -1268,6 +1272,14 @@ components:
           enum:
             - opencode
           type: string
+        variants:
+          additionalProperties:
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+          type: object
       required:
         - provider
         - name
@@ -2319,6 +2331,10 @@ components:
           type:
             - array
             - "null"
+        reasoning:
+          description: Reasoning mode of the resolved model, one GET /api/v1/models offers for it; the model's default when empty
+          maxLength: 64
+          type: string
         repos:
           items:
             $ref: "#/components/schemas/RepoRef"

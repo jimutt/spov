@@ -160,7 +160,12 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	//
 	// @decision(DL-014)
 	model, src := resolveModel(req.Model, profile)
-	req.Model = model
+	// @decision(DL-187)
+	model, namedMode, err := resolveMode(model, req.Reasoning, src)
+	if err != nil {
+		return store.Session{}, err
+	}
+	req.Model, req.Reasoning = model, ""
 	// Before the quota and before anything is provisioned: a model the
 	// caller cannot run costs a 422 here and a whole sandbox anywhere
 	// later.
@@ -169,6 +174,11 @@ func (s *Service) Create(ctx context.Context, p auth.Principal, req store.Sessio
 	modelNote, err := s.checkModel(ctx, p, req.Model, src)
 	if err != nil {
 		return store.Session{}, err
+	}
+	if namedMode {
+		if err := s.checkMode(ctx, p.OrgID, req.Model); err != nil {
+			return store.Session{}, err
+		}
 	}
 	// @decision(DL-043)
 	req.GitAccess, req.GitAccessPreferred = resolveGitAccess(req.GitAccess, req.GitAccessPreferred, profile.DefaultGitAccess)

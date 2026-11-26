@@ -84,7 +84,12 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	//
 	// @decision(DL-014)
 	model, src := resolveModel(sreq.Model, profile)
-	sreq.Model = model
+	// @decision(DL-187)
+	model, namedMode, err := resolveMode(model, sreq.Reasoning, src)
+	if err != nil {
+		return store.Job{}, err
+	}
+	sreq.Model, sreq.Reasoning = model, ""
 	// Before the quota and before any row exists, so a bad model is a
 	// refused request rather than a failed job.
 	//
@@ -92,6 +97,11 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	modelNote, err := s.checkModel(ctx, p, sreq.Model, src)
 	if err != nil {
 		return store.Job{}, err
+	}
+	if namedMode {
+		if err := s.checkMode(ctx, p.OrgID, sreq.Model); err != nil {
+			return store.Job{}, err
+		}
 	}
 	// A job never takes the interactive default.
 	//
@@ -383,6 +393,8 @@ func (s *Service) jobSessionRequest(req JobRequest, jobID string, tmpl *store.Te
 		//
 		// @decision(DL-014)
 		Model: req.Model,
+		// @decision(DL-187)
+		Reasoning: req.Reasoning,
 		// @decision(DL-043)
 		GitAccess:          req.GitAccess,
 		GitAccessPreferred: req.GitAccessPreferred,

@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/jimutt/spov/internal/prep"
+	"github.com/jimutt/spov/internal/redact"
 )
 
 // ModelProviderView is one provider and the models spov knows it
@@ -36,6 +38,12 @@ type ModelProviderView struct {
 	//
 	// @decision(DL-013)
 	Beta []string `json:"beta,omitempty"`
+	// Variants are the reasoning modes a launch is offered for each of
+	// Models that has any, in OpenCode's order; one is sent as
+	// provider/model#mode in the model field.
+	//
+	// @decision(DL-187)
+	Variants map[string][]string `json:"variants,omitempty"`
 }
 
 // CatalogueView says where the model list came from.
@@ -72,6 +80,14 @@ func (s *Server) registerModels() {
 			return nil, toHumaError(err)
 		}
 		list, live := s.deps.Models.Models()
+		// The list is served without modes when they cannot be read.
+		//
+		// @decision(DL-187)
+		modes, err := s.svc.modeLookup(ctx, p.OrgID)
+		if err != nil {
+			s.deps.Warn(fmt.Sprintf("models: reading the reasoning modes: %s", redact.Error(err)))
+			modes = func(string) []string { return nil }
+		}
 		out := &modelsOutput{}
 		out.Body.Providers = []ModelProviderView{}
 		// @decision(DL-013)
@@ -83,10 +99,18 @@ func (s *Server) registerModels() {
 			models := list.Providers[provider.ID]
 			refs := make([]string, 0, len(models))
 			var beta []string
+			var variants map[string][]string
 			for _, m := range models {
-				refs = append(refs, provider.Ref(m.ID))
+				ref := provider.Ref(m.ID)
+				refs = append(refs, ref)
 				if m.Beta {
-					beta = append(beta, provider.Ref(m.ID))
+					beta = append(beta, ref)
+				}
+				if v := modes(ref); len(v) > 0 {
+					if variants == nil {
+						variants = map[string][]string{}
+					}
+					variants[ref] = v
 				}
 			}
 			out.Body.Providers = append(out.Body.Providers, ModelProviderView{
@@ -97,6 +121,7 @@ func (s *Server) registerModels() {
 				SignIn:   s.svc.signInFor(provider.KeyEnv),
 				Models:   refs,
 				Beta:     beta,
+				Variants: variants,
 			})
 		}
 		return out, nil

@@ -2314,9 +2314,9 @@ type memModelModes struct{ m *Memory }
 // @decision(DL-186)
 func (s memModelModes) Keep(_ context.Context, orgID, openCode string, models map[string][]string) error {
 	defer s.m.lock()()
-	cur := s.m.seenModes[orgID]
+	cur, kept := s.m.seenModes[orgID]
 	merged := map[string][]string{}
-	if cur.openCode == openCode {
+	if kept && cur.openCode == openCode {
 		merged = cloneVariants(cur.models)
 	}
 	report := cloneVariants(models)

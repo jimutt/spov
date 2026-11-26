@@ -364,3 +364,22 @@ func TestAJobsConfigTurnsAutomationsOff(t *testing.T) {
 		t.Errorf("an interactive session's config sets automations: %v", interactive["automations"])
 	}
 }
+
+// The config's model never carries a #mode, which OpenCode ignores
+// there; a declared model is declared by its id alone.
+//
+// @decision(DL-187)
+func TestTheConfigsModelCarriesNoMode(t *testing.T) {
+	for name, doc := range map[string]string{
+		"interactive": SandboxConfigJSON("openrouter/acme/new-model#high", true, nil, nil),
+		"job":         JobConfigJSON("openrouter/acme/new-model#high", true, nil),
+	} {
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(doc), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if cfg["model"] != "openrouter/acme/new-model" {
+			t.Errorf("%s: the config's model is %v", name, cfg["model"])
+		}
+	}
+}

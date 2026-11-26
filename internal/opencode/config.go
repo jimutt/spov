@@ -94,6 +94,16 @@ func declare(model string, unlisted bool) map[string]declaredProvider {
 	return map[string]declaredProvider{provider: {Models: map[string]declaredModel{id: {Name: id}}}}
 }
 
+// withoutMode is a model reference without its #mode, which OpenCode
+// ignores in the config's model; spov sets the mode when it opens the
+// conversation.
+//
+// @decision(DL-187)
+func withoutMode(model string) string {
+	bare, _, _ := strings.Cut(model, "#")
+	return bare
+}
+
 // webSearch pins the built-in web search to one provider.
 type webSearch struct {
 	Provider string `json:"provider"`
@@ -134,7 +144,7 @@ func allowAll(action string, patterns []string) []permissionRule {
 func SandboxConfigJSON(model string, unlisted bool, plugins, instructions []string) string {
 	return marshalConfig(sandboxConfig{
 		Schema:       configSchema,
-		Model:        model,
+		Model:        withoutMode(model),
 		WebSearch:    webSearch{Provider: WebSearchProvider},
 		Permissions:  allowAll(ActionExternalDirectory, workspaceGlobs),
 		Providers:    declare(model, unlisted),
@@ -156,7 +166,7 @@ func JobConfigJSON(model string, unlisted bool, instructions []string) string {
 	off := false
 	return marshalConfig(sandboxConfig{
 		Schema:       configSchema,
-		Model:        model,
+		Model:        withoutMode(model),
 		WebSearch:    webSearch{Provider: WebSearchProvider},
 		Providers:    declare(model, unlisted),
 		Instructions: instructions,

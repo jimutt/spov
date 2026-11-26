@@ -176,7 +176,12 @@ func (s *Service) jobConversation(ctx context.Context, conn Connection, sess sto
 		// landing, but it is sent regardless.
 		//
 		// @decision(DL-014)
-		if err := setConversationModel(ctx, conn, id, sess.Request.Model); err != nil {
+		// @decision(DL-188)
+		model, err := s.openingModel(ctx, conn, sess)
+		if err != nil {
+			return "", err
+		}
+		if err := setConversationModel(ctx, conn, id, model); err != nil {
 			s.deps.Warn(fmt.Sprintf("job %s: setting the model: %s", sess.ID, redact.Error(err)))
 		}
 		// Recorded immediately, so a retry of this pass finds it in the

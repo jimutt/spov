@@ -190,13 +190,14 @@ export function isRecord(ev: Activity): boolean {
  * stop marker, not across the column as a gap is. Every other marker of
  * spov's stays a seam, including one this build has not heard of.
  *
- * @decision(DL-058) @decision(DL-013) @decision(DL-021)
+ * @decision(DL-058) @decision(DL-013) @decision(DL-021) @decision(DL-188)
  */
 const NoteMarkers = new Set<string>([
   "spov.job.collected",
   "spov.job.bounded",
   "spov.session.model.custom",
   "spov.session.credentials.renewal.failed",
+  "spov.session.model.mode.dropped",
 ]);
 
 /**

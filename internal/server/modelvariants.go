@@ -145,14 +145,24 @@ func (r *Recorder) readModelVariants(ctx context.Context, sess store.Session, co
 	if err != nil {
 		return err
 	}
-	err = r.store.Sessions().SetModelVariants(ctx, sess.OrgID, sess.ID, sess.SandboxID, models)
+	return keepModesOf(ctx, r.store, r.openCode, r.warn, sess, models)
+}
+
+// keepModesOf keeps a list read from the session's sandbox for that
+// sandbox, and lays it over its org's seen modes; a session that no
+// longer runs there is not an error. The recorder and an opening that
+// read the list first both keep it here.
+//
+// @decision(DL-159) @decision(DL-186) @decision(DL-188)
+func keepModesOf(ctx context.Context, st store.Store, pin string, warn func(string), sess store.Session, models map[string][]string) error {
+	err := st.Sessions().SetModelVariants(ctx, sess.OrgID, sess.ID, sess.SandboxID, models)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("keep them: %s", redact.Error(err))
 	}
-	r.keepSeenModes(ctx, sess, models)
+	keepSeenModes(ctx, st, pin, warn, sess, models)
 	return nil
 }
 
@@ -161,15 +171,15 @@ func (r *Recorder) readModelVariants(ctx context.Context, sess store.Session, co
 // providers spov carries. A failure is logged and changes nothing else.
 //
 // @decision(DL-186)
-func (r *Recorder) keepSeenModes(ctx context.Context, sess store.Session, models map[string][]string) {
-	if r.openCode == "" {
+func keepSeenModes(ctx context.Context, st store.Store, pin string, warn func(string), sess store.Session, models map[string][]string) {
+	if pin == "" {
 		return
 	}
-	run, err := r.store.Runs().Current(ctx, sess.OrgID, sess.ID)
+	run, err := st.Runs().Current(ctx, sess.OrgID, sess.ID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		r.warn(fmt.Sprintf("recorder %s: the organisation's reasoning modes were not kept: %s", sess.ID, redact.Error(err)))
+		warn(fmt.Sprintf("session %s: the organisation's reasoning modes were not kept: %s", sess.ID, redact.Error(err)))
 	}
-	if err != nil || run.SandboxID != sess.SandboxID || run.OpenCode != r.openCode {
+	if err != nil || run.SandboxID != sess.SandboxID || run.OpenCode != pin {
 		return
 	}
 	carried := map[string]bool{}
@@ -185,8 +195,8 @@ func (r *Recorder) keepSeenModes(ctx context.Context, sess store.Session, models
 	if len(kept) == 0 {
 		return
 	}
-	if err := r.store.ModelModes().Keep(ctx, sess.OrgID, run.OpenCode, kept); err != nil {
-		r.warn(fmt.Sprintf("recorder %s: the organisation's reasoning modes were not kept: %s", sess.ID, redact.Error(err)))
+	if err := st.ModelModes().Keep(ctx, sess.OrgID, run.OpenCode, kept); err != nil {
+		warn(fmt.Sprintf("session %s: the organisation's reasoning modes were not kept: %s", sess.ID, redact.Error(err)))
 	}
 }
 
@@ -199,18 +209,11 @@ func (r *Recorder) keepSeenModes(ctx context.Context, sess store.Session, models
 //
 // @decision(DL-186) @decision(DL-185)
 func (s *Service) ModelModes(ctx context.Context, orgID, ref string) ([]string, error) {
-	pin := s.deps.Defaults.OpenCodeVersion
-	seen, err := s.deps.Store.ModelModes().Seen(ctx, orgID, pin)
+	lookup, err := s.modeLookup(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
-	if modes, ok := seen[ref]; ok {
-		return slices.Clone(modes), nil
-	}
-	if version, modes := modelcat.SnapshotModes(ref); version == pin {
-		return modes, nil
-	}
-	return nil, nil
+	return lookup(ref), nil
 }
 
 // parseModelVariants reads OpenCode's model list into each model's
