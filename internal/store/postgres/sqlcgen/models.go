@@ -195,6 +195,13 @@ type Mint struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type ModelModesSeen struct {
+	OrgID     string
+	Opencode  string
+	Models    []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Org struct {
 	ID        string
 	Name      string

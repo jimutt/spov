@@ -14,6 +14,7 @@ import (
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/modelcat"
+	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
 	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/store"
@@ -145,10 +146,71 @@ func (r *Recorder) readModelVariants(ctx context.Context, sess store.Session, co
 		return err
 	}
 	err = r.store.Sessions().SetModelVariants(ctx, sess.OrgID, sess.ID, sess.SandboxID, models)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("keep them: %s", redact.Error(err))
 	}
+	r.keepSeenModes(ctx, sess, models)
 	return nil
+}
+
+// keepSeenModes lays a run's list over its org's seen modes when the
+// run's sandbox ran the deployment's pinned OpenCode, keeping only the
+// providers spov carries. A failure is logged and changes nothing else.
+//
+// @decision(DL-186)
+func (r *Recorder) keepSeenModes(ctx context.Context, sess store.Session, models map[string][]string) {
+	if r.openCode == "" {
+		return
+	}
+	run, err := r.store.Runs().Current(ctx, sess.OrgID, sess.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		r.warn(fmt.Sprintf("recorder %s: the organisation's reasoning modes were not kept: %s", sess.ID, redact.Error(err)))
+	}
+	if err != nil || run.SandboxID != sess.SandboxID || run.OpenCode != r.openCode {
+		return
+	}
+	carried := map[string]bool{}
+	for _, p := range prep.Catalogue() {
+		carried[p.ID] = true
+	}
+	kept := map[string][]string{}
+	for ref, modes := range models {
+		if provider, _, _ := strings.Cut(ref, "/"); carried[provider] {
+			kept[ref] = modes
+		}
+	}
+	if len(kept) == 0 {
+		return
+	}
+	if err := r.store.ModelModes().Keep(ctx, sess.OrgID, run.OpenCode, kept); err != nil {
+		r.warn(fmt.Sprintf("recorder %s: the organisation's reasoning modes were not kept: %s", sess.ID, redact.Error(err)))
+	}
+}
+
+// ModelModes is the reasoning modes a launch on this deployment is
+// offered for a provider/model reference: the newest its org's
+// sandboxes reported on the pinned build, else the snapshot shipped
+// with that build, else none. A store error is returned, never
+// answered from the snapshot, so a caller does not refuse a mode the
+// org's sandboxes reported.
+//
+// @decision(DL-186) @decision(DL-185)
+func (s *Service) ModelModes(ctx context.Context, orgID, ref string) ([]string, error) {
+	pin := s.deps.Defaults.OpenCodeVersion
+	seen, err := s.deps.Store.ModelModes().Seen(ctx, orgID, pin)
+	if err != nil {
+		return nil, err
+	}
+	if modes, ok := seen[ref]; ok {
+		return slices.Clone(modes), nil
+	}
+	if version, modes := modelcat.SnapshotModes(ref); version == pin {
+		return modes, nil
+	}
+	return nil, nil
 }
 
 // parseModelVariants reads OpenCode's model list into each model's

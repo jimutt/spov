@@ -1290,6 +1290,23 @@ func (q *Queries) GetLiveSessionByName(ctx context.Context, arg GetLiveSessionBy
 	return i, err
 }
 
+const getModelModes = `-- name: GetModelModes :one
+select models from model_modes_seen where org_id = $1 and opencode = $2
+`
+
+type GetModelModesParams struct {
+	OrgID    string
+	Opencode string
+}
+
+// @decision(DL-186)
+func (q *Queries) GetModelModes(ctx context.Context, arg GetModelModesParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, getModelModes, arg.OrgID, arg.Opencode)
+	var models []byte
+	err := row.Scan(&models)
+	return models, err
+}
+
 const getOrgCredential = `-- name: GetOrgCredential :one
 select id, org_id, platform, ciphertext, nonce, key_version, meta, updated_by, created_at, updated_at from org_credentials where org_id = $1 and platform = $2
 `
@@ -1793,6 +1810,45 @@ func (q *Queries) JobsBySessions(ctx context.Context, arg JobsBySessionsParams) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const keepModelModes = `-- name: KeepModelModes :exec
+with gone as (
+    delete from model_modes_seen where org_id = $1 and opencode <> $2
+)
+insert into model_modes_seen (org_id, opencode, models, updated_at)
+select $1, $2, $4::jsonb, $3
+where octet_length($4::jsonb::text) <= $5::int
+on conflict (org_id, opencode) do update
+set models = case
+        when octet_length((model_modes_seen.models || excluded.models)::text) <= $5::int
+        then model_modes_seen.models || excluded.models
+        else excluded.models
+    end,
+    updated_at = excluded.updated_at
+`
+
+type KeepModelModesParams struct {
+	OrgID     string
+	Opencode  string
+	UpdatedAt pgtype.Timestamptz
+	Models    []byte
+	MaxBytes  int32
+}
+
+// @decision(DL-186)
+// Another version's row goes; each model named replaces its entry; a
+// merge over the byte bound keeps the report alone, and a report over
+// it alone writes nothing.
+func (q *Queries) KeepModelModes(ctx context.Context, arg KeepModelModesParams) error {
+	_, err := q.db.Exec(ctx, keepModelModes,
+		arg.OrgID,
+		arg.Opencode,
+		arg.UpdatedAt,
+		arg.Models,
+		arg.MaxBytes,
+	)
+	return err
 }
 
 const lastEvent = `-- name: LastEvent :one

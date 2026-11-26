@@ -6,8 +6,8 @@
 | DL-189 | The job, session and Settings forms offer the chosen model's reasoning modes | proposed | web | reasoning-before-launch |
 | DL-188 | A conversation opens on its mode only when its sandbox offers it, and otherwise on the model's default with a note | proposed | server | reasoning-before-launch |
 | DL-187 | The model list offers each model's reasoning modes, and a launch's own mode is checked against them | proposed | server | reasoning-before-launch |
-| DL-186 | The newest reasoning modes a sandbox reported are kept for its organisation and pin | proposed | server | reasoning-before-launch |
-| DL-185 | The pinned build's reasoning modes are recorded with the pin | proposed | opencode | reasoning-before-launch |
+| DL-186 | The newest reasoning modes a sandbox reported are kept for its organisation and pin | accepted | server | reasoning-before-launch |
+| DL-185 | The pinned build's reasoning modes are recorded with the pin | accepted | opencode | reasoning-before-launch |
 | DL-184 | A job's sandbox turns OpenCode's automations off | accepted | opencode | jobs, opencode-2.4, automations |
 | DL-183 | Re-read a model list the sandbox has not built yet | accepted | server | models, recorder, opencode-2.4 |
 | DL-182 | A job's loop waits for its own background shell commands as it waits for its subagents | accepted | jobs | opencode-2-3, jobs, plugin, completion |

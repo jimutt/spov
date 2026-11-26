@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -57,6 +58,12 @@ type Memory struct {
 	//
 	// @decision(DL-159)
 	modelVariants map[string]ModelVariants
+	// seenModes is what each org's sandboxes reported of their models'
+	// reasoning modes, for one OpenCode version, by org ID. It is not
+	// journaled: a restart falls back to the snapshot.
+	//
+	// @decision(DL-186)
+	seenModes map[string]seenModes
 	// @decision(DL-045)
 	jobs map[string]Job
 	// runs are each session's runs, oldest first, by session ID.
@@ -100,6 +107,7 @@ func NewMemory() *Memory {
 		sessions:        map[string]Session{},
 		proxyCAs:        map[string]proxyCA{},
 		modelVariants:   map[string]ModelVariants{},
+		seenModes:       map[string]seenModes{},
 		mints:           map[string]Mint{},
 		users:           map[string]User{},
 		tokens:          map[string]APIToken{},
@@ -199,6 +207,11 @@ func (m *Memory) Jobs() JobStore { return memJobs{m} }
 // @decision(DL-085)
 func (m *Memory) Runs() RunStore { return memRuns{m} }
 
+// ModelModes implements Store.
+//
+// @decision(DL-186)
+func (m *Memory) ModelModes() ModelModeStore { return memModelModes{m} }
+
 // Ping implements Store.
 func (m *Memory) Ping(context.Context) error { return nil }
 
@@ -219,6 +232,8 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	jobs, seeds := cloneMap(m.jobs), cloneMap(m.jobSeeds)
 	runs := cloneRuns(m.runs)
 	variants := cloneMap(m.modelVariants)
+	// @decision(DL-186)
+	seen := cloneMap(m.seenModes)
 	// @decision(DL-034)
 	cas := cloneMap(m.proxyCAs)
 	// Nested, so a write into a job's own map is undone too.
@@ -235,7 +250,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
 		messagesBySession: m.messagesBySession,
 		jobs:              m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending,
-		jobSeeds: m.jobSeeds, modelVariants: m.modelVariants, proxyCAs: m.proxyCAs,
+		jobSeeds: m.jobSeeds, modelVariants: m.modelVariants, seenModes: m.seenModes, proxyCAs: m.proxyCAs,
 		deliverables: m.deliverables, jobFiles: m.jobFiles}
 	committed := false
 	defer func() {
@@ -262,6 +277,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		m.jobs, m.jobSeeds = jobs, seeds
 		m.runs = runs
 		m.modelVariants = variants
+		m.seenModes = seen
 		m.proxyCAs = cas
 		m.deliverables, m.jobFiles = delivered, files
 		m.eventPos = pos
@@ -2282,4 +2298,59 @@ func (s memAdminEvents) List(_ context.Context, orgID string, limit int) ([]Admi
 		}
 	}
 	return out, nil
+}
+
+// seenModes is one org's kept reasoning modes and the OpenCode version
+// they were reported for. A stored value is never changed in place.
+type seenModes struct {
+	openCode string
+	models   map[string][]string
+}
+
+type memModelModes struct{ m *Memory }
+
+// Keep implements ModelModeStore.
+//
+// @decision(DL-186)
+func (s memModelModes) Keep(_ context.Context, orgID, openCode string, models map[string][]string) error {
+	defer s.m.lock()()
+	cur := s.m.seenModes[orgID]
+	merged := map[string][]string{}
+	if cur.openCode == openCode {
+		merged = cloneVariants(cur.models)
+	}
+	report := cloneVariants(models)
+	if report == nil {
+		report = map[string][]string{}
+	}
+	for ref, modes := range report {
+		merged[ref] = modes
+	}
+	switch {
+	case fitsSeen(merged):
+		s.m.seenModes[orgID] = seenModes{openCode: openCode, models: merged}
+	case fitsSeen(report):
+		s.m.seenModes[orgID] = seenModes{openCode: openCode, models: report}
+	case cur.openCode != openCode:
+		delete(s.m.seenModes, orgID)
+	}
+	return nil
+}
+
+// fitsSeen reports whether models are within MaxSeenModelModesBytes.
+func fitsSeen(models map[string][]string) bool {
+	raw, err := json.Marshal(models)
+	return err == nil && len(raw) <= MaxSeenModelModesBytes
+}
+
+// Seen implements ModelModeStore.
+//
+// @decision(DL-186)
+func (s memModelModes) Seen(_ context.Context, orgID, openCode string) (map[string][]string, error) {
+	defer s.m.lock()()
+	cur, ok := s.m.seenModes[orgID]
+	if !ok || cur.openCode != openCode {
+		return map[string][]string{}, nil
+	}
+	return cloneVariants(cur.models), nil
 }

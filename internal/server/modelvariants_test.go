@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jimutt/spov/internal/auth"
+	"github.com/jimutt/spov/internal/modelcat"
 	"github.com/jimutt/spov/internal/opencode/contract"
 	"github.com/jimutt/spov/internal/store"
 )
@@ -457,4 +458,94 @@ func TestAModelListNotYetBuiltIsAskedForAgain(t *testing.T) {
 			t.Errorf("an empty list was kept: %+v", got)
 		}
 	})
+}
+
+// A run's kept list is laid over its org's seen modes when the run ran
+// the deployment's pin on the session's sandbox, keeping only the
+// providers spov carries; a run on another version or another sandbox
+// keeps nothing there.
+//
+// @decision(DL-186)
+func TestARunsModesAreKeptForItsOrgAndVersion(t *testing.T) {
+	type run struct{ version, sandbox string }
+	for name, r := range map[string]run{
+		"a run on the pin":         {"2.4.2", "sb-1"},
+		"a run on another version": {"2.3.0", "sb-1"},
+		"a run naming no version":  {"", "sb-1"},
+		"a run on another sandbox": {"2.4.2", "sb-0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRecorderFixture(t)
+			f.rec.openCode = "2.4.2"
+			// A provider spov does not carry is never kept for the org.
+			f.sb.models = strings.Replace(readModelListFixture(t), `"data": [`,
+				`"data": [{"id":"x","providerID":"acme","variants":[{"id":"high"}]},`, 1)
+			if !strings.Contains(f.sb.models, `"acme"`) {
+				t.Fatal("the fixture's list was not extended")
+			}
+			ctx := context.Background()
+			if err := f.st.Runs().Insert(ctx, store.Run{OrgID: "org", SessionID: f.sess.ID, OwnerID: "u1", N: 1,
+				SandboxID: r.sandbox, OpenCode: r.version, Origin: store.RunFromLaunch, StartedAt: time.Now()}); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.rec.Sync(ctx); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, "the model list", func() bool {
+				got, _ := f.st.Sessions().ModelVariants(ctx, "org", f.sess.ID)
+				return got.SandboxID == "sb-1"
+			})
+			f.rec.stopAll()
+			for _, version := range []string{"2.4.2", "2.3.0", ""} {
+				seen, err := f.st.ModelModes().Seen(ctx, "org", version)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := map[string][]string{}
+				if r == (run{"2.4.2", "sb-1"}) && version == "2.4.2" {
+					want = fixtureVariants
+				}
+				if !reflect.DeepEqual(seen, want) {
+					t.Errorf("seen for %q: %v, want %v", version, seen, want)
+				}
+			}
+		})
+	}
+}
+
+// A launch is offered the newest modes its org's sandboxes reported on
+// the pinned build, else the snapshot shipped with that build, and
+// nothing from a snapshot of another build.
+//
+// @decision(DL-186) @decision(DL-185)
+func TestALaunchIsOfferedTheSeenModesElseTheSnapshots(t *testing.T) {
+	ctx := context.Background()
+	snap := modelcat.ModeSnapshot()
+	var ref string
+	for r := range snap.Models {
+		if ref == "" || r < ref {
+			ref = r
+		}
+	}
+	st := store.NewMemory()
+	svc := &Service{deps: Deps{Store: st, Defaults: Defaults{OpenCodeVersion: snap.OpenCode}}}
+	got, err := svc.ModelModes(ctx, "org", ref)
+	if err != nil || !reflect.DeepEqual(got, snap.Models[ref]) {
+		t.Errorf("with nothing seen %s offers %v, %v; want the snapshot's %v", ref, got, err, snap.Models[ref])
+	}
+	if err := st.ModelModes().Keep(ctx, "org", snap.OpenCode, map[string][]string{ref: {"only"}, "p/new": {"high"}}); err != nil {
+		t.Fatal(err)
+	}
+	for r, want := range map[string][]string{ref: {"only"}, "p/new": {"high"}, "p/unknown": nil} {
+		if got, err := svc.ModelModes(ctx, "org", r); err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s offers %v, %v; want %v", r, got, err, want)
+		}
+	}
+	if got, _ := svc.ModelModes(ctx, "another", ref); !reflect.DeepEqual(got, snap.Models[ref]) {
+		t.Errorf("another org is offered %v, want the snapshot's", got)
+	}
+	svc.deps.Defaults.OpenCodeVersion = "9.9.9"
+	if got, _ := svc.ModelModes(ctx, "another", ref); got != nil {
+		t.Errorf("a deployment on another build is offered the snapshot's %v", got)
+	}
 }

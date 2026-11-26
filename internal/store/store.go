@@ -51,6 +51,11 @@ type Store interface {
 	//
 	// @decision(DL-085)
 	Runs() RunStore
+	// ModelModes is the newest reasoning modes the organisation's
+	// sandboxes reported.
+	//
+	// @decision(DL-186)
+	ModelModes() ModelModeStore
 	// Tx runs fn atomically where the backend can. The memory store
 	// serialises transactions with a mutex so the semantics hold there
 	// too. fn must not call back into the outer store, must not retain
