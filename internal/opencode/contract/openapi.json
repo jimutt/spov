@@ -25,6 +25,29 @@
      "id": {
       "$ref": "#/components/schemas/Agent.ID"
      },
+     "instructions": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "additionalProperties": false,
+        "properties": {
+         "selected": {
+          "type": "string"
+         },
+         "unselected": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "selected",
+         "unselected"
+        ],
+        "type": "object"
+       }
+      ]
+     },
      "mode": {
       "enum": [
        "subagent",
@@ -271,6 +294,537 @@
     "required": [
      "_tag",
      "artifactID",
+     "message"
+    ],
+    "type": "object"
+   },
+   "Automation.Action": {
+    "anyOf": [
+     {
+      "$ref": "#/components/schemas/Automation.Action.Prompt"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.Action.Code"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.Action.Shell"
+     }
+    ]
+   },
+   "Automation.Action.Code": {
+    "additionalProperties": false,
+    "properties": {
+     "args": {},
+     "code": {
+      "type": "string"
+     },
+     "type": {
+      "enum": [
+       "code"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "code"
+    ],
+    "type": "object"
+   },
+   "Automation.Action.Prompt": {
+    "additionalProperties": false,
+    "properties": {
+     "prompt": {
+      "type": "string"
+     },
+     "to": {
+      "$ref": "#/components/schemas/Automation.Target"
+     },
+     "type": {
+      "enum": [
+       "prompt"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "prompt",
+     "to"
+    ],
+    "type": "object"
+   },
+   "Automation.Action.Shell": {
+    "additionalProperties": false,
+    "properties": {
+     "command": {
+      "minLength": 1,
+      "type": "string"
+     },
+     "type": {
+      "enum": [
+       "shell"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "command"
+    ],
+    "type": "object"
+   },
+   "Automation.ActionInput": {
+    "anyOf": [
+     {
+      "$ref": "#/components/schemas/Automation.PromptActionInput"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.CodeActionInput"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.ShellActionInput"
+     }
+    ],
+    "description": "What it does: { type: \"prompt\", prompt, to? } sends a prompt; { type: \"code\", code, args? } runs Code Mode; { type: \"shell\", command } runs a fixed shell command."
+   },
+   "Automation.CodeActionInput": {
+    "additionalProperties": false,
+    "properties": {
+     "args": {},
+     "code": {
+      "description": "Code Mode JavaScript run on each trigger with no model (32 KB output cap). Call tools statically as tools.<ns>.<tool>(...) or tools[\"ns-name\"].tool(...); each is authorized once at creation to run unattended. A shell command still running at its timeout is stopped and the call throws; it never moves to the background. Receives input = { state, now, runs, args } (also globals): state starts null, now is epoch ms, runs counts earlier runs. Event triggers also receive input.event = { id, timestamp, data }; data follows the event type's payloadSchema. Return nothing, or { state?, done?, send? }. JSON state is kept for the next run; done: true stops. lastOutput shows the delivery target and any logs. Return at most one send per run. { send: { prompt } } steers the creating session; { send: { prompt, to: { subagent } } } starts a permitted child that does not report back. No session IDs. Omit send to stay quiet. A rejected send commits neither state nor done. Example code string: if (runs < 2) return; return { done: true, send: { prompt: \"Three checks elapsed. Review the build.\" } }",
+      "minLength": 1,
+      "type": "string"
+     },
+     "type": {
+      "enum": [
+       "code"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "code"
+    ],
+    "type": "object"
+   },
+   "Automation.CreatePayload": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "$ref": "#/components/schemas/Automation.ActionInput"
+     },
+     "directory": {
+      "description": "Where it runs when there is no Session. Defaults to the server user's home folder.",
+      "type": "string"
+     },
+     "expires": {
+      "type": "string"
+     },
+     "name": {
+      "description": "A short label shown in lists.",
+      "minLength": 1,
+      "type": "string"
+     },
+     "sessionID": {
+      "$ref": "#/components/schemas/Session.ID"
+     },
+     "trigger": {
+      "$ref": "#/components/schemas/Automation.Trigger"
+     }
+    },
+    "required": [
+     "name",
+     "trigger",
+     "action"
+    ],
+    "type": "object"
+   },
+   "Automation.Duration": {
+    "description": "A duration such as \"90 seconds\", \"5 minutes\" or \"2 hours\".",
+    "type": "string"
+   },
+   "Automation.ID": {
+    "pattern": "^aut_",
+    "type": "string"
+   },
+   "Automation.Info": {
+    "additionalProperties": false,
+    "properties": {
+     "action": {
+      "$ref": "#/components/schemas/Automation.Action"
+     },
+     "directory": {
+      "type": "string"
+     },
+     "expires": {
+      "type": "number"
+     },
+     "id": {
+      "$ref": "#/components/schemas/Automation.ID"
+     },
+     "lastOutcome": {
+      "$ref": "#/components/schemas/Automation.Outcome"
+     },
+     "lastOutput": {
+      "type": "string"
+     },
+     "lastRunAt": {
+      "type": "number"
+     },
+     "name": {
+      "type": "string"
+     },
+     "nextDueAt": {
+      "type": "number"
+     },
+     "projectID": {
+      "$ref": "#/components/schemas/Project.ID"
+     },
+     "runCount": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "sessionID": {
+      "$ref": "#/components/schemas/Session.ID"
+     },
+     "state": {},
+     "status": {
+      "$ref": "#/components/schemas/Automation.Status"
+     },
+     "time": {
+      "additionalProperties": false,
+      "properties": {
+       "created": {
+        "type": "number"
+       },
+       "updated": {
+        "type": "number"
+       }
+      },
+      "required": [
+       "created",
+       "updated"
+      ],
+      "type": "object"
+     },
+     "trigger": {
+      "$ref": "#/components/schemas/Automation.Trigger_1"
+     },
+     "tz": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "projectID",
+     "directory",
+     "trigger",
+     "tz",
+     "action",
+     "status",
+     "runCount",
+     "time"
+    ],
+    "type": "object"
+   },
+   "Automation.Outcome": {
+    "enum": [
+     "fired",
+     "late",
+     "skipped",
+     "disabled",
+     "failed",
+     "expired"
+    ],
+    "type": "string"
+   },
+   "Automation.PromptActionInput": {
+    "additionalProperties": false,
+    "properties": {
+     "prompt": {
+      "description": "The message the target Session receives, with enough context to act on it without this conversation.",
+      "minLength": 1,
+      "type": "string"
+     },
+     "to": {
+      "$ref": "#/components/schemas/Automation.Target"
+     },
+     "type": {
+      "enum": [
+       "prompt"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "prompt"
+    ],
+    "type": "object"
+   },
+   "Automation.ShellActionInput": {
+    "additionalProperties": false,
+    "properties": {
+     "command": {
+      "description": "The fixed shell command to run on each trigger without a model.",
+      "minLength": 1,
+      "type": "string"
+     },
+     "type": {
+      "enum": [
+       "shell"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "command"
+    ],
+    "type": "object"
+   },
+   "Automation.Status": {
+    "enum": [
+     "active",
+     "paused",
+     "done"
+    ],
+    "type": "string"
+   },
+   "Automation.Target": {
+    "anyOf": [
+     {
+      "additionalProperties": false,
+      "properties": {
+       "session": {
+        "$ref": "#/components/schemas/Session.ID"
+       },
+       "subagent": {
+        "not": {}
+       }
+      },
+      "required": [
+       "session"
+      ],
+      "type": "object"
+     },
+     {
+      "additionalProperties": false,
+      "properties": {
+       "session": {
+        "not": {}
+       },
+       "subagent": {
+        "$ref": "#/components/schemas/Agent.ID"
+       }
+      },
+      "required": [
+       "subagent"
+      ],
+      "type": "object"
+     }
+    ]
+   },
+   "Automation.Trigger": {
+    "anyOf": [
+     {
+      "$ref": "#/components/schemas/Automation.Trigger.At"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.Trigger.Every"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.Trigger.Cron"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.Trigger.Event"
+     }
+    ],
+    "description": "When it runs: { type: \"at\", at: \"in 20 minutes\" | \"2026-10-27T09:00\" }, { type: \"every\", every: \"1 hour\" } or { type: \"cron\", cron: \"0 9 * * 1-5\" }, each with an optional tz. Or { type: \"event\", server, event, args? } for a connected MCP server advertising push delivery."
+   },
+   "Automation.Trigger.At": {
+    "additionalProperties": false,
+    "properties": {
+     "at": {
+      "description": "An instant with an offset, a wall-clock time in tz such as \"2026-10-27T09:00\", or \"in 10 minutes\".",
+      "type": "string"
+     },
+     "type": {
+      "enum": [
+       "at"
+      ],
+      "type": "string"
+     },
+     "tz": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "at"
+    ],
+    "type": "object"
+   },
+   "Automation.Trigger.Cron": {
+    "additionalProperties": false,
+    "properties": {
+     "cron": {
+      "type": "string"
+     },
+     "type": {
+      "enum": [
+       "cron"
+      ],
+      "type": "string"
+     },
+     "tz": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "cron"
+    ],
+    "type": "object"
+   },
+   "Automation.Trigger.Event": {
+    "additionalProperties": false,
+    "properties": {
+     "args": {
+      "type": "object"
+     },
+     "event": {
+      "minLength": 1,
+      "type": "string"
+     },
+     "server": {
+      "minLength": 1,
+      "type": "string"
+     },
+     "type": {
+      "enum": [
+       "event"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "server",
+     "event"
+    ],
+    "type": "object"
+   },
+   "Automation.Trigger.Every": {
+    "additionalProperties": false,
+    "properties": {
+     "every": {
+      "$ref": "#/components/schemas/Automation.Duration"
+     },
+     "type": {
+      "enum": [
+       "every"
+      ],
+      "type": "string"
+     },
+     "tz": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "every"
+    ],
+    "type": "object"
+   },
+   "Automation.Trigger_1": {
+    "anyOf": [
+     {
+      "$ref": "#/components/schemas/Automation.Trigger.At"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.Trigger.Every"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.Trigger.Cron"
+     },
+     {
+      "$ref": "#/components/schemas/Automation.Trigger.Event"
+     }
+    ]
+   },
+   "AutomationNotFoundErrorEncoded": {
+    "additionalProperties": false,
+    "properties": {
+     "_tag": {
+      "enum": [
+       "AutomationNotFoundError"
+      ],
+      "type": "string"
+     },
+     "automationID": {
+      "type": "string"
+     },
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "automationID",
+     "message"
+    ],
+    "type": "object"
+   },
+   "Blob.ID": {
+    "description": "A stored blob, such as a generated video, which outlives the job that made it",
+    "pattern": "^blob_[0-9a-f]{12}[0-9A-Za-z]{14}$",
+    "type": "string"
+   },
+   "Blob.Info": {
+    "additionalProperties": false,
+    "properties": {
+     "bytes": {
+      "type": "number"
+     },
+     "id": {
+      "$ref": "#/components/schemas/Blob.ID"
+     },
+     "mime": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "mime",
+     "bytes"
+    ],
+    "type": "object"
+   },
+   "BlobNotFoundErrorEncoded": {
+    "additionalProperties": false,
+    "properties": {
+     "_tag": {
+      "enum": [
+       "BlobNotFoundError"
+      ],
+      "type": "string"
+     },
+     "blobID": {
+      "type": "string"
+     },
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "blobID",
      "message"
     ],
     "type": "object"
@@ -568,6 +1122,9 @@
       },
       "type": "object"
      },
+     "automations": {
+      "type": "boolean"
+     },
      "commands": {
       "additionalProperties": {
        "$ref": "#/components/schemas/Config.CommandEncoded"
@@ -578,6 +1135,9 @@
       "additionalProperties": false,
       "properties": {
        "auto": {
+        "type": "boolean"
+       },
+       "background": {
         "type": "boolean"
        },
        "buffer": {
@@ -627,13 +1187,19 @@
        "artifacts": {
         "type": "boolean"
        },
-       "background_compaction": {
-        "type": "boolean"
-       },
        "codemode_vm": {
         "type": "boolean"
        },
+       "compaction_jobs": {
+        "type": "boolean"
+       },
        "console_watches": {
+        "type": "boolean"
+       },
+       "full_codemode": {
+        "type": "boolean"
+       },
+       "home_memory": {
         "type": "boolean"
        },
        "image_generate": {
@@ -692,10 +1258,19 @@
          }
         ]
        },
-       "mcp_events": {
+       "machines": {
+        "type": "boolean"
+       },
+       "mcp_skills": {
         "type": "boolean"
        },
        "media_blob": {
+        "type": "boolean"
+       },
+       "model_speeds": {
+        "type": "boolean"
+       },
+       "opencode_api": {
         "type": "boolean"
        },
        "part_rows": {
@@ -741,10 +1316,13 @@
        "portable_shell_scanner": {
         "type": "boolean"
        },
-       "schedules": {
+       "project_overlay": {
         "type": "boolean"
        },
-       "shell_timeout_background": {
+       "recommended_api": {
+        "type": "boolean"
+       },
+       "sqlite_fts": {
         "type": "boolean"
        },
        "subagent_depth": {
@@ -754,6 +1332,49 @@
        },
        "todo": {
         "type": "boolean"
+       },
+       "video_generate": {
+        "anyOf": [
+         {
+          "type": "boolean"
+         },
+         {
+          "additionalProperties": false,
+          "properties": {
+           "model": {
+            "anyOf": [
+             {
+              "pattern": "^[^/#]+\\/[^#]+(?:#[^#]+)?$",
+              "type": "string"
+             },
+             {
+              "additionalProperties": false,
+              "properties": {
+               "model": {
+                "pattern": "^[^#]+$",
+                "type": "string"
+               },
+               "providerID": {
+                "pattern": "^[^/#]+$",
+                "type": "string"
+               },
+               "variant": {
+                "pattern": "^[^#]+$",
+                "type": "string"
+               }
+              },
+              "required": [
+               "providerID",
+               "model"
+              ],
+              "type": "object"
+             }
+            ]
+           }
+          },
+          "type": "object"
+         }
+        ]
        }
       },
       "type": "object"
@@ -3633,6 +4254,25 @@
     "pattern": "^[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[Ee][+-]?\\d+)?:[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[Ee][+-]?\\d+)?$",
     "type": "string"
    },
+   "Generate.ImageFile": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {
+      "$ref": "#/components/schemas/Prompt.Base64"
+     },
+     "mime": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "data",
+     "mime"
+    ],
+    "type": "object"
+   },
    "Generate.ImageOutput": {
     "additionalProperties": false,
     "properties": {
@@ -3914,6 +4554,178 @@
     },
     "type": "object"
    },
+   "Generate.VideoAspect": {
+    "anyOf": [
+     {
+      "$ref": "#/components/schemas/Generate.ImageAspect"
+     },
+     {
+      "enum": [
+       "auto"
+      ],
+      "type": "string"
+     }
+    ],
+    "description": "Aspect ratio as width:height, or auto to follow the start image"
+   },
+   "Generate.VideoCompleted": {
+    "additionalProperties": false,
+    "properties": {
+     "blobs": {
+      "description": "The finished videos, usually one. Read each with GET /api/experimental/blob/:id",
+      "items": {
+       "$ref": "#/components/schemas/Blob.Info"
+      },
+      "type": "array"
+     },
+     "id": {
+      "$ref": "#/components/schemas/Generate.VideoID"
+     },
+     "status": {
+      "enum": [
+       "completed"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "status",
+     "blobs"
+    ],
+    "type": "object"
+   },
+   "Generate.VideoError": {
+    "additionalProperties": false,
+    "properties": {
+     "error": {
+      "type": "string"
+     },
+     "id": {
+      "$ref": "#/components/schemas/Generate.VideoID"
+     },
+     "reason": {
+      "$ref": "#/components/schemas/Generate.VideoErrorReason"
+     },
+     "status": {
+      "enum": [
+       "error"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "status",
+     "error",
+     "reason"
+    ],
+    "type": "object"
+   },
+   "Generate.VideoErrorReason": {
+    "description": "failed: the provider failed the job. cancelled: the provider cancelled it. expired: the provider expired it. unknown: the provider gave no result in time",
+    "enum": [
+     "failed",
+     "cancelled",
+     "expired",
+     "unknown"
+    ],
+    "type": "string"
+   },
+   "Generate.VideoID": {
+    "pattern": "^video_[0-9a-f]{12}[0-9A-Za-z]{14}$",
+    "type": "string"
+   },
+   "Generate.VideoJob": {
+    "anyOf": [
+     {
+      "$ref": "#/components/schemas/Generate.VideoRunning"
+     },
+     {
+      "$ref": "#/components/schemas/Generate.VideoCompleted"
+     },
+     {
+      "$ref": "#/components/schemas/Generate.VideoError"
+     }
+    ]
+   },
+   "Generate.VideoRequest": {
+    "additionalProperties": false,
+    "properties": {
+     "aspect": {
+      "$ref": "#/components/schemas/Generate.VideoAspect"
+     },
+     "duration": {
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "type": "integer"
+     },
+     "end": {
+      "$ref": "#/components/schemas/Generate.ImageFile"
+     },
+     "model": {
+      "$ref": "#/components/schemas/Model.Ref"
+     },
+     "prompt": {
+      "type": "string"
+     },
+     "references": {
+      "items": {
+       "$ref": "#/components/schemas/Generate.File"
+      },
+      "type": "array"
+     },
+     "resolution": {
+      "$ref": "#/components/schemas/Generate.VideoResolution"
+     },
+     "sound": {
+      "type": "boolean"
+     },
+     "start": {
+      "$ref": "#/components/schemas/Generate.ImageFile"
+     }
+    },
+    "required": [
+     "model",
+     "prompt"
+    ],
+    "type": "object"
+   },
+   "Generate.VideoResolution": {
+    "anyOf": [
+     {
+      "enum": [
+       "480p",
+       "720p",
+       "1080p",
+       "4k"
+      ],
+      "type": "string"
+     },
+     {
+      "type": "string"
+     }
+    ]
+   },
+   "Generate.VideoRunning": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "$ref": "#/components/schemas/Generate.VideoID"
+     },
+     "status": {
+      "enum": [
+       "running"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "status"
+    ],
+    "type": "object"
+   },
    "GenerateDecisionsResponse": {
     "additionalProperties": false,
     "properties": {
@@ -3952,6 +4764,30 @@
        "text"
       ],
       "type": "object"
+     }
+    },
+    "required": [
+     "data"
+    ],
+    "type": "object"
+   },
+   "GenerateVideoCreateResponse": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {
+      "$ref": "#/components/schemas/Generate.VideoRunning"
+     }
+    },
+    "required": [
+     "data"
+    ],
+    "type": "object"
+   },
+   "GenerateVideoGetResponse": {
+    "additionalProperties": false,
+    "properties": {
+     "data": {
+      "$ref": "#/components/schemas/Generate.VideoJob"
      }
     },
     "required": [
@@ -4958,6 +5794,40 @@
     ],
     "type": "object"
    },
+   "Job.CodeMode": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "codemode"
+      ],
+      "type": "string"
+     },
+     "sessionID": {
+      "$ref": "#/components/schemas/Session.ID"
+     },
+     "status": {
+      "$ref": "#/components/schemas/Job.Status"
+     },
+     "time": {
+      "$ref": "#/components/schemas/Job.Time"
+     },
+     "title": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind",
+     "id",
+     "sessionID",
+     "status",
+     "time"
+    ],
+    "type": "object"
+   },
    "Job.Image": {
     "additionalProperties": false,
     "properties": {
@@ -5010,6 +5880,12 @@
      },
      {
       "$ref": "#/components/schemas/Job.Image"
+     },
+     {
+      "$ref": "#/components/schemas/Job.Video"
+     },
+     {
+      "$ref": "#/components/schemas/Job.CodeMode"
      }
     ]
    },
@@ -5017,7 +5893,9 @@
     "enum": [
      "shell",
      "subagent",
-     "image"
+     "image",
+     "video",
+     "codemode"
     ],
     "type": "string"
    },
@@ -5134,6 +6012,44 @@
     ],
     "type": "object"
    },
+   "Job.Video": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "kind": {
+      "enum": [
+       "video"
+      ],
+      "type": "string"
+     },
+     "path": {
+      "type": "string"
+     },
+     "sessionID": {
+      "$ref": "#/components/schemas/Session.ID"
+     },
+     "status": {
+      "$ref": "#/components/schemas/Job.Status"
+     },
+     "time": {
+      "$ref": "#/components/schemas/Job.Time"
+     },
+     "title": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "kind",
+     "id",
+     "sessionID",
+     "status",
+     "time",
+     "path"
+    ],
+    "type": "object"
+   },
    "Location.PublicInfo": {
     "additionalProperties": false,
     "properties": {
@@ -5213,6 +6129,189 @@
     "required": [
      "_tag",
      "location",
+     "message"
+    ],
+    "type": "object"
+   },
+   "Machine.AddPayload": {
+    "additionalProperties": false,
+    "properties": {
+     "name": {
+      "type": "string"
+     },
+     "reach": {
+      "items": {
+       "$ref": "#/components/schemas/Machine.Reach"
+      },
+      "type": "array"
+     },
+     "replace": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "name",
+     "reach"
+    ],
+    "type": "object"
+   },
+   "Machine.Info": {
+    "additionalProperties": false,
+    "properties": {
+     "arch": {
+      "type": "string"
+     },
+     "connection": {
+      "additionalProperties": false,
+      "properties": {
+       "kind": {
+        "enum": [
+         "websocket",
+         "iroh"
+        ],
+        "type": "string"
+       },
+       "path": {
+        "enum": [
+         "direct",
+         "relayed"
+        ],
+        "type": "string"
+       },
+       "rtt": {
+        "anyOf": [
+         {
+          "type": "number"
+         },
+         {
+          "enum": [
+           "Infinity",
+           "-Infinity",
+           "NaN"
+          ],
+          "type": "string"
+         }
+        ]
+       }
+      },
+      "required": [
+       "kind"
+      ],
+      "type": "object"
+     },
+     "id": {
+      "type": "string"
+     },
+     "online": {
+      "type": "boolean"
+     },
+     "os": {
+      "type": "string"
+     },
+     "paired": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "id",
+     "online",
+     "paired"
+    ],
+    "type": "object"
+   },
+   "Machine.Invite": {
+    "additionalProperties": false,
+    "properties": {
+     "expires": {
+      "maximum": 9007199254740991,
+      "minimum": -9007199254740991,
+      "type": "integer"
+     },
+     "join": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     },
+     "reach": {
+      "items": {
+       "anyOf": [
+        {
+         "$ref": "#/components/schemas/Machine.Reach"
+        },
+        {
+         "additionalProperties": false,
+         "properties": {
+          "type": {
+           "enum": [
+            "iroh"
+           ],
+           "type": "string"
+          }
+         },
+         "required": [
+          "type"
+         ],
+         "type": "object"
+        }
+       ]
+      },
+      "type": "array"
+     }
+    },
+    "required": [
+     "name",
+     "join",
+     "expires",
+     "reach"
+    ],
+    "type": "object"
+   },
+   "Machine.Reach": {
+    "additionalProperties": false,
+    "properties": {
+     "type": {
+      "enum": [
+       "url"
+      ],
+      "type": "string"
+     },
+     "url": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "url"
+    ],
+    "type": "object"
+   },
+   "MachineNotFoundErrorEncoded": {
+    "additionalProperties": false,
+    "properties": {
+     "_tag": {
+      "enum": [
+       "MachineNotFoundError"
+      ],
+      "type": "string"
+     },
+     "machine": {
+      "type": "string"
+     },
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "machine",
      "message"
     ],
     "type": "object"
@@ -5308,7 +6407,7 @@
     "type": "object"
    },
    "Mcp.Protocol": {
-    "description": "MCP protocol negotiation. \"legacy\" (default) opens with the initialize handshake and speaks protocol revisions up to 2025-11-25. \"auto\" probes for the 2026-07-28 revision and falls back to legacy when the server does not support it. \"2026-07-28\" requires that revision and fails otherwise.",
+    "description": "MCP protocol negotiation. \"auto\" (default) probes for the 2026-07-28 revision and falls back to legacy when the server does not support it. \"legacy\" opens with the initialize handshake and speaks protocol revisions up to 2025-11-25. \"2026-07-28\" requires that revision and fails otherwise.",
     "enum": [
      "legacy",
      "auto",
@@ -5795,6 +6894,15 @@
      "enabled": {
       "type": "boolean"
      },
+     "experimental": {
+      "additionalProperties": false,
+      "properties": {
+       "speed": {
+        "$ref": "#/components/schemas/Model.Speed"
+       }
+      },
+      "type": "object"
+     },
      "family": {
       "type": "string"
      },
@@ -5962,13 +7070,34 @@
     },
     "type": "object"
    },
+   "Model.Speed": {
+    "additionalProperties": false,
+    "properties": {
+     "base": {
+      "type": "string"
+     },
+     "faster": {
+      "type": "boolean"
+     },
+     "id": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "base",
+     "id",
+     "faster"
+    ],
+    "type": "object"
+   },
    "Model.Type": {
     "anyOf": [
      {
       "enum": [
        "chat",
        "decision",
-       "image"
+       "image",
+       "video"
       ],
       "type": "string"
      },
@@ -7005,6 +8134,7 @@
    },
    "Prompt.AgentAttachment": {
     "additionalProperties": false,
+    "description": "An agent @-mentioned in the prompt, such as @explore, to suggest the model use it. Only the @name in text reaches the model; this records which agent it names and doesn't change the session's own agent.",
     "properties": {
      "mention": {
       "$ref": "#/components/schemas/Prompt.Mention"
@@ -7147,6 +8277,7 @@
       "$ref": "#/components/schemas/Prompt.FileSource"
      },
      "uri": {
+      "description": "A file: URL on the server (a file, a directory, or ?start=N&end=M for lines of a text file), a data: URL, or a media: ref from a message. Up to 20 MB.",
       "type": "string"
      }
     },
@@ -7659,6 +8790,245 @@
     ],
     "type": "object"
    },
+   "Push.Bell": {
+    "additionalProperties": false,
+    "properties": {
+     "level": {
+      "$ref": "#/components/schemas/Push.Level"
+     },
+     "until": {
+      "description": "Milliseconds since the Unix epoch",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "level"
+    ],
+    "type": "object"
+   },
+   "Push.Device": {
+    "additionalProperties": false,
+    "properties": {
+     "expiresAt": {
+      "description": "Milliseconds since the Unix epoch",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "id": {
+      "$ref": "#/components/schemas/Push.DeviceID"
+     },
+     "name": {
+      "type": "string"
+     },
+     "paused": {
+      "type": "boolean"
+     },
+     "platform": {
+      "$ref": "#/components/schemas/Push.Platform"
+     },
+     "sessions": {
+      "additionalProperties": {
+       "$ref": "#/components/schemas/Push.Bell"
+      },
+      "type": "object"
+     },
+     "settings": {
+      "$ref": "#/components/schemas/Push.DeviceSettings"
+     },
+     "time": {
+      "additionalProperties": false,
+      "properties": {
+       "created": {
+        "description": "Milliseconds since the Unix epoch",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+       },
+       "updated": {
+        "description": "Milliseconds since the Unix epoch",
+        "maximum": 9007199254740991,
+        "minimum": 0,
+        "type": "integer"
+       }
+      },
+      "required": [
+       "created",
+       "updated"
+      ],
+      "type": "object"
+     }
+    },
+    "required": [
+     "id",
+     "name",
+     "platform",
+     "expiresAt",
+     "settings",
+     "paused",
+     "sessions",
+     "time"
+    ],
+    "type": "object"
+   },
+   "Push.DeviceID": {
+    "description": "A lowercase canonical UUID chosen by the phone",
+    "type": "string"
+   },
+   "Push.DevicePatch": {
+    "additionalProperties": false,
+    "properties": {
+     "paused": {
+      "type": "boolean"
+     },
+     "settings": {
+      "$ref": "#/components/schemas/Push.DeviceSettings"
+     }
+    },
+    "type": "object"
+   },
+   "Push.DeviceSettings": {
+    "additionalProperties": false,
+    "properties": {
+     "default": {
+      "$ref": "#/components/schemas/Push.Level"
+     }
+    },
+    "required": [
+     "default"
+    ],
+    "type": "object"
+   },
+   "Push.Info": {
+    "additionalProperties": false,
+    "properties": {
+     "devices": {
+      "items": {
+       "$ref": "#/components/schemas/Push.Device"
+      },
+      "type": "array"
+     },
+     "sessions": {
+      "additionalProperties": {
+       "$ref": "#/components/schemas/Push.Bell"
+      },
+      "type": "object"
+     },
+     "settings": {
+      "$ref": "#/components/schemas/Push.Settings"
+     }
+    },
+    "required": [
+     "settings",
+     "devices",
+     "sessions"
+    ],
+    "type": "object"
+   },
+   "Push.Level": {
+    "enum": [
+     "all",
+     "attention",
+     "none"
+    ],
+    "type": "string"
+   },
+   "Push.Platform": {
+    "enum": [
+     "android",
+     "ios"
+    ],
+    "type": "string"
+   },
+   "Push.Register": {
+    "additionalProperties": false,
+    "properties": {
+     "callbackURL": {
+      "type": "string"
+     },
+     "expiresAt": {
+      "description": "Milliseconds since the Unix epoch",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+     },
+     "name": {
+      "type": "string"
+     },
+     "platform": {
+      "$ref": "#/components/schemas/Push.Platform"
+     },
+     "publicKey": {
+      "type": "string"
+     },
+     "settings": {
+      "$ref": "#/components/schemas/Push.DeviceSettings"
+     }
+    },
+    "required": [
+     "callbackURL",
+     "expiresAt",
+     "publicKey",
+     "platform",
+     "name"
+    ],
+    "type": "object"
+   },
+   "Push.Registered": {
+    "additionalProperties": false,
+    "properties": {
+     "publicKey": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "publicKey"
+    ],
+    "type": "object"
+   },
+   "Push.Settings": {
+    "additionalProperties": false,
+    "properties": {
+     "paused": {
+      "type": "boolean"
+     },
+     "until": {
+      "description": "Milliseconds since the Unix epoch",
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+     }
+    },
+    "required": [
+     "paused"
+    ],
+    "type": "object"
+   },
+   "PushDeviceNotFoundErrorEncoded": {
+    "additionalProperties": false,
+    "properties": {
+     "_tag": {
+      "enum": [
+       "PushDeviceNotFoundError"
+      ],
+      "type": "string"
+     },
+     "deviceID": {
+      "type": "string"
+     },
+     "message": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "deviceID",
+     "message"
+    ],
+    "type": "object"
+   },
    "Reference.GitSource": {
     "additionalProperties": false,
     "properties": {
@@ -7815,533 +9185,6 @@
     "required": [
      "_tag",
      "type",
-     "message"
-    ],
-    "type": "object"
-   },
-   "Schedule.Action": {
-    "anyOf": [
-     {
-      "$ref": "#/components/schemas/Schedule.Action.Prompt"
-     }
-    ]
-   },
-   "Schedule.Action.Prompt": {
-    "additionalProperties": false,
-    "properties": {
-     "prompt": {
-      "type": "string"
-     },
-     "type": {
-      "enum": [
-       "prompt"
-      ],
-      "type": "string"
-     }
-    },
-    "required": [
-     "type",
-     "prompt"
-    ],
-    "type": "object"
-   },
-   "Schedule.Condition": {
-    "anyOf": [
-     {
-      "$ref": "#/components/schemas/Schedule.Condition.Shell"
-     },
-     {
-      "$ref": "#/components/schemas/Schedule.Condition.Code"
-     }
-    ]
-   },
-   "Schedule.Condition.Code": {
-    "additionalProperties": false,
-    "properties": {
-     "code": {
-      "type": "string"
-     },
-     "type": {
-      "enum": [
-       "code"
-      ],
-      "type": "string"
-     }
-    },
-    "required": [
-     "type",
-     "code"
-    ],
-    "type": "object"
-   },
-   "Schedule.Condition.Shell": {
-    "additionalProperties": false,
-    "properties": {
-     "changes": {
-      "type": "boolean"
-     },
-     "is": {
-      "type": "string"
-     },
-     "matches": {
-      "type": "string"
-     },
-     "run": {
-      "type": "string"
-     },
-     "type": {
-      "enum": [
-       "shell"
-      ],
-      "type": "string"
-     }
-    },
-    "required": [
-     "type",
-     "run"
-    ],
-    "type": "object"
-   },
-   "Schedule.ConditionInput": {
-    "anyOf": [
-     {
-      "additionalProperties": false,
-      "properties": {
-       "changes": {
-        "type": "boolean"
-       },
-       "code": {
-        "not": {}
-       },
-       "is": {
-        "type": "string"
-       },
-       "matches": {
-        "type": "string"
-       },
-       "run": {
-        "description": "Shell command to run in the Session's directory. Alone, exit 0 wakes and stdout is appended.",
-        "minLength": 1,
-        "type": "string"
-       }
-      },
-      "required": [
-       "run"
-      ],
-      "type": "object"
-     },
-     {
-      "additionalProperties": false,
-      "properties": {
-       "changes": {
-        "not": {}
-       },
-       "code": {
-        "description": "Code Mode JavaScript check (no fetch; 30s, 20 tool calls, 32 KB output cap). Call tools statically as tools.<ns>.<tool>(...) or tools[\"ns-name\"].tool(...); each is authorized once at creation to run unattended. Runs once at creation with state = null (if baselines state without waking; until matches immediately if true), with globals state, now (epoch ms) and runs. Return a boolean or { wake, state?, message? } (message is appended to prompt on wake), e.g.: const t = await tools.slack.read_thread({ id }); return { wake: state !== null && t.count > state.count, state: { count: t.count }, message: \"New reply\" }",
-        "minLength": 1,
-        "type": "string"
-       },
-       "is": {
-        "not": {}
-       },
-       "matches": {
-        "not": {}
-       },
-       "run": {
-        "not": {}
-       }
-      },
-      "required": [
-       "code"
-      ],
-      "type": "object"
-     }
-    ]
-   },
-   "Schedule.CreatePayload": {
-    "additionalProperties": false,
-    "properties": {
-     "ends": {
-      "$ref": "#/components/schemas/Schedule.Ends"
-     },
-     "if": {
-      "$ref": "#/components/schemas/Schedule.ConditionInput"
-     },
-     "name": {
-      "type": "string"
-     },
-     "prompt": {
-      "description": "The message the Session receives when the schedule wakes.",
-      "minLength": 1,
-      "type": "string"
-     },
-     "sessionID": {
-      "$ref": "#/components/schemas/Session.ID"
-     },
-     "until": {
-      "$ref": "#/components/schemas/Schedule.ConditionInput"
-     },
-     "when": {
-      "$ref": "#/components/schemas/Schedule.WhenInput"
-     }
-    },
-    "required": [
-     "sessionID",
-     "prompt"
-    ],
-    "type": "object"
-   },
-   "Schedule.Duration": {
-    "description": "A duration such as \"90 seconds\", \"5 minutes\" or \"2 hours\".",
-    "type": "string"
-   },
-   "Schedule.Ends": {
-    "additionalProperties": false,
-    "properties": {
-     "after": {
-      "$ref": "#/components/schemas/Schedule.Duration"
-     },
-     "at": {
-      "type": "string"
-     },
-     "times": {
-      "exclusiveMinimum": 0,
-      "maximum": 9007199254740991,
-      "type": "integer"
-     }
-    },
-    "type": "object"
-   },
-   "Schedule.ID": {
-    "pattern": "^sch_",
-    "type": "string"
-   },
-   "Schedule.Info": {
-    "additionalProperties": false,
-    "properties": {
-     "action": {
-      "$ref": "#/components/schemas/Schedule.Action"
-     },
-     "endsAt": {
-      "type": "number"
-     },
-     "id": {
-      "$ref": "#/components/schemas/Schedule.ID"
-     },
-     "if": {
-      "$ref": "#/components/schemas/Schedule.Condition"
-     },
-     "lastFiredAt": {
-      "type": "number"
-     },
-     "lastOutcome": {
-      "$ref": "#/components/schemas/Schedule.Outcome"
-     },
-     "lastOutput": {
-      "type": "string"
-     },
-     "name": {
-      "type": "string"
-     },
-     "nextDueAt": {
-      "type": "number"
-     },
-     "remainingRuns": {
-      "maximum": 9007199254740991,
-      "minimum": 0,
-      "type": "integer"
-     },
-     "runCount": {
-      "maximum": 9007199254740991,
-      "minimum": 0,
-      "type": "integer"
-     },
-     "sessionID": {
-      "$ref": "#/components/schemas/Session.ID"
-     },
-     "status": {
-      "$ref": "#/components/schemas/Schedule.Status"
-     },
-     "time": {
-      "additionalProperties": false,
-      "properties": {
-       "created": {
-        "type": "number"
-       },
-       "updated": {
-        "type": "number"
-       }
-      },
-      "required": [
-       "created",
-       "updated"
-      ],
-      "type": "object"
-     },
-     "tz": {
-      "type": "string"
-     },
-     "until": {
-      "$ref": "#/components/schemas/Schedule.Condition"
-     },
-     "when": {
-      "$ref": "#/components/schemas/Schedule.When"
-     }
-    },
-    "required": [
-     "id",
-     "when",
-     "tz",
-     "action",
-     "status",
-     "runCount",
-     "time"
-    ],
-    "type": "object"
-   },
-   "Schedule.Outcome": {
-    "enum": [
-     "fired",
-     "late",
-     "checked",
-     "expired",
-     "skipped",
-     "disabled",
-     "failed"
-    ],
-    "type": "string"
-   },
-   "Schedule.Status": {
-    "enum": [
-     "active",
-     "paused",
-     "done"
-    ],
-    "type": "string"
-   },
-   "Schedule.When": {
-    "anyOf": [
-     {
-      "$ref": "#/components/schemas/Schedule.When.In"
-     },
-     {
-      "$ref": "#/components/schemas/Schedule.When.At"
-     },
-     {
-      "$ref": "#/components/schemas/Schedule.When.Every"
-     },
-     {
-      "$ref": "#/components/schemas/Schedule.When.Cron"
-     }
-    ]
-   },
-   "Schedule.When.At": {
-    "additionalProperties": false,
-    "properties": {
-     "at": {
-      "type": "string"
-     },
-     "type": {
-      "enum": [
-       "at"
-      ],
-      "type": "string"
-     },
-     "tz": {
-      "type": "string"
-     }
-    },
-    "required": [
-     "type",
-     "at"
-    ],
-    "type": "object"
-   },
-   "Schedule.When.Cron": {
-    "additionalProperties": false,
-    "properties": {
-     "cron": {
-      "type": "string"
-     },
-     "type": {
-      "enum": [
-       "cron"
-      ],
-      "type": "string"
-     },
-     "tz": {
-      "type": "string"
-     }
-    },
-    "required": [
-     "type",
-     "cron"
-    ],
-    "type": "object"
-   },
-   "Schedule.When.Every": {
-    "additionalProperties": false,
-    "properties": {
-     "every": {
-      "$ref": "#/components/schemas/Schedule.Duration"
-     },
-     "type": {
-      "enum": [
-       "every"
-      ],
-      "type": "string"
-     },
-     "tz": {
-      "type": "string"
-     }
-    },
-    "required": [
-     "type",
-     "every"
-    ],
-    "type": "object"
-   },
-   "Schedule.When.In": {
-    "additionalProperties": false,
-    "properties": {
-     "in": {
-      "$ref": "#/components/schemas/Schedule.Duration"
-     },
-     "type": {
-      "enum": [
-       "in"
-      ],
-      "type": "string"
-     },
-     "tz": {
-      "type": "string"
-     }
-    },
-    "required": [
-     "type",
-     "in"
-    ],
-    "type": "object"
-   },
-   "Schedule.WhenInput": {
-    "anyOf": [
-     {
-      "additionalProperties": false,
-      "properties": {
-       "at": {
-        "not": {}
-       },
-       "cron": {
-        "not": {}
-       },
-       "every": {
-        "not": {}
-       },
-       "in": {
-        "$ref": "#/components/schemas/Schedule.Duration"
-       },
-       "tz": {
-        "type": "string"
-       }
-      },
-      "required": [
-       "in"
-      ],
-      "type": "object"
-     },
-     {
-      "additionalProperties": false,
-      "properties": {
-       "at": {
-        "type": "string"
-       },
-       "cron": {
-        "not": {}
-       },
-       "every": {
-        "not": {}
-       },
-       "in": {
-        "not": {}
-       },
-       "tz": {
-        "type": "string"
-       }
-      },
-      "required": [
-       "at"
-      ],
-      "type": "object"
-     },
-     {
-      "additionalProperties": false,
-      "properties": {
-       "at": {
-        "not": {}
-       },
-       "cron": {
-        "not": {}
-       },
-       "every": {
-        "$ref": "#/components/schemas/Schedule.Duration"
-       },
-       "in": {
-        "not": {}
-       },
-       "tz": {
-        "type": "string"
-       }
-      },
-      "required": [
-       "every"
-      ],
-      "type": "object"
-     },
-     {
-      "additionalProperties": false,
-      "properties": {
-       "at": {
-        "not": {}
-       },
-       "cron": {
-        "type": "string"
-       },
-       "every": {
-        "not": {}
-       },
-       "in": {
-        "not": {}
-       },
-       "tz": {
-        "type": "string"
-       }
-      },
-      "required": [
-       "cron"
-      ],
-      "type": "object"
-     }
-    ]
-   },
-   "ScheduleNotFoundErrorEncoded": {
-    "additionalProperties": false,
-    "properties": {
-     "_tag": {
-      "enum": [
-       "ScheduleNotFoundError"
-      ],
-      "type": "string"
-     },
-     "message": {
-      "type": "string"
-     },
-     "scheduleID": {
-      "type": "string"
-     }
-    },
-    "required": [
-     "_tag",
-     "scheduleID",
      "message"
     ],
     "type": "object"
@@ -8690,6 +9533,7 @@
     }
    },
    "Session.Inbox.Delivery": {
+    "description": "steer delivers before the agent's next model call, even mid-work. queue waits until the agent finishes its current work, then delivers one queued item at a time. Sending defaults to steer.",
     "enum": [
      "steer",
      "queue"
@@ -11438,6 +12282,7 @@
       "type": "boolean"
      },
      "content": {
+      "description": "The SKILL.md body. Empty for a skill whose body loads on demand, such as an MCP skill.",
       "type": "string"
      },
      "description": {
@@ -11463,6 +12308,29 @@
    },
    "Skill.Name": {
     "type": "string"
+   },
+   "SkillLoadErrorEncoded": {
+    "additionalProperties": false,
+    "properties": {
+     "_tag": {
+      "enum": [
+       "SkillLoadError"
+      ],
+      "type": "string"
+     },
+     "message": {
+      "type": "string"
+     },
+     "skill": {
+      "$ref": "#/components/schemas/Skill.ID"
+     }
+    },
+    "required": [
+     "_tag",
+     "skill",
+     "message"
+    ],
+    "type": "object"
    },
    "SkillNotFoundErrorEncoded": {
     "additionalProperties": false,
@@ -12143,6 +13011,9 @@
       "$ref": "#/components/schemas/shell.deleted"
      },
      {
+      "$ref": "#/components/schemas/experimental.job.updated"
+     },
+     {
       "$ref": "#/components/schemas/form.created"
      },
      {
@@ -12153,6 +13024,9 @@
      },
      {
       "$ref": "#/components/schemas/websearch.updated"
+     },
+     {
+      "$ref": "#/components/schemas/experimental.push.updated"
      },
      {
       "$ref": "#/components/schemas/artifact.updated"
@@ -12420,13 +13294,42 @@
     ],
     "type": "object"
    },
+   "VideoNotFoundErrorEncoded": {
+    "additionalProperties": false,
+    "properties": {
+     "_tag": {
+      "enum": [
+       "VideoNotFoundError"
+      ],
+      "type": "string"
+     },
+     "message": {
+      "type": "string"
+     },
+     "videoID": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "_tag",
+     "videoID",
+     "message"
+    ],
+    "type": "object"
+   },
    "VoiceModel": {
     "additionalProperties": false,
     "properties": {
      "available": {
       "type": "boolean"
      },
+     "engine": {
+      "type": "string"
+     },
      "model": {
+      "type": "string"
+     },
+     "name": {
       "type": "string"
      },
      "provider": {
@@ -12441,6 +13344,8 @@
     },
     "required": [
      "model",
+     "name",
+     "engine",
      "provider",
      "transports",
      "available"
@@ -13070,6 +13975,48 @@
     ],
     "type": "object"
    },
+   "experimental.job.updated": {
+    "additionalProperties": false,
+    "properties": {
+     "created": {
+      "type": "number"
+     },
+     "data": {
+      "additionalProperties": false,
+      "properties": {
+       "info": {
+        "$ref": "#/components/schemas/Job.Info"
+       }
+      },
+      "required": [
+       "info"
+      ],
+      "type": "object"
+     },
+     "id": {
+      "$ref": "#/components/schemas/Event.ID"
+     },
+     "location": {
+      "$ref": "#/components/schemas/Location.Ref"
+     },
+     "metadata": {
+      "type": "object"
+     },
+     "type": {
+      "enum": [
+       "experimental.job.updated"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "created",
+     "type",
+     "data"
+    ],
+    "type": "object"
+   },
    "experimental.mcp.event": {
     "additionalProperties": false,
     "properties": {
@@ -13139,6 +14086,41 @@
      "type": {
       "enum": [
        "experimental.mcp.event"
+      ],
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "created",
+     "type",
+     "data"
+    ],
+    "type": "object"
+   },
+   "experimental.push.updated": {
+    "additionalProperties": false,
+    "properties": {
+     "created": {
+      "type": "number"
+     },
+     "data": {
+      "not": {
+       "type": "null"
+      }
+     },
+     "id": {
+      "$ref": "#/components/schemas/Event.ID"
+     },
+     "location": {
+      "$ref": "#/components/schemas/Location.Ref"
+     },
+     "metadata": {
+      "type": "object"
+     },
+     "type": {
+      "enum": [
+       "experimental.push.updated"
       ],
       "type": "string"
      }
@@ -18851,6 +19833,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -18860,7 +19847,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -18953,6 +19941,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -18962,7 +19955,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -19051,6 +20045,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -19060,7 +20059,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -19145,6 +20145,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -19154,7 +20159,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -19738,6 +20744,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -19747,7 +20758,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -19926,10 +20938,12 @@
           "shell.created",
           "shell.exited",
           "shell.deleted",
+          "experimental.job.updated",
           "form.created",
           "form.replied",
           "form.cancelled",
           "websearch.updated",
+          "experimental.push.updated",
           "artifact.updated",
           "session.status",
           "session.idle",
@@ -20036,10 +21050,12 @@
              "shell.created",
              "shell.exited",
              "shell.deleted",
+             "experimental.job.updated",
              "form.created",
              "form.replied",
              "form.cancelled",
              "websearch.updated",
+             "experimental.push.updated",
              "artifact.updated",
              "session.status",
              "session.idle",
@@ -20218,6 +21234,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -20227,7 +21248,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -20351,6 +21373,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -20360,7 +21387,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -20480,6 +21508,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -20489,7 +21522,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -20600,6 +21634,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -20609,7 +21648,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -20702,6 +21742,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -20711,7 +21756,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -20824,6 +21870,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -20833,7 +21884,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -20961,6 +22013,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -20970,7 +22027,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -21057,6 +22115,564 @@
     ]
    }
   },
+  "/api/experimental/automation": {
+   "get": {
+    "description": "List automations, oldest first. Experimental: may change without compatibility guarantees. Set automations to false in the directory's config to disable access.",
+    "operationId": "experimental.automation.list",
+    "parameters": [
+     {
+      "in": "query",
+      "name": "sessionID",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "$ref": "#/components/schemas/Session.ID"
+        }
+       ],
+       "description": "Only automations created by this Session."
+      }
+     },
+     {
+      "in": "query",
+      "name": "directory",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        }
+       ],
+       "description": "Only automations in the project that owns this directory."
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": false,
+         "properties": {
+          "data": {
+           "items": {
+            "$ref": "#/components/schemas/Automation.Info"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "data"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
+        }
+       }
+      },
+      "description": "ForbiddenError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SessionNotFoundErrorEncoded"
+        }
+       }
+      },
+      "description": "SessionNotFoundError"
+     }
+    },
+    "security": [],
+    "summary": "List automations",
+    "tags": [
+     "experimental"
+    ]
+   },
+   "post": {
+    "description": "Create an automation that sends a prompt, runs a Code Mode program, or runs a shell command at a time, every interval, or on a cron. Creating an MCP event watch requires the automation_create tool in a local session; a session ID over HTTP is not a watch authorization. Experimental: may change without compatibility guarantees. Set automations to false in the directory's config to disable access.",
+    "operationId": "experimental.automation.create",
+    "parameters": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Automation.CreatePayload"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": false,
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/Automation.Info"
+          }
+         },
+         "required": [
+          "data"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
+        }
+       }
+      },
+      "description": "ForbiddenError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SessionNotFoundErrorEncoded"
+        }
+       }
+      },
+      "description": "SessionNotFoundError"
+     }
+    },
+    "security": [],
+    "summary": "Create automation",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
+  "/api/experimental/automation/{automationID}": {
+   "delete": {
+    "description": "Delete an automation. Experimental: may change without compatibility guarantees. Set automations to false in the directory's config to disable access.",
+    "operationId": "experimental.automation.delete",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "automationID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Automation.ID"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "<No Content>"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
+        }
+       }
+      },
+      "description": "ForbiddenError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AutomationNotFoundErrorEncoded"
+        }
+       }
+      },
+      "description": "AutomationNotFoundError"
+     }
+    },
+    "security": [],
+    "summary": "Delete automation",
+    "tags": [
+     "experimental"
+    ]
+   },
+   "get": {
+    "description": "Read one automation. Experimental: may change without compatibility guarantees. Set automations to false in the directory's config to disable access.",
+    "operationId": "experimental.automation.get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "automationID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Automation.ID"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": false,
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/Automation.Info"
+          }
+         },
+         "required": [
+          "data"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
+        }
+       }
+      },
+      "description": "ForbiddenError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AutomationNotFoundErrorEncoded"
+        }
+       }
+      },
+      "description": "AutomationNotFoundError"
+     }
+    },
+    "security": [],
+    "summary": "Get automation",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
+  "/api/experimental/automation/{automationID}/pause": {
+   "post": {
+    "description": "Stop an automation from running until it is resumed. Experimental: may change without compatibility guarantees. Set automations to false in the directory's config to disable access.",
+    "operationId": "experimental.automation.pause",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "automationID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Automation.ID"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": false,
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/Automation.Info"
+          }
+         },
+         "required": [
+          "data"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
+        }
+       }
+      },
+      "description": "ForbiddenError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AutomationNotFoundErrorEncoded"
+        }
+       }
+      },
+      "description": "AutomationNotFoundError"
+     }
+    },
+    "security": [],
+    "summary": "Pause automation",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
+  "/api/experimental/automation/{automationID}/resume": {
+   "post": {
+    "description": "Resume a paused automation. A missed `at` runs once; repeating timers resume at their next slot. Event watches request replay from their saved cursor. Experimental: may change without compatibility guarantees. Set automations to false in the directory's config to disable access.",
+    "operationId": "experimental.automation.resume",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "automationID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Automation.ID"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": false,
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/Automation.Info"
+          }
+         },
+         "required": [
+          "data"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
+        }
+       }
+      },
+      "description": "ForbiddenError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/AutomationNotFoundErrorEncoded"
+        }
+       }
+      },
+      "description": "AutomationNotFoundError"
+     }
+    },
+    "security": [],
+    "summary": "Resume automation",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
+  "/api/experimental/blob/{id}": {
+   "get": {
+    "description": "Stream a stored blob's bytes, such as a generated video, with single byte Range, ETag and 304 Not Modified support. A blob is deleted a week after it was stored. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.blob.get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Blob.ID"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/octet-stream": {
+        "schema": {
+         "format": "binary",
+         "type": "string"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/BlobNotFoundErrorEncoded"
+        }
+       }
+      },
+      "description": "BlobNotFoundError"
+     }
+    },
+    "security": [],
+    "summary": "Read a blob",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
   "/api/experimental/client-mcp": {
    "get": {
     "description": "Upgrade to a WebSocket over which the client hosts an MCP server named after `name`; its tools stay available while the socket is open. One JSON-RPC message per text frame. Experimental: may change without compatibility guarantees.",
@@ -21068,6 +22684,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -21077,7 +22698,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -21088,6 +22710,11 @@
       "name": "name",
       "required": true,
       "schema": {
+       "allOf": [
+        {
+         "description": "Name of the MCP server the client hosts."
+        }
+       ],
        "type": "string"
       }
      },
@@ -21096,6 +22723,11 @@
       "name": "ticket",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Single-use ticket from experimental.mcp.client.token, which authorizes the connection without the usual credentials."
+        }
+       ],
        "type": "string"
       }
      }
@@ -21170,6 +22802,11 @@
       "name": "x-opencode-ticket",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Must be 1; requests without it are refused."
+        }
+       ],
        "type": "string"
       }
      },
@@ -21180,6 +22817,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -21189,7 +22831,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -21201,6 +22844,11 @@
       "name": "name",
       "required": true,
       "schema": {
+       "allOf": [
+        {
+         "description": "Name of the MCP server the client hosts."
+        }
+       ],
        "type": "string"
       }
      }
@@ -21346,6 +22994,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -21355,7 +23008,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -21435,6 +23089,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -21444,7 +23103,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -21543,6 +23203,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -21552,7 +23217,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -22097,6 +23763,180 @@
     ]
    }
   },
+  "/api/experimental/generate/video": {
+   "post": {
+    "description": "Submit a video job to a video model using the server's base configuration and return its ID once the provider accepted it. The server polls the job and stores the finished videos as blobs; read the job with GET /api/experimental/generate/video/:id and the video with GET /api/experimental/blob/:id. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.generate.video.create",
+    "parameters": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Generate.VideoRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GenerateVideoCreateResponse"
+        }
+       }
+      },
+      "description": "GenerateVideoCreateResponse"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/ProviderNotFoundErrorEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/ModelNotFoundErrorEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/LocationNotFoundErrorEncoded"
+          }
+         ]
+        }
+       }
+      },
+      "description": "ProviderNotFoundError | ModelNotFoundError | LocationNotFoundError"
+     },
+     "422": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnsupportedModelErrorEncoded"
+        }
+       }
+      },
+      "description": "UnsupportedModelError"
+     },
+     "502": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ProviderRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "ProviderRequestError"
+     },
+     "503": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ServiceUnavailableErrorEncoded"
+        }
+       }
+      },
+      "description": "ServiceUnavailableError"
+     }
+    },
+    "security": [],
+    "summary": "Create a video generation",
+    "tags": [
+     "generate"
+    ]
+   }
+  },
+  "/api/experimental/generate/video/{id}": {
+   "get": {
+    "description": "Read a video job: running, completed with its videos' blobs, or error with a reason. Jobs survive a server restart, which resumes polling running ones. A job is not found 24 hours after it finished, or once none of its blobs remain. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.generate.video.get",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Generate.VideoID"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/GenerateVideoGetResponse"
+        }
+       }
+      },
+      "description": "GenerateVideoGetResponse"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/VideoNotFoundErrorEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/LocationNotFoundErrorEncoded"
+          }
+         ]
+        }
+       }
+      },
+      "description": "VideoNotFoundError | LocationNotFoundError"
+     }
+    },
+    "security": [],
+    "summary": "Read a video generation",
+    "tags": [
+     "generate"
+    ]
+   }
+  },
   "/api/experimental/integration/wellknown": {
    "post": {
     "description": "Discover and persist an experimental wellknown integration source.",
@@ -22109,6 +23949,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -22118,7 +23963,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -22215,7 +24061,7 @@
          "$ref": "#/components/schemas/Job.Kind"
         }
        ],
-       "description": "Filter by background job kind (shell, subagent, or image)."
+       "description": "Filter by background job kind."
       }
      },
      {
@@ -22310,6 +24156,320 @@
     ]
    }
   },
+  "/api/experimental/job/{id}/cancel": {
+   "post": {
+    "description": "Cancel a running background job, interrupting the work it started. Cancelling a job that already finished does nothing. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.job.cancel",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "id",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "<No Content>"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     }
+    },
+    "security": [],
+    "summary": "Cancel background job",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
+  "/api/experimental/machine": {
+   "get": {
+    "description": "List known machines and whether each is paired and online. Behind the machines flag. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.machine.list",
+    "parameters": [],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": false,
+         "properties": {
+          "data": {
+           "items": {
+            "$ref": "#/components/schemas/Machine.Info"
+           },
+           "type": "array"
+          }
+         },
+         "required": [
+          "data"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
+        }
+       }
+      },
+      "description": "ForbiddenError"
+     }
+    },
+    "security": [],
+    "summary": "List machines",
+    "tags": [
+     "experimental"
+    ]
+   },
+   "post": {
+    "description": "Add a machine by name if it does not exist, then create a single-use join string carrying the given reach addresses. Behind the machines flag. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.machine.add",
+    "parameters": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Machine.AddPayload"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": false,
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/Machine.Invite"
+          }
+         },
+         "required": [
+          "data"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
+        }
+       }
+      },
+      "description": "ForbiddenError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MachineNotFoundErrorEncoded"
+        }
+       }
+      },
+      "description": "MachineNotFoundError"
+     },
+     "409": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ConflictErrorEncoded"
+        }
+       }
+      },
+      "description": "ConflictError"
+     }
+    },
+    "security": [],
+    "summary": "Add or invite a machine",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
+  "/api/experimental/machine/link": {
+   "get": {
+    "description": "Upgrade to a WebSocket that carries a machine's link to this server: binary messages only, each at most 65,535 bytes. It takes no server password. The link's own handshake, which starts with the machine's first message, is the only way in: it admits a key this server has paired or a valid join string, and closes the socket on anything else without saying why. Behind the machines flag; without it the route does not exist. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.machine.link",
+    "parameters": [],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "boolean"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     }
+    },
+    "security": [],
+    "summary": "Connect a machine",
+    "tags": [
+     "experimental"
+    ],
+    "x-websocket": true
+   }
+  },
+  "/api/experimental/machine/{name}": {
+   "delete": {
+    "description": "Forget a machine by name, closing any live link and revoking its key. Behind the machines flag. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.machine.remove",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "name",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "<No Content>"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "403": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
+        }
+       }
+      },
+      "description": "ForbiddenError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/MachineNotFoundErrorEncoded"
+        }
+       }
+      },
+      "description": "MachineNotFoundError"
+     }
+    },
+    "security": [],
+    "summary": "Remove a machine",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
   "/api/experimental/mcp/{server}": {
    "delete": {
     "description": "Stop an MCP server and remove it from the runtime set until restart.",
@@ -22330,6 +24490,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -22339,7 +24504,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -22414,6 +24580,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -22423,7 +24594,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -22519,6 +24691,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -22528,7 +24705,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -22605,6 +24783,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -22614,7 +24797,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -23236,12 +25420,21 @@
      },
      {
       "in": "query",
+      "name": "attachment_id",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "description": "Output offset to replay from. Defaults to 0.",
+      "in": "query",
       "name": "cursor",
       "schema": {
        "type": "string"
       }
      },
      {
+      "description": "Attach as controller (the default) or observer.",
       "in": "query",
       "name": "role",
       "schema": {
@@ -23249,13 +25442,7 @@
       }
      },
      {
-      "in": "query",
-      "name": "attachment_id",
-      "schema": {
-       "type": "string"
-      }
-     },
-     {
+      "description": "Set to true to take over control of the terminal.",
       "in": "query",
       "name": "takeover",
       "schema": {
@@ -23263,6 +25450,7 @@
       }
      },
      {
+      "description": "Set to 1 to send framed input messages instead of raw terminal input.",
       "in": "query",
       "name": "input_protocol",
       "schema": {
@@ -23270,6 +25458,7 @@
       }
      },
      {
+      "description": "Single-use ticket from experimental.persistentPty.connectToken, which authorizes the connection without the usual credentials.",
       "in": "query",
       "name": "ticket",
       "schema": {
@@ -23364,6 +25553,11 @@
       "name": "x-opencode-ticket",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Must be 1; requests without it are refused."
+        }
+       ],
        "type": "string"
       }
      }
@@ -23525,20 +25719,11 @@
     ]
    }
   },
-  "/api/experimental/schedule": {
+  "/api/experimental/push": {
    "get": {
-    "description": "List a Session's schedules, oldest first. Experimental: needs experimental.schedules in the Session's config and may change without notice.",
-    "operationId": "experimental.schedule.list",
-    "parameters": [
-     {
-      "in": "query",
-      "name": "sessionID",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/Session.ID"
-      }
-     }
-    ],
+    "description": "List the registered phones with their choices, bells and pauses, the server-wide pause and the shared session bells. Never returns callback URLs or keys. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.push.get",
+    "parameters": [],
     "responses": {
      "200": {
       "content": {
@@ -23547,10 +25732,7 @@
          "additionalProperties": false,
          "properties": {
           "data": {
-           "items": {
-            "$ref": "#/components/schemas/Schedule.Info"
-           },
-           "type": "array"
+           "$ref": "#/components/schemas/Push.Info"
           }
          },
          "required": [
@@ -23581,43 +25763,78 @@
        }
       },
       "description": "UnauthorizedError"
-     },
-     "403": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
-        }
-       }
-      },
-      "description": "ForbiddenError"
-     },
-     "404": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/SessionNotFoundErrorEncoded"
-        }
-       }
-      },
-      "description": "SessionNotFoundError"
      }
     },
     "security": [],
-    "summary": "List schedules",
+    "summary": "Get push settings",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
+  "/api/experimental/push/device/{deviceID}": {
+   "delete": {
+    "description": "Stop sending notifications to a phone. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.push.device.remove",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "deviceID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Push.DeviceID"
+      }
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "<No Content>"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     }
+    },
+    "security": [],
+    "summary": "Remove a phone",
     "tags": [
      "experimental"
     ]
    },
-   "post": {
-    "description": "Schedule a prompt that wakes the Session once after a delay, at a time, every interval, or on a cron. Experimental: needs experimental.schedules in the Session's config and may change without notice.",
-    "operationId": "experimental.schedule.create",
-    "parameters": [],
+   "patch": {
+    "description": "Pause or resume notifications to one phone, or change the level it gets by default. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.push.device.update",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "deviceID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Push.DeviceID"
+      }
+     }
+    ],
     "requestBody": {
      "content": {
       "application/json": {
        "schema": {
-        "$ref": "#/components/schemas/Schedule.CreatePayload"
+        "$ref": "#/components/schemas/Push.DevicePatch"
        }
       }
      },
@@ -23631,7 +25848,7 @@
          "additionalProperties": false,
          "properties": {
           "data": {
-           "$ref": "#/components/schemas/Schedule.Info"
+           "$ref": "#/components/schemas/Push.Device"
           }
          },
          "required": [
@@ -23663,45 +25880,113 @@
       },
       "description": "UnauthorizedError"
      },
-     "403": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
-        }
-       }
-      },
-      "description": "ForbiddenError"
-     },
      "404": {
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/SessionNotFoundErrorEncoded"
+         "$ref": "#/components/schemas/PushDeviceNotFoundErrorEncoded"
         }
        }
       },
-      "description": "SessionNotFoundError"
+      "description": "PushDeviceNotFoundError"
      }
     },
     "security": [],
-    "summary": "Create schedule",
+    "summary": "Update a phone",
+    "tags": [
+     "experimental"
+    ]
+   },
+   "put": {
+    "description": "Register or renew a phone's relay callback URL and public key, and answer with the server's public key for it. Keeps the phone's pause, session bells and, unless given, its level. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.push.device.register",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "deviceID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Push.DeviceID"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Push.Register"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": false,
+         "properties": {
+          "data": {
+           "$ref": "#/components/schemas/Push.Registered"
+          }
+         },
+         "required": [
+          "data"
+         ],
+         "type": "object"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     }
+    },
+    "security": [],
+    "summary": "Register a phone",
     "tags": [
      "experimental"
     ]
    }
   },
-  "/api/experimental/schedule/{scheduleID}": {
+  "/api/experimental/push/device/{deviceID}/session/{sessionID}": {
    "delete": {
-    "description": "Delete a schedule. Experimental: needs experimental.schedules in the Session's config and may change without notice.",
-    "operationId": "experimental.schedule.delete",
+    "description": "Let one phone follow the shared bell or its default for one session again. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.push.device.session.remove",
     "parameters": [
      {
       "in": "path",
-      "name": "scheduleID",
+      "name": "deviceID",
       "required": true,
       "schema": {
-       "$ref": "#/components/schemas/Schedule.ID"
+       "$ref": "#/components/schemas/Push.DeviceID"
+      }
+     },
+     {
+      "in": "path",
+      "name": "sessionID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Session.ID"
       }
      }
     ],
@@ -23729,46 +26014,54 @@
       },
       "description": "UnauthorizedError"
      },
-     "403": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
-        }
-       }
-      },
-      "description": "ForbiddenError"
-     },
      "404": {
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/ScheduleNotFoundErrorEncoded"
+         "$ref": "#/components/schemas/PushDeviceNotFoundErrorEncoded"
         }
        }
       },
-      "description": "ScheduleNotFoundError"
+      "description": "PushDeviceNotFoundError"
      }
     },
     "security": [],
-    "summary": "Delete schedule",
+    "summary": "Clear a phone's session bell",
     "tags": [
      "experimental"
     ]
    },
-   "get": {
-    "description": "Read one schedule. Experimental: needs experimental.schedules in the Session's config and may change without notice.",
-    "operationId": "experimental.schedule.get",
+   "put": {
+    "description": "Choose what one phone gets for one session. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.push.device.session.set",
     "parameters": [
      {
       "in": "path",
-      "name": "scheduleID",
+      "name": "deviceID",
       "required": true,
       "schema": {
-       "$ref": "#/components/schemas/Schedule.ID"
+       "$ref": "#/components/schemas/Push.DeviceID"
+      }
+     },
+     {
+      "in": "path",
+      "name": "sessionID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Session.ID"
       }
      }
     ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Push.Bell"
+       }
+      }
+     },
+     "required": true
+    },
     "responses": {
      "200": {
       "content": {
@@ -23777,7 +26070,7 @@
          "additionalProperties": false,
          "properties": {
           "data": {
-           "$ref": "#/components/schemas/Schedule.Info"
+           "$ref": "#/components/schemas/Push.Bell"
           }
          },
          "required": [
@@ -23809,48 +26102,92 @@
       },
       "description": "UnauthorizedError"
      },
-     "403": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
-        }
-       }
-      },
-      "description": "ForbiddenError"
-     },
      "404": {
       "content": {
        "application/json": {
         "schema": {
-         "$ref": "#/components/schemas/ScheduleNotFoundErrorEncoded"
+         "$ref": "#/components/schemas/PushDeviceNotFoundErrorEncoded"
         }
        }
       },
-      "description": "ScheduleNotFoundError"
+      "description": "PushDeviceNotFoundError"
      }
     },
     "security": [],
-    "summary": "Get schedule",
+    "summary": "Set a phone's session bell",
     "tags": [
      "experimental"
     ]
    }
   },
-  "/api/experimental/schedule/{scheduleID}/pause": {
-   "post": {
-    "description": "Stop a schedule from firing until it is resumed. Experimental: needs experimental.schedules in the Session's config and may change without notice.",
-    "operationId": "experimental.schedule.pause",
+  "/api/experimental/push/session/{sessionID}": {
+   "delete": {
+    "description": "Let every phone follow its default for one session again. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.push.session.remove",
     "parameters": [
      {
       "in": "path",
-      "name": "scheduleID",
+      "name": "sessionID",
       "required": true,
       "schema": {
-       "$ref": "#/components/schemas/Schedule.ID"
+       "$ref": "#/components/schemas/Session.ID"
       }
      }
     ],
+    "responses": {
+     "204": {
+      "description": "<No Content>"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     }
+    },
+    "security": [],
+    "summary": "Clear a session bell",
+    "tags": [
+     "experimental"
+    ]
+   },
+   "put": {
+    "description": "Choose what every phone gets for one session. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.push.session.set",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "sessionID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Session.ID"
+      }
+     }
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Push.Bell"
+       }
+      }
+     },
+     "required": true
+    },
     "responses": {
      "200": {
       "content": {
@@ -23859,7 +26196,7 @@
          "additionalProperties": false,
          "properties": {
           "data": {
-           "$ref": "#/components/schemas/Schedule.Info"
+           "$ref": "#/components/schemas/Push.Bell"
           }
          },
          "required": [
@@ -23890,49 +26227,30 @@
        }
       },
       "description": "UnauthorizedError"
-     },
-     "403": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
-        }
-       }
-      },
-      "description": "ForbiddenError"
-     },
-     "404": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/ScheduleNotFoundErrorEncoded"
-        }
-       }
-      },
-      "description": "ScheduleNotFoundError"
      }
     },
     "security": [],
-    "summary": "Pause schedule",
+    "summary": "Set a session bell",
     "tags": [
      "experimental"
     ]
    }
   },
-  "/api/experimental/schedule/{scheduleID}/resume": {
-   "post": {
-    "description": "Resume a paused schedule. A one-shot that fell due while paused fires once; a repeating schedule resumes at its next slot. Experimental: needs experimental.schedules in the Session's config and may change without notice.",
-    "operationId": "experimental.schedule.resume",
-    "parameters": [
-     {
-      "in": "path",
-      "name": "scheduleID",
-      "required": true,
-      "schema": {
-       "$ref": "#/components/schemas/Schedule.ID"
+  "/api/experimental/push/settings": {
+   "put": {
+    "description": "Pause or resume notifications to every phone. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.push.settings.set",
+    "parameters": [],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/Push.Settings"
+       }
       }
-     }
-    ],
+     },
+     "required": true
+    },
     "responses": {
      "200": {
       "content": {
@@ -23941,7 +26259,7 @@
          "additionalProperties": false,
          "properties": {
           "data": {
-           "$ref": "#/components/schemas/Schedule.Info"
+           "$ref": "#/components/schemas/Push.Settings"
           }
          },
          "required": [
@@ -23972,30 +26290,10 @@
        }
       },
       "description": "UnauthorizedError"
-     },
-     "403": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/ForbiddenErrorEncoded"
-        }
-       }
-      },
-      "description": "ForbiddenError"
-     },
-     "404": {
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/ScheduleNotFoundErrorEncoded"
-        }
-       }
-      },
-      "description": "ScheduleNotFoundError"
      }
     },
     "security": [],
-    "summary": "Resume schedule",
+    "summary": "Pause all notifications",
     "tags": [
      "experimental"
     ]
@@ -24117,6 +26415,11 @@
       "name": "from",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Start of the range in Unix milliseconds, inclusive. Defaults to the earliest recorded message."
+        }
+       ],
        "type": "string"
       }
      },
@@ -24125,6 +26428,11 @@
       "name": "to",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "End of the range in Unix milliseconds, exclusive. Defaults to now."
+        }
+       ],
        "type": "string"
       }
      },
@@ -24141,6 +26449,11 @@
       "name": "timezone",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "IANA time zone used to group activity by day. Defaults to UTC."
+        }
+       ],
        "type": "string"
       }
      },
@@ -24149,6 +26462,11 @@
       "name": "tools",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "How much tool usage to report: none, summary totals, or per-tool detail. Defaults to summary."
+        }
+       ],
        "enum": [
         "none",
         "summary",
@@ -24224,6 +26542,11 @@
       "name": "sanitize",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Set to true to redact titles, message text, file data, paths and metadata from the export."
+        }
+       ],
        "enum": [
         "true",
         "false"
@@ -24546,6 +26869,11 @@
       "name": "after",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Only return events after this sequence number."
+        }
+       ],
        "type": "string"
       }
      },
@@ -24554,6 +26882,11 @@
       "name": "follow",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Set to true to keep the stream open and send live events after the stored ones."
+        }
+       ],
        "enum": [
         "true",
         "false"
@@ -24712,7 +27045,7 @@
   },
   "/api/experimental/session/{sessionID}/skill": {
    "post": {
-    "description": "Activate a skill for a session by appending a skill message and resuming execution.",
+    "description": "Activate a skill for a session by appending a skill message and resuming execution. An archived session is unarchived.",
     "operationId": "experimental.session.skill",
     "parameters": [
      {
@@ -24796,6 +27129,16 @@
        }
       },
       "description": "SessionNotFoundError | SkillNotFoundError | LocationNotFoundError"
+     },
+     "502": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SkillLoadErrorEncoded"
+        }
+       }
+      },
+      "description": "SkillLoadError"
      }
     },
     "security": [],
@@ -24974,6 +27317,11 @@
       "name": "lines",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Number of trailing rows to read, up to 65535. Defaults to the live terminal height; larger counts include retained history."
+        }
+       ],
        "type": "string"
       }
      }
@@ -25045,7 +27393,7 @@
   },
   "/api/experimental/session/{sessionID}/wait": {
    "post": {
-    "description": "Wait for a session agent loop to become idle.",
+    "description": "Wait until the session's agent stops running in this server process. Returns at once when idle. Experimental: may change without compatibility guarantees.",
     "operationId": "experimental.session.wait",
     "parameters": [
      {
@@ -25109,6 +27457,117 @@
     ]
    }
   },
+  "/api/experimental/skill/{skillID}/file/*": {
+   "get": {
+    "description": "Read one file of a skill, loading it when the skill serves it on demand. SKILL.md returns the body without frontmatter. Experimental: may change without compatibility guarantees.",
+    "operationId": "experimental.skill.file",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "skillID",
+      "required": true,
+      "schema": {
+       "$ref": "#/components/schemas/Skill.ID"
+      }
+     },
+     {
+      "in": "query",
+      "name": "location",
+      "required": false,
+      "schema": {
+       "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
+       "properties": {
+        "directory": {
+         "anyOf": [
+          {
+           "type": "string"
+          },
+          {
+           "type": "null"
+          }
+         ],
+         "description": "Absolute path of the directory."
+        }
+       },
+       "type": "object"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/octet-stream": {
+        "schema": {
+         "format": "binary",
+         "type": "string"
+        }
+       }
+      },
+      "description": "Success"
+     },
+     "400": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/InvalidRequestErrorEncoded"
+        }
+       }
+      },
+      "description": "InvalidRequestError"
+     },
+     "401": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UnauthorizedErrorEncoded"
+        }
+       }
+      },
+      "description": "UnauthorizedError"
+     },
+     "404": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "anyOf": [
+          {
+           "$ref": "#/components/schemas/SkillNotFoundErrorEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/FileNotFoundErrorEncoded"
+          },
+          {
+           "$ref": "#/components/schemas/LocationNotFoundErrorEncoded"
+          }
+         ]
+        }
+       }
+      },
+      "description": "SkillNotFoundError | FileNotFoundError | LocationNotFoundError"
+     },
+     "502": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SkillLoadErrorEncoded"
+        }
+       }
+      },
+      "description": "SkillLoadError"
+     }
+    },
+    "security": [],
+    "summary": "Read skill file",
+    "tags": [
+     "experimental"
+    ]
+   }
+  },
   "/api/experimental/usage/limits": {
    "get": {
     "description": "Return the OpenCode Go allowance and Console budgets of the OpenCode Console workspace the location is signed in to, or null when it isn't signed in.",
@@ -25121,6 +27580,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -25130,7 +27594,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -25390,6 +27855,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -25399,7 +27869,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -25484,6 +27955,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -25493,7 +27969,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -25606,6 +28083,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -25615,7 +28097,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -25720,6 +28203,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -25729,7 +28217,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -25850,6 +28339,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -25859,7 +28353,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -25952,6 +28447,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -25961,7 +28461,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -26058,6 +28559,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -26067,7 +28573,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -26204,6 +28711,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -26213,7 +28725,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -26289,6 +28802,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -26298,7 +28816,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -26398,6 +28917,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -26407,7 +28931,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -26523,6 +29048,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -26532,7 +29062,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -26648,6 +29179,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -26657,7 +29193,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -26794,6 +29331,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -26803,7 +29345,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -26879,6 +29422,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -26888,7 +29436,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -26996,6 +29545,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -27005,7 +29559,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -27100,6 +29655,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -27109,7 +29669,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -27225,6 +29786,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -27234,7 +29800,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -27319,6 +29886,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -27328,7 +29900,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -27410,6 +29983,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -27419,7 +29997,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -27533,6 +30112,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -27542,7 +30126,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -27685,6 +30270,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -27694,7 +30284,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -27777,7 +30368,14 @@
       "name": "projectID",
       "required": false,
       "schema": {
-       "$ref": "#/components/schemas/Project.ID"
+       "allOf": [
+        {
+         "$ref": "#/components/schemas/Project.ID"
+        },
+        {
+         "description": "Project whose saved permissions to list. Defaults to the project of the requested location."
+        }
+       ]
       }
      }
     ],
@@ -28013,6 +30611,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -28022,7 +30625,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -28107,6 +30711,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -28116,7 +30725,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -28224,6 +30834,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -28233,7 +30848,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -28330,6 +30946,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -28339,7 +30960,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -28431,6 +31053,11 @@
       "name": "archived",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Set to true to include archived projects."
+        }
+       ],
        "enum": [
         "true",
         "false"
@@ -28581,6 +31208,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -28590,7 +31222,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -28693,6 +31326,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -28702,7 +31340,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -28801,6 +31440,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -28810,7 +31454,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -28893,6 +31538,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -28902,7 +31552,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -29026,6 +31677,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -29035,7 +31691,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -29110,6 +31767,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -29119,7 +31781,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -29214,6 +31877,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -29223,7 +31891,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -29350,6 +32019,7 @@
       }
      },
      {
+      "description": "Absolute path of the location directory. Omit to use the server's default location.",
       "in": "query",
       "name": "location[directory]",
       "schema": {
@@ -29357,6 +32027,7 @@
       }
      },
      {
+      "description": "Output offset to replay from. Use -1 to start at the current end; omit to replay all retained output.",
       "in": "query",
       "name": "cursor",
       "schema": {
@@ -29364,6 +32035,7 @@
       }
      },
      {
+      "description": "Single-use ticket from pty.connect.token, which authorizes the connection without the usual credentials.",
       "in": "query",
       "name": "ticket",
       "schema": {
@@ -29456,6 +32128,11 @@
       "name": "x-opencode-ticket",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Must be 1; requests without it are refused."
+        }
+       ],
        "type": "string"
       }
      },
@@ -29466,6 +32143,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -29475,7 +32157,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -29574,6 +32257,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -29583,7 +32271,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -29684,6 +32373,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -29693,7 +32387,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -29817,6 +32512,11 @@
       "name": "search",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Only sessions whose title contains this text, ignoring case. % and _ act as wildcards."
+        }
+       ],
        "type": "string"
       }
      },
@@ -29844,6 +32544,11 @@
       "name": "archived",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Filter by archive state. Use true to return only archived sessions or false to exclude them. Omit to include both."
+        }
+       ],
        "enum": [
         "true",
         "false"
@@ -29856,7 +32561,14 @@
       "name": "directory",
       "required": false,
       "schema": {
-       "$ref": "#/components/schemas/AbsolutePath"
+       "allOf": [
+        {
+         "$ref": "#/components/schemas/AbsolutePath"
+        },
+        {
+         "description": "Only sessions whose directory is exactly this absolute path."
+        }
+       ]
       }
      },
      {
@@ -29872,7 +32584,14 @@
       "name": "subpath",
       "required": false,
       "schema": {
-       "$ref": "#/components/schemas/RelativePath"
+       "allOf": [
+        {
+         "$ref": "#/components/schemas/RelativePath"
+        },
+        {
+         "description": "With project, only sessions at this path relative to the project directory."
+        }
+       ]
       }
      },
      {
@@ -29880,7 +32599,14 @@
       "name": "cursor",
       "required": false,
       "schema": {
-       "$ref": "#/components/schemas/SessionsCursor"
+       "allOf": [
+        {
+         "$ref": "#/components/schemas/SessionsCursor"
+        },
+        {
+         "description": "Opaque cursor from a previous page's cursor.next or cursor.previous. It carries that page's filters and order, so other filters are ignored."
+        }
+       ]
       }
      }
     ],
@@ -29957,7 +32683,8 @@
            {
             "type": "null"
            }
-          ]
+          ],
+          "description": "If a session with this ID already exists, it is returned unchanged, so retries are safe."
          },
          "location": {
           "anyOf": [
@@ -29967,7 +32694,8 @@
            {
             "type": "null"
            }
-          ]
+          ],
+          "description": "Defaults to the server's working directory. Ignored when parentID is set."
          },
          "metadata": {
           "anyOf": [
@@ -29977,7 +32705,8 @@
            {
             "type": "null"
            }
-          ]
+          ],
+          "description": "Opaque to OpenCode. Child sessions inherit the parent's metadata unless you pass your own."
          },
          "model": {
           "anyOf": [
@@ -29998,7 +32727,7 @@
             "type": "null"
            }
           ],
-          "description": "Set parentID to create a subagent session at the parent's location; set agent to choose its agent (otherwise it uses the default) and start it with session.prompt. After each completed round, the child sends a `<subagent>` report to the parent's inbox and wakes the parent unless it has a staged revert."
+          "description": "Creates a child session at the parent's location. Each time the child finishes running, it sends its last reply to the parent as a `<background-result kind=\"subagent\">` message and wakes the parent, unless the parent has a staged revert."
          },
          "permissions": {
           "anyOf": [
@@ -30008,7 +32737,8 @@
            {
             "type": "null"
            }
-          ]
+          ],
+          "description": "Applied on top of the agent's rules. Child sessions inherit the parent's rules unless you pass your own."
          },
          "title": {
           "anyOf": [
@@ -30087,7 +32817,7 @@
   },
   "/api/session/active": {
    "get": {
-    "description": "Retrieve foreground Session drains currently owned by this OpenCode process. Sessions absent from the result are inactive.",
+    "description": "List the sessions whose agent is running right now in this server process. Sessions missing from the result are idle.",
     "operationId": "session.active",
     "parameters": [],
     "responses": {
@@ -30387,7 +33117,7 @@
   },
   "/api/session/{sessionID}/agent": {
    "post": {
-    "description": "Switch the agent used by subsequent provider turns.",
+    "description": "Change the agent the session uses from its next model call on.",
     "operationId": "session.switchAgent",
     "parameters": [
      {
@@ -30518,7 +33248,7 @@
   },
   "/api/session/{sessionID}/command": {
    "post": {
-    "description": "Execute a slash command callback immediately.",
+    "description": "Run a named command in the session. Most commands send a prompt, so like session.prompt this returns before the agent finishes. An archived session is unarchived.",
     "operationId": "session.command",
     "parameters": [
      {
@@ -30568,6 +33298,7 @@
           "type": "array"
          },
          "text": {
+          "description": "The command's arguments.",
           "type": "string"
          }
         },
@@ -30645,7 +33376,7 @@
   },
   "/api/session/{sessionID}/compact": {
    "post": {
-    "description": "Durably admit a session compaction request. Steers by default: it runs at the next step boundary instead of waiting behind queued prompts.",
+    "description": "Queue a summary of the session's history. Steers by default: it runs before the next model call, ahead of queued messages.",
     "operationId": "session.compact",
     "parameters": [
      {
@@ -31057,7 +33788,7 @@
   },
   "/api/session/{sessionID}/fork": {
    "post": {
-    "description": "Create a child session by copying projected history before a message. Omit before to copy the full history.",
+    "description": "Create a child session with this session's history before a message. Omit before to copy the full history.",
     "operationId": "session.fork",
     "parameters": [
      {
@@ -31362,6 +34093,11 @@
       "name": "message",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Why the form was not answered, passed on to the asker."
+        }
+       ],
        "type": "string"
       }
      }
@@ -31718,7 +34454,7 @@
   },
   "/api/session/{sessionID}/inbox": {
    "get": {
-    "description": "List durable enqueued session work not yet delivered, ordered by enqueue sequence. Includes user, synthetic, compaction, and move items.",
+    "description": "List user, synthetic, compaction and move items not yet delivered to the agent, oldest first. Delivered user and synthetic items move to session.message.list.",
     "operationId": "session.inbox.list",
     "parameters": [
      {
@@ -31948,7 +34684,7 @@
   },
   "/api/session/{sessionID}/interrupt": {
    "post": {
-    "description": "Interrupt active execution owned by this OpenCode process. Returns interrupted=true when an active execution was interrupted and false for the idle no-op. When resume=true, execution resumes pending steering input and next-in-line control items (manual compaction, moves) while queued prompts remain parked.",
+    "description": "Stop the session's agent if it is running in this server process; interrupted=false means nothing was running. With resume=true it continues with pending steer items, compaction and moves, while queued messages keep waiting.",
     "operationId": "session.interrupt",
     "parameters": [
      {
@@ -31964,6 +34700,11 @@
       "name": "resume",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Set to true to resume pending steering input and next-in-line control items after interrupting."
+        }
+       ],
        "enum": [
         "true",
         "false"
@@ -32023,7 +34764,7 @@
   },
   "/api/session/{sessionID}/message": {
    "get": {
-    "description": "Retrieve projected messages for a session, optionally filtered by type. Items keep the requested order across pages; use cursor.next or cursor.previous to move through the ordered timeline, passing the same type filter on each page.",
+    "description": "List a session's messages, optionally filtered by type. Follow cursor.next or cursor.previous with the same type filter. Items still in the inbox aren't included.",
     "operationId": "session.message.list",
     "parameters": [
      {
@@ -32168,7 +34909,7 @@
   },
   "/api/session/{sessionID}/message/{messageID}": {
    "get": {
-    "description": "Retrieve one projected message owned by the Session.",
+    "description": "Retrieve one message of the session by ID.",
     "operationId": "session.message.get",
     "parameters": [
      {
@@ -32255,7 +34996,7 @@
   },
   "/api/session/{sessionID}/model": {
    "post": {
-    "description": "Switch the model used by subsequent provider turns.",
+    "description": "Change the model the session uses from its next model call on.",
     "operationId": "session.switchModel",
     "parameters": [
      {
@@ -32838,7 +35579,7 @@
   },
   "/api/session/{sessionID}/prompt": {
    "post": {
-    "description": "Durably admit one session input and schedule agent-loop execution unless resume is false.",
+    "description": "Send a user message and start the agent unless resume is false. Returns once the message is queued, not when the agent finishes: wait with POST /api/experimental/session/:sessionID/wait or the session.execution.* events, then read the reply with GET /api/session/:sessionID/message. An archived session is unarchived.",
     "operationId": "session.prompt",
     "parameters": [
      {
@@ -32886,9 +35627,11 @@
            {
             "type": "null"
            }
-          ]
+          ],
+          "description": "Sending the same ID again returns the original item instead of adding a second one, so retries are safe. Reusing it in another session or for another kind of item fails with 409."
          },
          "metadata": {
+          "description": "Stored on the message. The model doesn't see it.",
           "type": "object"
          },
          "resume": {
@@ -32899,7 +35642,8 @@
            {
             "type": "null"
            }
-          ]
+          ],
+          "description": "false adds the message to the inbox without starting the agent; it is delivered the next time the session runs."
          },
          "skills": {
           "items": {
@@ -32986,6 +35730,16 @@
        }
       },
       "description": "ConflictError"
+     },
+     "502": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SkillLoadErrorEncoded"
+        }
+       }
+      },
+      "description": "SkillLoadError"
      }
     },
     "security": [],
@@ -33275,7 +36029,7 @@
   },
   "/api/session/{sessionID}/shell": {
    "post": {
-    "description": "Execute one shell command in the session's working directory. Emits a shell.started event before execution and a shell.ended event with the merged output after.",
+    "description": "Execute one shell command in the session's working directory. Emits a shell.started event before execution and a shell.ended event with the merged output after. An archived session is unarchived.",
     "operationId": "session.shell",
     "parameters": [
      {
@@ -33367,7 +36121,7 @@
   },
   "/api/session/{sessionID}/synthetic": {
    "post": {
-    "description": "Durably admit synthetic session input and schedule execution unless resume is false.",
+    "description": "Add a message the model reads as user input but the user didn't type, such as a notification. Starts the agent unless resume is false or the session has a staged revert.",
     "operationId": "session.synthetic",
     "parameters": [
      {
@@ -33403,7 +36157,8 @@
            {
             "type": "null"
            }
-          ]
+          ],
+          "description": "Short label shown in the transcript instead of the full text."
          },
          "id": {
           "anyOf": [
@@ -33413,9 +36168,11 @@
            {
             "type": "null"
            }
-          ]
+          ],
+          "description": "Sending the same ID again returns the original item instead of adding a second one, so retries are safe. Reusing it in another session or for another kind of item fails with 409."
          },
          "metadata": {
+          "description": "Stored on the message. The model doesn't see it.",
           "type": "object"
          },
          "resume": {
@@ -33426,7 +36183,8 @@
            {
             "type": "null"
            }
-          ]
+          ],
+          "description": "false adds the message to the inbox without starting the agent; it is delivered the next time the session runs."
          },
          "text": {
           "type": "string"
@@ -33596,6 +36354,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -33605,7 +36368,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -33688,6 +36452,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -33697,7 +36466,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -33817,6 +36587,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -33826,7 +36601,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -33894,6 +36670,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -33903,7 +36684,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -34000,6 +36782,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -34009,7 +36796,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -34021,6 +36809,11 @@
       "name": "cursor",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Byte offset to read from, such as the cursor of the previous page. Defaults to 0."
+        }
+       ],
        "pattern": "^[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[Ee][+-]?\\d+)?$",
        "type": "string"
       }
@@ -34030,6 +36823,11 @@
       "name": "limit",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "Maximum number of bytes to return. Defaults to 65536."
+        }
+       ],
        "pattern": "^[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[Ee][+-]?\\d+)?$",
        "type": "string"
       }
@@ -34141,6 +36939,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -34150,7 +36953,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -34235,6 +37039,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -34244,7 +37053,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -34326,6 +37136,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -34335,7 +37150,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -34434,6 +37250,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -34443,7 +37264,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -34541,6 +37363,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -34550,7 +37377,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -34677,6 +37505,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -34686,7 +37519,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -34698,6 +37532,11 @@
       "name": "provider",
       "required": false,
       "schema": {
+       "allOf": [
+        {
+         "description": "VCS provider to initialize. Defaults to git."
+        }
+       ],
        "type": "string"
       }
      }
@@ -34786,6 +37625,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -34795,7 +37639,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -34880,6 +37725,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -34889,7 +37739,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"
@@ -35003,6 +37854,11 @@
       "required": false,
       "schema": {
        "additionalProperties": false,
+       "allOf": [
+        {
+         "description": "Location to run the request in, sent as location[directory]. Omit to use the server's default location."
+        }
+       ],
        "properties": {
         "directory": {
          "anyOf": [
@@ -35012,7 +37868,8 @@
           {
            "type": "null"
           }
-         ]
+         ],
+         "description": "Absolute path of the directory."
         }
        },
        "type": "object"

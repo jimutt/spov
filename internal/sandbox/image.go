@@ -93,6 +93,10 @@ var openCodeTargets = []struct{ Arch, Target string }{
 //
 // @decision(DL-032)
 var openCodeReleases = map[string]openCodeRelease{
+	"2.4.2": {Scope: "@opencode", Binary: "opencode", Integrity: map[string]string{
+		"linux-x64-baseline": "sha512-MrvUZ8Utg/kKpsIIRu7NrShw20CLbibw482lprMHwJtTLLJfoRqrq9n12eV4LFe7iTtD35GkA/q4pn4/zIpWzw==",
+		"linux-arm64":        "sha512-OCK0FwedJUQyY2oafpnSau6Fmd9KkLvkq6f2h2Lh6DFiRSh6FIutbbBicQbgJVlzgWJxG9B33sjmE4TBuw/xYQ==",
+	}},
 	"2.3.0": {Scope: "@opencode", Binary: "opencode", Integrity: map[string]string{
 		"linux-x64-baseline": "sha512-wIMo9anUJIVlnBJlGM0lB7n+jmFMstRwjN6Lw8+s0hp+HpA94LmVMDDkTg+iQqzcsatlJaHre39v8x+jGQErRQ==",
 		"linux-arm64":        "sha512-1IF1NQFD5mdZ7NcU81UifdYAVKEDAP/J07ylbgE4ZATminS7pOn5SOXVzyOkuN1WLcDzXunkju0hw8hug48wTg==",

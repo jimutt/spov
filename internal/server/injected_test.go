@@ -137,6 +137,16 @@ func TestAShellResultIsReadFromItsMetadataAndItsWrapper(t *testing.T) {
 			command: `echo '">'`, text: `">`, exit: intp(0), unwrapped: true,
 		},
 		{
+			name:    "a background command in 2.4's wrapper",
+			parts:   syntheticParts{Description: "sleep 1; exit 3", Metadata: shell, Text: "<background-result kind=\"shell\" id=\"sh_7\" state=\"completed\" command=\"sleep 1; exit 3\">\nbuilt\n\n\nExit code: 3\n</background-result>"},
+			command: "sleep 1; exit 3", text: "built\n\n\nExit code: 3", exit: intp(0), unwrapped: true,
+		},
+		{
+			name:    "a person's command in 2.4's wrapper",
+			parts:   syntheticParts{Metadata: shell, Text: shellPreamble + "<background-result kind=\"shell\" id=\"sh_8\" state=\"completed\" command=\"true\">\n(no output)\n</background-result>"},
+			command: "true", text: "(no output)", exit: intp(0), byPerson: true, unwrapped: true,
+		},
+		{
 			name:    "a person's command, read from the wrapper",
 			parts:   syntheticParts{Metadata: shell, Text: shellPreamble + "<shell id=\"sh_2\" state=\"completed\" command=\"ls\">\na\nb\n</shell>"},
 			command: "ls", text: "a\nb", exit: intp(0), byPerson: true, unwrapped: true,

@@ -290,35 +290,21 @@ func TestIntegrationActionVocabulary(t *testing.T) {
 // `action:"x"` anywhere in the binary: the minified bundle carries
 // unrelated fields of that name — an audio-stream error object has
 // `action:"write"` — and matching those reports permissions that do not
-// exist. A call site either names the action literally or names a
-// variable, so the variable's own binding is resolved.
+// exist. A call site may spread other fields ahead of the action
+// (`assert({...base,action:"x"})`, from 2.4), and either names the
+// action literally or names a variable, whose own binding is resolved.
 func assertsAction(text, action string) bool {
-	if strings.Contains(text, `assert({action:"`+action+`"`) {
-		return true
-	}
-	for _, v := range assertActionVars(text) {
-		if strings.Contains(text, `var `+v+`="`+action+`"`) {
+	for _, m := range assertActionRE.FindAllStringSubmatch(text, -1) {
+		if m[1] == action || m[2] != "" && strings.Contains(text, `var `+m[2]+`="`+action+`"`) {
 			return true
 		}
 	}
 	return false
 }
 
-// assertActionVars returns the variable names that appear as the action
-// of an assert call.
-var assertActionVarRE = regexp.MustCompile(`assert\(\{action:([A-Za-z_$][A-Za-z0-9_$]*)[,)]`)
-
-func assertActionVars(text string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, m := range assertActionVarRE.FindAllStringSubmatch(text, -1) {
-		if !seen[m[1]] {
-			seen[m[1]] = true
-			out = append(out, m[1])
-		}
-	}
-	return out
-}
+// assertActionRE matches an assert call's action: a literal (group 1)
+// or a variable (group 2), after any spread fields.
+var assertActionRE = regexp.MustCompile(`assert\(\{(?:\.\.\.[A-Za-z_$][A-Za-z0-9_$]*,)*action:(?:"([a-z_]+)"|([A-Za-z_$][A-Za-z0-9_$]*)[,)])`)
 
 // downloadOpenCodeBinary fetches the x64 baseline build. A spike
 // that cannot get its binary fails rather than skips, so a bump that

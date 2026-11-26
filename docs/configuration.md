@@ -92,7 +92,7 @@ sandbox:
 
 # --- OpenCode ------------------------------------------------------------------
 opencode:
-  version: 2.3.0                    # the pin: the sandbox must match it, the local client is graded against it
+  version: 2.4.2                    # the pin: the sandbox must match it, the local client is graded against it
   port: 4096
 
 # --- Modal -----------------------------------------------------------------------

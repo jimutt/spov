@@ -201,6 +201,7 @@ func (f *recorderFixture) failedReads() int {
 // @decision(DL-159) @decision(DL-017)
 func TestTheModelListReadKeepsNothingWaiting(t *testing.T) {
 	f := newRecorderFixture(t)
+	f.sb.models = readModelListFixture(t)
 	release := make(chan struct{})
 	fetch := f.rec.fetchBounded
 	f.rec.fetchBounded = func(ctx context.Context, conn Connection, path string, limit int64) ([]byte, error) {
@@ -255,8 +256,12 @@ func TestTheModelListIsReadWithinItsBounds(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, map[string][]string{"p/a": {"high", "low"}}) {
 		t.Errorf("parse = %v, %v", got, err)
 	}
-	if got, err := parseModelVariants([]byte(`{"data":[]}`)); err != nil || got == nil || len(got) != 0 {
-		t.Errorf("an empty list = %v, %v; want an empty map", got, err)
+	if got, err := parseModelVariants([]byte(`{"data":[{"id":"none","providerID":"p","variants":[]}]}`)); err != nil || got == nil || len(got) != 0 {
+		t.Errorf("a list with no variants = %v, %v; want an empty map", got, err)
+	}
+	// @decision(DL-183)
+	if _, err := parseModelVariants([]byte(`{"data":[]}`)); !errors.Is(err, errNoModelsListed) {
+		t.Errorf("a list naming no model = %v; want it not built yet", err)
 	}
 	var many []string
 	for i := range 4000 {
@@ -388,4 +393,68 @@ func TestTheSwitchTakesOnlyAModeTheSandboxOffers(t *testing.T) {
 		t.Fatal(err)
 	}
 	refuse("anthropic/claude-opus-5#max", "holds no list")
+}
+
+// A sandbox that lists no model has not built its list yet (OpenCode
+// from 2.4 does so a few seconds after it starts): the same read asks
+// again, a pause apart, and keeps the list once there is one, never an
+// empty one; a sandbox that never lists one is a failed read.
+//
+// @decision(DL-183)
+func TestAModelListNotYetBuiltIsAskedForAgain(t *testing.T) {
+	const empty = `{"location":{"directory":"/workspace"},"data":[]}`
+	t.Run("built a moment later", func(t *testing.T) {
+		f := newRecorderFixture(t)
+		f.sb.models = readModelListFixture(t)
+		reads := 0
+		inner := f.rec.fetchBounded
+		f.rec.fetchBounded = func(ctx context.Context, conn Connection, path string, limit int64) ([]byte, error) {
+			if path == modelListPath {
+				if reads++; reads <= 2 {
+					return []byte(empty), nil
+				}
+			}
+			return inner(ctx, conn, path, limit)
+		}
+		ctx := context.Background()
+		if err := f.rec.Sync(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the model list", func() bool {
+			got, _ := f.st.Sessions().ModelVariants(ctx, "org", f.sess.ID)
+			return got.SandboxID == "sb-1"
+		})
+		if got, _ := f.st.Sessions().ModelVariants(ctx, "org", f.sess.ID); !reflect.DeepEqual(got.Models, fixtureVariants) {
+			t.Errorf("kept %v, want %v", got.Models, fixtureVariants)
+		}
+		if n := f.failedReads(); n != 0 {
+			t.Errorf("%d failed reads, want none", n)
+		}
+		f.mu.Lock()
+		paused := 0
+		for _, d := range f.slept {
+			if d == ModelListPause {
+				paused++
+			}
+		}
+		f.mu.Unlock()
+		if paused != 2 {
+			t.Errorf("paused %d times between reads, want 2", paused)
+		}
+	})
+	t.Run("never built", func(t *testing.T) {
+		f := newRecorderFixture(t)
+		f.sb.models = empty
+		ctx := context.Background()
+		if err := f.rec.Sync(ctx); err != nil {
+			t.Fatal(err)
+		}
+		waitFor(t, "the failure", func() bool { return f.failedReads() == 1 })
+		if n := f.sb.modelReads(); n != ModelListWaits+1 {
+			t.Errorf("read %d times, want %d", n, ModelListWaits+1)
+		}
+		if got, _ := f.st.Sessions().ModelVariants(ctx, "org", f.sess.ID); got.SandboxID != "" {
+			t.Errorf("an empty list was kept: %+v", got)
+		}
+	})
 }

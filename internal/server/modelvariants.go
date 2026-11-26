@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -36,6 +37,20 @@ const (
 	MaxModelVariants      = 64
 	MaxModelListReads     = 3
 )
+
+// ModelListWaits is how many more times one read asks again, a
+// ModelListPause apart, while the sandbox lists no model at all: from
+// 2.4 OpenCode builds its list a few seconds after it starts.
+//
+// @decision(DL-183)
+const (
+	ModelListWaits = 10
+	ModelListPause = time.Second
+)
+
+// errNoModelsListed is a model list that names no model, which is one
+// not built yet.
+var errNoModelsListed = errors.New("the sandbox lists no model yet")
 
 // modelListPath is OpenCode's model list: every model the sandbox can
 // run, each with its variants.
@@ -83,8 +98,14 @@ func (r *Recorder) startModelVariants(ctx context.Context, c *capture) {
 		rctx, cancel := context.WithTimeout(parent, SandboxReadTimeout)
 		defer cancel()
 		var err error
-		if safego.Do("recorder model list of session "+sess.ID, r.warn, func() { err = r.readModelVariants(rctx, sess, conn) }) {
-			err = errors.New("the read panicked")
+		for wait := 0; ; wait++ {
+			if safego.Do("recorder model list of session "+sess.ID, r.warn, func() { err = r.readModelVariants(rctx, sess, conn) }) {
+				err = errors.New("the read panicked")
+			}
+			// @decision(DL-183)
+			if !errors.Is(err, errNoModelsListed) || wait == ModelListWaits || r.sleep(rctx, ModelListPause) != nil {
+				break
+			}
 		}
 		r.mu.Lock()
 		st.running = false
@@ -153,6 +174,10 @@ func parseModelVariants(body []byte) (map[string][]string, error) {
 	}
 	if err := json.Unmarshal(body, &list); err != nil || list.Data == nil {
 		return nil, errors.New("the sandbox's answer is not a model list")
+	}
+	// @decision(DL-183)
+	if len(*list.Data) == 0 {
+		return nil, errNoModelsListed
 	}
 	out := map[string][]string{}
 	// size counts what the kept list's JSON takes: {} and, per model,

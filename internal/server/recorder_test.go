@@ -58,7 +58,7 @@ type fakeSandbox struct {
 
 func newFakeSandbox(t testing.TB) *fakeSandbox {
 	return &fakeSandbox{t: t, reads: map[string]int{}, listing: `{"data":[]}`, messages: map[string]string{}, infos: map[string]string{},
-		models: `{"location":{"directory":"/workspace"},"data":[]}`, stream: make(chan string, 64)}
+		models: `{"location":{"directory":"/workspace"},"data":[{"id":"m","providerID":"p","variants":[]}]}`, stream: make(chan string, 64)}
 }
 
 func (f *fakeSandbox) connect(_ context.Context, p auth.Principal, _ store.Session) (Connection, error) {

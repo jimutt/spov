@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -36,9 +37,20 @@ func TestIntegrationLocalOpenCodeProbeModelList(t *testing.T) {
 		t.Fatalf("the server never answered as healthy: %v", err)
 	}
 	contract.CheckRequest(t, "GET", modelListPath, nil)
-	body, err := sandboxGetBounded(ctx, conn.URL+modelListPath, conn.Token, conn.User, conn.Password, MaxModelListBytes)
-	if err != nil {
-		t.Fatalf("reading the model list: %v", err)
+	// From 2.4 the list is built a few seconds after the server starts;
+	// read it as the recorder does (DL-183).
+	var body []byte
+	for wait := 0; ; wait++ {
+		var err error
+		body, err = sandboxGetBounded(ctx, conn.URL+modelListPath, conn.Token, conn.User, conn.Password, MaxModelListBytes)
+		if err != nil {
+			t.Fatalf("reading the model list: %v", err)
+		}
+		if _, err := parseModelVariants(body); !errors.Is(err, errNoModelsListed) || wait == ModelListWaits {
+			t.Logf("the list was read %d times", wait+1)
+			break
+		}
+		time.Sleep(ModelListPause)
 	}
 	doc, err := contract.Load()
 	if err != nil {

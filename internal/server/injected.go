@@ -84,9 +84,19 @@ func injectedOf(p syntheticParts, text string) (*Injected, string) {
 	return in, text
 }
 
+// shellWrappers are OpenCode's wrappers around a shell command's
+// output: `<background-result kind="shell" …>` from 2.4, `<shell …>`
+// before, kept for what was recorded then.
+//
+// @decision(DL-180)
+var shellWrappers = []struct{ open, close string }{
+	{`<background-result kind="shell" id="`, "</background-result>"},
+	{`<shell id="`, "</shell>"},
+}
+
 // shellResultOf reads a shell command's result: its parts from the
-// metadata and the description, and its output from inside OpenCode's
-// `<shell …>` wrapper. Text not in the wrapper's shape is kept whole.
+// metadata and the description, and its output from inside one of
+// OpenCode's shellWrappers. Text not in a wrapper's shape is kept whole.
 //
 // @decision(DL-180)
 func shellResultOf(p syntheticParts, text string) (*ShellResult, string) {
@@ -113,7 +123,14 @@ func shellResultOf(p syntheticParts, text string) (*ShellResult, string) {
 		r.ByPerson = true
 		body = rest
 	}
-	rest, ok := strings.CutPrefix(body, `<shell id="`)
+	var rest, closing string
+	ok := false
+	for _, w := range shellWrappers {
+		if rest, ok = strings.CutPrefix(body, w.open); ok {
+			closing = w.close
+			break
+		}
+	}
 	if !ok {
 		return r, text
 	}
@@ -127,8 +144,8 @@ func shellResultOf(p syntheticParts, text string) (*ShellResult, string) {
 	} else if command, rest, ok = strings.Cut(rest, "\">\n"); !ok {
 		return r, text
 	}
-	output, ok := strings.CutSuffix(rest, "\n</shell>")
-	if !ok && rest == "</shell>" {
+	output, ok := strings.CutSuffix(rest, "\n"+closing)
+	if !ok && rest == closing {
 		output, ok = "", true
 	}
 	if !ok {
