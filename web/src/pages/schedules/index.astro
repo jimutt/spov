@@ -1,0 +1,9 @@
+---
+// The caller's schedules. @decision(DL-195)
+import Base from '../../layouts/Base.astro';
+import Schedules from '../../components/Schedules.svelte';
+---
+
+<Base title="Schedules — spov">
+  <Schedules client:load />
+</Base>

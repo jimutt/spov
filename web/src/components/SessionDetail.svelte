@@ -3,6 +3,7 @@
   // Reads from the store, not the sandbox.
   //
   // @decision(DL-058) @decision(DL-018) @decision(DL-057) @decision(DL-106) @decision(DL-113)
+  import { schedulePage } from '../lib/schedule';
   import { tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { api, unwrap } from '../lib/api/client';
@@ -135,7 +136,7 @@
   import InfoToggle from './InfoToggle.svelte';
   import Problem from './Problem.svelte';
   import StateMark from './StateMark.svelte';
-  import { primary, secondary, secondarySmall, textButton } from './ui';
+  import { link, primary, secondary, secondarySmall, textButton } from './ui';
 
   // The session is named by the query string rather than the path.
   // Read at initialisation, not in an $effect: location is not
@@ -1607,6 +1608,13 @@
               ><StateMark class="text-md font-normal" mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial, job.sync?.held) + subagentsShown} /></span
             >
           </h2>
+          <!-- @decision(DL-195) -->
+          {#if job.schedule}
+            <p class="m-0 mb-2 text-md text-soft [overflow-wrap:anywhere]" data-testid="job-schedule">
+              From schedule {#if job.schedule.name}<a class={link} href={schedulePage(job.schedule.id)}>{job.schedule.name}</a
+                >{:else}(deleted){/if}
+            </p>
+          {/if}
           <!-- @decision(DL-049) -->
           {#if jobClock?.endsAt}
             <dl class="m-0 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">

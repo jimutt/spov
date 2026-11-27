@@ -137,7 +137,11 @@
 <div class="max-md:mb-4 max-md:flex max-md:items-center max-md:justify-between max-md:gap-3">
   <div class="mb-2.5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3 max-md:order-2 max-md:mb-0">
     <h1 class="{pageTitle} max-md:sr-only">Jobs</h1>
-    <a class={primary} href="/jobs/new/">Start a job</a>
+    <span class="flex items-center gap-2.5">
+      <!-- @decision(DL-195) -->
+      <a class={secondary} href="/schedules/">Schedules</a>
+      <a class={primary} href="/jobs/new/">Start a job</a>
+    </span>
   </div>
 
   <!-- The job limit, as the sessions page's summary line draws it.
@@ -205,7 +209,8 @@
         >
           <span class="pt-0.5 text-md max-md:col-start-1 max-md:row-start-2 max-md:pt-0 max-md:text-sm" role="cell">
             <StateMark mark={jobMark(job.state, job.partial)} word={jobWord(job.state, job.partial, job.sync?.held)} /><span
-              class="text-soft before:mx-2 before:content-['·'] md:hidden">{kindName(job.kind)} job</span
+              class="text-soft before:mx-2 before:content-['·'] md:hidden"
+              >{kindName(job.kind)} job{#if job.schedule}, scheduled{/if}</span
             >
           </span>
           <div class="min-w-0 max-md:contents" role="cell">
@@ -213,7 +218,11 @@
               class="text-base font-semibold text-ink no-underline after:absolute after:inset-0 focus-visible:outline-none line-clamp-2 max-md:col-span-2 max-md:row-start-1"
               href={`/session/?id=${encodeURIComponent(job.session_id)}`}>{jobHeadline(job)}</a
             >
-            <p class="m-0 mt-0.5 text-md text-soft max-md:hidden">{kindName(job.kind)} job</p>
+            <p class="m-0 mt-0.5 text-md text-soft max-md:hidden">
+              {kindName(job.kind)} job{#if job.schedule}<span class="[overflow-wrap:anywhere]" data-testid="jobs-schedule"
+                  >{` · from schedule ${job.schedule.name || '(deleted)'}`}</span
+                >{/if}
+            </p>
             {#if outcome.kind === 'link'}
               <!-- Above the row's own stretched link, so it opens the
                    pull request rather than the session. -->
