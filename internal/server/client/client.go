@@ -741,6 +741,91 @@ func (c *Client) ResumeJob(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodPost, "jobs/"+url.PathEscape(id)+"/resume", nil, nil)
 }
 
+// SchedulePage is one page of the schedule listing, as the API sends it.
+//
+// @decision(DL-196)
+type SchedulePage struct {
+	Schedules []server.ScheduleView `json:"schedules"`
+	Next      string                `json:"next,omitempty"`
+	Total     int                   `json:"total"`
+}
+
+// CreateSchedule stores a schedule of the caller's and returns its view.
+//
+// @decision(DL-196)
+func (c *Client) CreateSchedule(ctx context.Context, req server.ScheduleRequest) (server.ScheduleView, error) {
+	var out server.ScheduleView
+	err := c.do(ctx, http.MethodPost, "schedules", req, &out)
+	return out, err
+}
+
+// ListSchedules reads one page of the caller's schedules, newest first;
+// the listing has no states, so p.States is not sent.
+//
+// @decision(DL-196)
+func (c *Client) ListSchedules(ctx context.Context, p Page) (SchedulePage, error) {
+	var out SchedulePage
+	p.States = nil
+	err := c.do(ctx, http.MethodGet, "schedules"+p.query(), nil, &out)
+	return out, err
+}
+
+// GetSchedule reads one schedule, by the caller's name for it or its
+// id, with its history.
+//
+// @decision(DL-196)
+func (c *Client) GetSchedule(ctx context.Context, ref string) (server.ScheduleView, error) {
+	var out server.ScheduleView
+	err := c.do(ctx, http.MethodGet, "schedules/"+url.PathEscape(ref), nil, &out)
+	return out, err
+}
+
+// UpdateSchedule changes the fields patch sets and keeps the rest.
+//
+// @decision(DL-196)
+func (c *Client) UpdateSchedule(ctx context.Context, ref string, patch server.SchedulePatch) (server.ScheduleView, error) {
+	var out server.ScheduleView
+	err := c.do(ctx, http.MethodPatch, "schedules/"+url.PathEscape(ref), patch, &out)
+	return out, err
+}
+
+// PauseSchedule pauses a schedule.
+//
+// @decision(DL-196)
+func (c *Client) PauseSchedule(ctx context.Context, ref string) (server.ScheduleView, error) {
+	var out server.ScheduleView
+	err := c.do(ctx, http.MethodPost, "schedules/"+url.PathEscape(ref)+"/pause", nil, &out)
+	return out, err
+}
+
+// ResumeSchedule resumes a schedule from its next slot.
+//
+// @decision(DL-196)
+func (c *Client) ResumeSchedule(ctx context.Context, ref string) (server.ScheduleView, error) {
+	var out server.ScheduleView
+	err := c.do(ctx, http.MethodPost, "schedules/"+url.PathEscape(ref)+"/resume", nil, &out)
+	return out, err
+}
+
+// DeleteSchedule removes a schedule and its history; its jobs stay.
+//
+// @decision(DL-196)
+func (c *Client) DeleteSchedule(ctx context.Context, ref string) error {
+	return c.do(ctx, http.MethodDelete, "schedules/"+url.PathEscape(ref), nil, nil)
+}
+
+// RunSchedule fires a schedule now and returns the job it started; a
+// skip is a 409 whose detail is the reason.
+//
+// @decision(DL-196)
+func (c *Client) RunSchedule(ctx context.Context, ref string) (string, error) {
+	var out struct {
+		JobID string `json:"job_id"`
+	}
+	err := c.do(ctx, http.MethodPost, "schedules/"+url.PathEscape(ref)+"/run", nil, &out)
+	return out.JobID, err
+}
+
 // Steer sends a message into a running session. No CLI command wraps
 // it; an attached CLI already talks to the sandbox through DL-030's
 // proxy.

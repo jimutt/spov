@@ -473,6 +473,12 @@ type runScheduleOutput struct {
 // toScheduleHumaError maps a schedule's errors, then a job's.
 func toScheduleHumaError(err error) error {
 	switch {
+	case asStatusError(err) != nil:
+		return asStatusError(err)
+	// A missing row on these routes is the schedule, not the session the
+	// shared mapper would name.
+	case errors.Is(err, store.ErrNotFound):
+		return huma.Error404NotFound("no such schedule")
 	case errors.Is(err, errSchedulesNeedAServer):
 		return huma.Error501NotImplemented(err.Error())
 	case errors.Is(err, errSkipped):

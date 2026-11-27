@@ -105,8 +105,11 @@ func TestAScheduleIsChangedPausedAndResumed(t *testing.T) {
 	if resp, body := w.do(http.MethodDelete, "/api/v1/schedules/weekly", nil); resp.StatusCode != http.StatusNoContent {
 		t.Errorf("delete = %d %s", resp.StatusCode, body)
 	}
-	if resp, _ := w.do(http.MethodGet, "/api/v1/schedules/weekly", nil); resp.StatusCode != http.StatusNotFound {
-		t.Errorf("a deleted schedule = %d", resp.StatusCode)
+	if resp, body := w.do(http.MethodGet, "/api/v1/schedules/weekly", nil); resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "no such schedule") {
+		t.Errorf("a deleted schedule = %d %s, want a 404 naming a schedule", resp.StatusCode, body)
+	}
+	if resp, body := w.do(http.MethodPost, "/api/v1/schedules/weekly/pause", nil); resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "no such schedule") {
+		t.Errorf("pausing a deleted schedule = %d %s, want a 404 naming a schedule", resp.StatusCode, body)
 	}
 }
 

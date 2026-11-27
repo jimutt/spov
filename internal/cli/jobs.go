@@ -33,26 +33,7 @@ import (
 //
 // @decision(DL-045) @decision(DL-023)
 func newJobsCreateCmd(env *Env) *cobra.Command {
-	var (
-		kind      string
-		repos     []string
-		landing   string
-		goalFile  string
-		check     string
-		model     string
-		reasoning string
-		clock     string
-		access    string
-		asJSON    bool
-		routed    routedFlags
-		template  templateFlags
-		envVars   []string
-		wait      bool
-		timeout   time.Duration
-		hold      string
-		prPolicy  string
-		noPrep    bool
-	)
+	var opts createOptions
 	cmd := &cobra.Command{
 		Use:   "create [goal]",
 		Short: "Start an autonomous job in a new sandbox",
@@ -62,32 +43,60 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 			"Autonomous jobs need a hosted server; a local server refuses them.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			goal, err := readGoal(args, goalFile)
+			goal, err := readGoal(args, opts.GoalFile)
 			if err != nil {
 				return err
 			}
+			opts.Goal = goal
 			// @decision(DL-103)
-			if timeout != 0 && !wait {
+			if opts.Timeout != 0 && !opts.Wait {
 				return errors.New("--timeout bounds --wait; add --wait, or leave it out")
 			}
-			if err := checkTimeout(timeout); err != nil {
+			if err := checkTimeout(opts.Timeout); err != nil {
 				return err
 			}
-			return createJob(cmd.Context(), env, createOptions{
-				Goal: goal, Kind: kind, Repos: repos, Landing: landing, Check: check,
-				Model: model, Reasoning: reasoning, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
-				Template: template,
-				Env:      envVars, Wait: wait, Timeout: timeout, Hold: hold,
-				PRPolicy: prPolicy, NoPrep: noPrep,
-			})
+			return createJob(cmd.Context(), env, opts)
 		},
 	}
-	cmd.Flags().StringVar(&kind, "kind", string(store.JobKindPR),
-		"what the job delivers: pr, report, or sync (run inside a checkout: the work comes back with `spov jobs apply`)")
-	cmd.Flags().StringArrayVar(&repos, "repo", nil,
+	addJobFlags(env, cmd, &opts, false)
+	// @decision(DL-101)
+	cmd.Flags().StringVar(&opts.Hold, "hold", "",
+		"for --kind sync: how long the sandbox is kept after the job finishes, for `spov jobs apply`, e.g. 1h;"+
+			" sandbox.job_sync_hold, then 30m, when unset")
+	// @decision(DL-103)
+	cmd.Flags().BoolVar(&opts.Wait, "wait", false,
+		"after creating the job, wait until it finishes and exit by how it ended, as `spov jobs wait` does")
+	timeoutFlag(cmd, &opts.Timeout)
+	jsonFlag(cmd, &opts.JSON)
+	return cmd
+}
+
+// jobFlagAnnotation marks the flags addJobFlags registers, so `spov jobs
+// schedule edit` can tell a job flag it was given from its own.
+//
+// @decision(DL-196)
+const jobFlagAnnotation = "spov-job-flag"
+
+// addJobFlags registers the flags that describe a job, into opts: the
+// one set `spov jobs create`, `spov jobs schedule create` and `spov jobs
+// schedule edit` take. forSchedule words --kind and --check without the
+// sync kind, which a schedule cannot run.
+//
+// @decision(DL-196) @decision(DL-045)
+func addJobFlags(env *Env, cmd *cobra.Command, opts *createOptions, forSchedule bool) {
+	kindHelp := "what the job delivers: pr, report, or sync (run inside a checkout: the work comes back with `spov jobs apply`)"
+	checkHelp := "command that verifies the work, run at the workspace root, e.g. ./repo/scripts/check.sh" +
+		" (for --kind sync, in the repository: ./scripts/check.sh); its exit status is one of the job's gates"
+	if forSchedule {
+		kindHelp = "what each run delivers: pr or report"
+		checkHelp = "command that verifies the work, run at the workspace root, e.g. ./repo/scripts/check.sh;" +
+			" its exit status is one of the job's gates"
+	}
+	cmd.Flags().StringVar(&opts.Kind, "kind", string(store.JobKindPR), kindHelp)
+	cmd.Flags().StringArrayVar(&opts.Repos, "repo", nil,
 		"repository to work in as owner/name, or platform:owner/name (repeatable); overrides the configured list")
-	cmd.Flags().StringVar(&landing, "landing", "", "workspace directory to start in (defaults to the workspace root)")
-	cmd.Flags().StringVar(&goalFile, "goal-file", "", "read the goal from a file")
+	cmd.Flags().StringVar(&opts.Landing, "landing", "", "workspace directory to start in (defaults to the workspace root)")
+	cmd.Flags().StringVar(&opts.GoalFile, "goal-file", "", "read the goal from a file")
 	// Gate 1 of the job's verdict. It is workspace-relative, so the help's
 	// example names the repository directory.
 	//
@@ -95,42 +104,41 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 	// A sync job lands in its repository, so its check is relative to it.
 	//
 	// @decision(DL-100)
-	cmd.Flags().StringVar(&check, "check", "",
-		"command that verifies the work, run at the workspace root, e.g. ./repo/scripts/check.sh"+
-			" (for --kind sync, in the repository: ./scripts/check.sh); its exit status is one of the job's gates")
-	// @decision(DL-101)
-	cmd.Flags().StringVar(&hold, "hold", "",
-		"for --kind sync: how long the sandbox is kept after the job finishes, for `spov jobs apply`, e.g. 1h;"+
-			" sandbox.job_sync_hold, then 30m, when unset")
+	cmd.Flags().StringVar(&opts.Check, "check", "", checkHelp)
 	// @decision(DL-137)
-	cmd.Flags().StringVar(&prPolicy, "pr-policy", "",
+	cmd.Flags().StringVar(&opts.PRPolicy, "pr-policy", "",
 		"for --kind pr: whose instructions say how the branch is made and the pull request opened,"+
 			" spov (the default) or goal (the goal's own)")
 	// @decision(DL-138)
-	cmd.Flags().BoolVar(&noPrep, "no-prep", false,
+	cmd.Flags().BoolVar(&opts.NoPrep, "no-prep", false,
 		"skip the preparation pass: no model reads the goal before the job starts, and no check is proposed")
 	// @decision(DL-014)
-	cmd.Flags().StringVar(&model, "model", "",
+	cmd.Flags().StringVar(&opts.Model, "model", "",
 		"model to run on as provider/model, e.g. anthropic/claude-sonnet-5; your account default when unset")
 	// @decision(DL-190)
-	addReasoningFlag(env, cmd, &reasoning)
+	addReasoningFlag(env, cmd, &opts.Reasoning)
 	// @decision(DL-049)
-	cmd.Flags().StringVar(&clock, "max-duration", "",
+	cmd.Flags().StringVar(&opts.MaxDuration, "max-duration", "",
 		"how long the job may run unattended, e.g. 45m; sandbox.job_max_duration, then your account's default,"+
 			" then 1h, when unset, and never more than your limit")
 	// @decision(DL-043)
-	cmd.Flags().StringVar(&access, "git-access", "",
+	cmd.Flags().StringVar(&opts.GitAccess, "git-access", "",
 		"how far the sandbox's git credentials reach: repos (the job's) or all (every repository they can);"+
 			" sandbox.job_git_access, then your account's job default, then repos, when unset")
-	addRoutedFlags(cmd, &routed, "sandbox.job_credentials")
-	addTemplateFlags(env, cmd, &template, "sandbox.job_template")
-	addEnvFlag(cmd, &envVars)
-	// @decision(DL-103)
-	cmd.Flags().BoolVar(&wait, "wait", false,
-		"after creating the job, wait until it finishes and exit by how it ended, as `spov jobs wait` does")
-	timeoutFlag(cmd, &timeout)
-	jsonFlag(cmd, &asJSON)
-	return cmd
+	addRoutedFlags(cmd, &opts.Routed, "sandbox.job_credentials")
+	addTemplateFlags(env, cmd, &opts.Template, "sandbox.job_template")
+	addEnvFlag(cmd, &opts.Env)
+	for _, name := range jobFlagNames {
+		_ = cmd.Flags().SetAnnotation(name, jobFlagAnnotation, []string{"true"})
+	}
+}
+
+// jobFlagNames are the flags addJobFlags registers.
+//
+// @decision(DL-196)
+var jobFlagNames = []string{
+	"kind", "repo", "landing", "goal-file", "check", "pr-policy", "no-prep", "model", "reasoning",
+	"max-duration", "git-access", "credentials", "no-credentials", "template", "no-template", "env",
 }
 
 type createOptions struct {
@@ -141,10 +149,14 @@ type createOptions struct {
 	// Env are --env KEY=VALUE.
 	//
 	// @decision(DL-096)
-	Env   []string
-	Goal  string
-	Kind  string
-	Model string
+	Env  []string
+	Goal string
+	// GoalFile is --goal-file, read into Goal before a create.
+	//
+	// @decision(DL-196)
+	GoalFile string
+	Kind     string
+	Model    string
 	// Reasoning is --reasoning. @decision(DL-190)
 	Reasoning string
 	Repos     []string
@@ -211,27 +223,80 @@ func readGoal(args []string, file string) (string, error) {
 //
 // @decision(DL-045)
 func createJob(ctx context.Context, env *Env, opts createOptions) error {
-	if opts.Goal == "" {
-		return errors.New("a job needs a goal")
-	}
-	// @decision(DL-190)
-	if err := checkReasoning(opts.Model, opts.Reasoning); err != nil {
+	req, c, err := jobRequest(ctx, env, opts)
+	if err != nil {
 		return err
 	}
-	// Checked before the server is asked, as the server checks again.
+	job, err := c.CreateJob(ctx, req)
+	if err != nil {
+		return jobError(err)
+	}
+	// With --wait and --json the output is one document per line, this
+	// view first so the IDs are known before the job runs.
 	//
-	// @decision(DL-137)
-	switch store.PRPolicy(opts.PRPolicy) {
+	// @decision(DL-023) @decision(DL-103)
+	if opts.JSON && opts.Wait {
+		err = writeJSONLine(env.Out, job)
+	} else if opts.JSON {
+		err = writeJSON(env.Out, job)
+	} else {
+		_, err = fmt.Fprintf(env.Out, "job %s queued\n", job.ID)
+	}
+	if err != nil {
+		return err
+	}
+	printJobHints(env, job)
+	if opts.Wait {
+		return waitAndReport(ctx, env, c, job.ID, opts.Timeout, opts.JSON, true)
+	}
+	return nil
+}
+
+// printJobHints names on stderr how to follow a job that was just
+// started, by `spov jobs create` or a schedule's run.
+//
+// @decision(DL-025) @decision(DL-196)
+func printJobHints(env *Env, job server.JobView) {
+	_, _ = fmt.Fprintf(env.Err, "\n  spov jobs               # where it has got to\n"+
+		"  spov attach %s   # joins it once it has started\n"+
+		"  spov jobs cancel %s\n\n", job.SessionID, job.ID)
+}
+
+// checkPRPolicy refuses a --pr-policy the server would refuse, before
+// it is asked, as the server checks again.
+//
+// @decision(DL-137)
+func checkPRPolicy(policy string, kind store.JobKind) error {
+	switch store.PRPolicy(policy) {
 	case "", store.PRPolicySpov, store.PRPolicyGoal:
-		if opts.PRPolicy != "" && store.JobKind(opts.Kind) != store.JobKindPR {
+		if policy != "" && kind != store.JobKindPR {
 			return errors.New("--pr-policy is for --kind pr")
 		}
 	default:
-		return fmt.Errorf("--pr-policy takes goal or spov, not %q", opts.PRPolicy)
+		return fmt.Errorf("--pr-policy takes goal or spov, not %q", policy)
+	}
+	return nil
+}
+
+// jobRequest builds the job request opts describe, from the flags and
+// the configuration, as `spov jobs create` sends it and a schedule
+// stores it, with the client it asked along the way.
+//
+// @decision(DL-045) @decision(DL-196)
+func jobRequest(ctx context.Context, env *Env, opts createOptions) (server.JobRequest, *client.Client, error) {
+	if opts.Goal == "" {
+		return server.JobRequest{}, nil, errors.New("a job needs a goal")
+	}
+	// @decision(DL-190)
+	if err := checkReasoning(opts.Model, opts.Reasoning); err != nil {
+		return server.JobRequest{}, nil, err
+	}
+	if err := checkPRPolicy(opts.PRPolicy, store.JobKind(opts.Kind)); err != nil {
+		return server.JobRequest{}, nil, err
 	}
 	res, err := env.config()
 	if err != nil {
-		return err
+		return server.JobRequest{}, nil, err
 	}
 	cfg := res.Config
 	// A job never takes sandbox.template.
@@ -244,15 +309,15 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 	// @decision(DL-096)
 	vars, err := launchEnv(cfg.Sandbox.Env, opts.Env, cfg.Sandbox.Addons)
 	if err != nil {
-		return err
+		return server.JobRequest{}, nil, err
 	}
 	c, err := env.client(ctx)
 	if err != nil {
-		return err
+		return server.JobRequest{}, nil, err
 	}
 	if templateConfigured {
 		if err := checkConfiguredTemplate(ctx, c, template, templateKey); err != nil {
-			return err
+			return server.JobRequest{}, nil, err
 		}
 	}
 	// A sync job is seeded from the checkout it is created in, as a
@@ -263,16 +328,16 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 	var seed *server.SessionSyncRequest
 	if store.JobKind(opts.Kind) == store.JobKindSync {
 		if len(opts.Repos) > 1 {
-			return errors.New("a sync job works in one repository, the checkout's; drop the extra --repo flags")
+			return server.JobRequest{}, nil, errors.New("a sync job works in one repository, the checkout's; drop the extra --repo flags")
 		}
 		ref, req, checkout, err := env.resolveSyncLaunch(ctx, c, cfg, opts.Repos)
 		var mismatch repoMismatchError
 		if errors.As(err, &mismatch) {
-			return fmt.Errorf("a sync job starts from the checkout it is created in (%s), which does not match --repo %s; drop --repo",
+			return server.JobRequest{}, nil, fmt.Errorf("a sync job starts from the checkout it is created in (%s), which does not match --repo %s; drop --repo",
 				mismatch.checkout, mismatch.flag)
 		}
 		if err != nil {
-			return fmt.Errorf("a sync job starts from the checkout it is created in: %w", err)
+			return server.JobRequest{}, nil, fmt.Errorf("a sync job starts from the checkout it is created in: %w", err)
 		}
 		if ref.Platform == "" {
 			env.deferWarning(bundleOnlyNote(checkout))
@@ -280,10 +345,10 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		refs, seed = []server.RepoRef{ref}, req
 	} else {
 		if opts.Hold != "" {
-			return errors.New("--hold is for --kind sync")
+			return server.JobRequest{}, nil, errors.New("--hold is for --kind sync")
 		}
 		if refs, err = env.resolveRepoRefs(ctx, c, cfg, opts.Repos); err != nil {
-			return err
+			return server.JobRequest{}, nil, err
 		}
 	}
 	// The same sandbox shape, image, egress and git identity a `spov fly`
@@ -295,7 +360,7 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		env.deferWarning(warning)
 	}
 	sb := cfg.Sandbox
-	job, err := c.CreateJob(ctx, server.JobRequest{
+	return server.JobRequest{
 		Goal:    opts.Goal,
 		Kind:    store.JobKind(opts.Kind),
 		Repos:   refs,
@@ -345,32 +410,7 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		PRPolicy: store.PRPolicy(opts.PRPolicy),
 		// @decision(DL-138)
 		SkipPrep: opts.NoPrep,
-	})
-	if err != nil {
-		return jobError(err)
-	}
-	// With --wait and --json the output is one document per line, this
-	// view first so the IDs are known before the job runs.
-	//
-	// @decision(DL-023) @decision(DL-103)
-	if opts.JSON && opts.Wait {
-		err = writeJSONLine(env.Out, job)
-	} else if opts.JSON {
-		err = writeJSON(env.Out, job)
-	} else {
-		_, err = fmt.Fprintf(env.Out, "job %s queued\n", job.ID)
-	}
-	if err != nil {
-		return err
-	}
-	// @decision(DL-025)
-	_, _ = fmt.Fprintf(env.Err, "\n  spov jobs               # where it has got to\n"+
-		"  spov attach %s   # joins it once it has started\n"+
-		"  spov jobs cancel %s\n\n", job.SessionID, job.ID)
-	if opts.Wait {
-		return waitAndReport(ctx, env, c, job.ID, opts.Timeout, opts.JSON, true)
-	}
-	return nil
+	}, c, nil
 }
 
 // syncHold is the hold a sync job asks for: --hold, else the config's.
@@ -419,7 +459,9 @@ func newJobsCmd(env *Env) *cobra.Command {
 	cmd.AddCommand(newJobsCreateCmd(env), list, newJobsShowCmd(env), newJobsReportCmd(env),
 		newJobsCancelCmd(env), newJobsResumeCmd(env), newJobsInterruptCmd(env), newJobsWaitCmd(env),
 		// @decision(DL-102)
-		newJobsApplyCmd(env), newJobsReleaseCmd(env))
+		newJobsApplyCmd(env), newJobsReleaseCmd(env),
+		// @decision(DL-196)
+		newJobsScheduleCmd(env))
 	return cmd
 }
 
