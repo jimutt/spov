@@ -9,6 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alexedwards/scs/v2"
+	"github.com/alexedwards/scs/v2/memstore"
+
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/store"
 )
@@ -94,7 +97,9 @@ func newScheduleWorld(t *testing.T, adjust func(*Deps)) *scheduleWorld {
 	w.apiFixture, w.q = jobFixtureWith(t, func(d *Deps) {
 		testModelKeys(d)
 		d.Now = w.now
-		d.Login = &Login{Allowlist: list, OrgID: auth.LocalID}
+		sessions := scs.New()
+		sessions.Store = memstore.New()
+		d.Login = &Login{Allowlist: list, OrgID: auth.LocalID, Sessions: sessions, Users: d.Store.Users()}
 		if adjust != nil {
 			adjust(d)
 		}

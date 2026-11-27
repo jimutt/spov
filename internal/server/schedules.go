@@ -209,6 +209,9 @@ type scheduleFire struct {
 	Outcome store.FireOutcome
 	Reason  string
 	JobID   string
+	// err is the error a failure or a skip at the limit came from, for
+	// a run now's answer.
+	err error
 }
 
 // fireSchedule fires a schedule for its slot, or for now when manual,
@@ -250,12 +253,22 @@ func (s *Service) fireSchedule(ctx context.Context, sc store.Schedule, now time.
 	}
 	var fired scheduleFire
 	if cerr != nil {
-		fired = scheduleFire{Outcome: store.FireFailed, Reason: clientText(cerr)}
+		fired = scheduleFire{Outcome: store.FireFailed, Reason: clientText(cerr), err: cerr}
 	} else {
 		fired = s.createScheduledJob(ctx, sc, slot, manual)
 	}
+	// A run now that was skipped leaves no history, so repeated presses
+	// never push the slots' runs out of it.
+	if manual && fired.Outcome == store.FireSkipped {
+		return fired
+	}
 	rec := store.FireRecord{From: sc.NextRunAt, Outcome: fired.Outcome, PauseAfter: MaxFailedFires,
 		PauseReason: fmt.Sprintf("paused after %d failed runs in a row: %s", MaxFailedFires, fired.Reason)}
+	// A run now's failure is answered to the person who pressed it and
+	// counts toward no pause.
+	if manual && rec.Outcome == store.FireFailed {
+		rec.Outcome = ""
+	}
 	switch {
 	case cerr != nil:
 		rec.Pause, rec.PauseReason = true, "its cadence cannot be read: "+clientText(cerr)
@@ -300,18 +313,19 @@ func (s *Service) createScheduledJob(ctx context.Context, sc store.Schedule, slo
 	}
 	running, err := s.deps.Store.Jobs().List(ctx, sc.OrgID, store.JobFilter{ScheduleID: sc.ID, States: store.JobCounts, Limit: 1})
 	if err != nil {
-		return scheduleFire{Outcome: store.FireFailed, Reason: clientText(err)}
+		return scheduleFire{Outcome: store.FireFailed, Reason: clientText(err), err: err}
 	}
 	if len(running) > 0 {
 		return scheduleFire{Outcome: store.FireSkipped, Reason: "the previous run is still running", JobID: running[0].ID}
 	}
 	p, err := s.scheduleOwner(ctx, sc)
 	if err != nil {
-		return scheduleFire{Outcome: store.FireFailed, Reason: clientText(err)}
+		return scheduleFire{Outcome: store.FireFailed, Reason: clientText(err), err: err}
 	}
 	var req JobRequest
 	if err := json.Unmarshal(sc.Request, &req); err != nil {
-		return scheduleFire{Outcome: store.FireFailed, Reason: "the stored job request cannot be read"}
+		const why = "the stored job request cannot be read"
+		return scheduleFire{Outcome: store.FireFailed, Reason: why, err: fmt.Errorf("%w: %s", ErrInvalidRequest, why)}
 	}
 	// Read again, and held, inside the create's transaction: a schedule
 	// paused, deleted or edited since the tick read it creates nothing,
@@ -336,12 +350,12 @@ func (s *Service) createScheduledJob(ctx context.Context, sc store.Schedule, slo
 	case errors.Is(err, errScheduleChanged):
 		return scheduleFire{Outcome: store.FireSkipped, Reason: errScheduleChanged.Error()}
 	case errors.Is(err, ErrQuotaExceeded):
-		return scheduleFire{Outcome: store.FireSkipped, Reason: "at the job limit: " + clientText(err)}
+		return scheduleFire{Outcome: store.FireSkipped, Reason: "at the job limit: " + clientText(err), err: err}
 	}
 	if j, ok := s.slotJob(ctx, sc, slot); ok {
 		return scheduleFire{Outcome: store.FireStarted, JobID: j.ID, Reason: "already run"}
 	}
-	return scheduleFire{Outcome: store.FireFailed, Reason: clientText(err)}
+	return scheduleFire{Outcome: store.FireFailed, Reason: clientText(err), err: err}
 }
 
 // slotJob is the job a schedule created for a slot, if it has one among
@@ -375,7 +389,7 @@ func (s *Service) scheduleOwner(ctx context.Context, sc store.Schedule) (auth.Pr
 	}
 	p, err := auth.PrincipalOf(s.deps.Login.Allowlist, user)
 	if err != nil {
-		return auth.Principal{}, fmt.Errorf("the schedule's owner may no longer sign in: %w", err)
+		return auth.Principal{}, fmt.Errorf("%w: the schedule's owner may no longer sign in", ErrInvalidRequest)
 	}
 	p.Admin = false
 	return p, nil

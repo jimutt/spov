@@ -4,7 +4,7 @@
 |----|-------|--------|-----------|------|
 | DL-196 | spov jobs schedule manages schedules from the CLI | proposed | cli | scheduled-jobs |
 | DL-195 | The browser manages schedules on a /schedules page with the job form and a cadence picker | proposed | web | scheduled-jobs |
-| DL-194 | Schedules are served under /api/v1/schedules, walled per owner like jobs | proposed | server | scheduled-jobs |
+| DL-194 | Schedules are served under /api/v1/schedules, walled per owner like jobs | accepted | server | scheduled-jobs |
 | DL-193 | A due slot is skipped while its schedule is busy or at the job limit, and three failed fires in a row pause the schedule | accepted | jobs | scheduled-jobs |
 | DL-192 | Schedules fire from the reconciler replica, each slot once, through the job create path | accepted | jobs | scheduled-jobs |
 | DL-191 | A schedule is a stored job request with a cron cadence, at most hourly | accepted | jobs | scheduled-jobs |

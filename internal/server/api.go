@@ -204,6 +204,8 @@ func New(deps Deps, addr string) (*Server, error) {
 	//
 	// @decision(DL-045)
 	s.registerJobs()
+	// @decision(DL-194)
+	s.registerSchedules()
 	s.registerRepos()
 	s.registerMe()
 	// Per-user credentials, in any mode: local mode has one user, whose
