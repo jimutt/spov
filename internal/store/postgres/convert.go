@@ -411,6 +411,11 @@ func jobFromRow(r sqlcgen.Job) store.Job {
 	if r.Title != nil {
 		j.Title = *r.Title
 	}
+	// @decision(DL-192)
+	if r.ScheduleID != nil {
+		j.ScheduleID = *r.ScheduleID
+	}
+	j.ScheduledFor = goTimePtr(r.ScheduledFor)
 	return j
 }
 

@@ -458,3 +458,30 @@ func TestOffboardingDeletesBrowserStoredCredentialsAndKeepsTemplates(t *testing.
 		t.Errorf("the kept template's missing credentials = %v, want the deleted one", missing)
 	}
 }
+
+// Removing a person pauses their schedules first, says so in the audit
+// row, and leaves another person's alone.
+//
+// @decision(DL-193)
+func TestRemovingAPersonPausesTheirSchedules(t *testing.T) {
+	o := newOffboarded(t, nil)
+	ctx := context.Background()
+	for id, owner := range map[string]string{"01SCHEDTHEIRS": theirID, "01SCHEDOTHERS": "someone-else"} {
+		if err := o.f.store.Schedules().Create(ctx, store.Schedule{ID: id, OrgID: auth.LocalID, OwnerID: owner, Name: "weekly",
+			Request: []byte(`{}`), Cron: "@weekly", Zone: "UTC", State: store.ScheduleActive, NextRunAt: time.Now().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if resp, out := o.f.do(http.MethodDelete, "/api/v1/allowlist/"+theirEmail, nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("DELETE = %d: %s", resp.StatusCode, out)
+	}
+	if got, _ := o.f.store.Schedules().Get(ctx, auth.LocalID, "01SCHEDTHEIRS"); got.State != store.SchedulePaused || got.PausedReason != ScheduleOwnerRemoved {
+		t.Errorf("their schedule after removal: %+v", got)
+	}
+	if got, _ := o.f.store.Schedules().Get(ctx, auth.LocalID, "01SCHEDOTHERS"); got.State != store.ScheduleActive {
+		t.Error("another person's schedule was paused")
+	}
+	if evs := o.offboardEvents(t); len(evs) != 1 || !strings.Contains(evs[0].Detail, "1 schedule paused") {
+		t.Errorf("audit rows %+v", evs)
+	}
+}

@@ -490,6 +490,230 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		kept("")
 	},
+	// @decision(DL-191) @decision(DL-193)
+	"a schedule is kept per owner by name, with a bounded history": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sch := s.Schedules()
+		at := t0.Add(time.Hour)
+		a := store.Schedule{ID: store.NewID(t0), OrgID: "org", OwnerID: "u1", Name: "weekly", Request: []byte(`{"goal":"g"}`),
+			Cron: "@weekly", Zone: "UTC", State: store.ScheduleActive, NextRunAt: at}
+		if err := sch.Create(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		dup := a
+		dup.ID = store.NewID(t0.Add(time.Second))
+		if err := sch.Create(ctx, dup); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a second schedule of one name for one owner: %v", err)
+		}
+		other := dup
+		other.OwnerID = "u2"
+		if err := sch.Create(ctx, other); err != nil {
+			t.Errorf("another owner's schedule of the same name: %v", err)
+		}
+		got, err := sch.Get(ctx, "org", a.ID)
+		var req map[string]string
+		_ = json.Unmarshal(got.Request, &req)
+		if err != nil || got.Name != "weekly" || req["goal"] != "g" || !got.NextRunAt.Equal(at) || got.CreatedAt.IsZero() {
+			t.Errorf("get = %+v, %v", got, err)
+		}
+		if _, err := sch.Get(ctx, "elsewhere", a.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("another org read a schedule: %v", err)
+		}
+		if got, err := sch.GetByName(ctx, "org", "u2", "weekly"); err != nil || got.ID != other.ID {
+			t.Errorf("by name = %+v, %v", got, err)
+		}
+		if n, _ := sch.Count(ctx, "org", store.ScheduleFilter{OwnerID: "u1"}); n != 1 {
+			t.Errorf("u1 owns %d", n)
+		}
+		if l, _ := sch.List(ctx, "org", store.ScheduleFilter{}); len(l) != 2 || l[0].ID != other.ID {
+			t.Errorf("the org's listing, newest first: %+v", l)
+		}
+		a.Cron, a.State, a.PausedReason, a.Failures = "@daily", store.SchedulePaused, "by hand", 2
+		if err := sch.Update(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := sch.Get(ctx, "org", a.ID); got.Cron != "@daily" || got.State != store.SchedulePaused || got.PausedReason != "by hand" || got.Failures != 2 {
+			t.Errorf("after update %+v", got)
+		}
+		renamed := a
+		renamed.Name = "taken"
+		taken := renamed
+		taken.ID, taken.Name = store.NewID(t0.Add(2*time.Second)), "taken"
+		if err := sch.Create(ctx, taken); err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Update(ctx, renamed); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a rename into a name the owner uses: %v", err)
+		}
+		if err := sch.AddFire(ctx, store.ScheduleFire{ID: store.NewID(t0), OrgID: "org", ScheduleID: "01NOSUCH", Outcome: store.FireStarted}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a fire for a missing schedule: %v", err)
+		}
+		// Two entries of one fire a millisecond apart read newest first.
+		pair := store.NewID(t0.Add(time.Hour))
+		if err := sch.AddFire(ctx, store.ScheduleFire{ID: pair, OrgID: "org", ScheduleID: taken.ID, Outcome: store.FireMissed, Slot: t0, FiredAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.AddFire(ctx, store.ScheduleFire{ID: store.NewID(t0.Add(time.Hour + time.Millisecond)), OrgID: "org", ScheduleID: taken.ID,
+			Outcome: store.FireStarted, Slot: t0, FiredAt: t0}); err != nil {
+			t.Fatal(err)
+		}
+		if f, _ := sch.Fires(ctx, "org", taken.ID, 0); len(f) != 2 || f[0].Outcome != store.FireStarted || f[1].ID != pair {
+			t.Errorf("one fire's two entries: %+v", f)
+		}
+		for i := range store.MaxScheduleHistory + 3 {
+			f := store.ScheduleFire{ID: store.NewID(t0.Add(time.Duration(i) * time.Minute)), OrgID: "org", ScheduleID: a.ID,
+				Slot: t0.Add(time.Duration(i) * time.Hour), FiredAt: t0.Add(time.Duration(i) * time.Hour), Outcome: store.FireStarted, JobID: fmt.Sprint(i)}
+			if err := sch.AddFire(ctx, f); err != nil {
+				t.Fatal(err)
+			}
+		}
+		fires, err := sch.Fires(ctx, "org", a.ID, 0)
+		if err != nil || len(fires) != store.MaxScheduleHistory || fires[0].JobID != fmt.Sprint(store.MaxScheduleHistory+2) {
+			t.Errorf("history: %d fires, newest %+v, %v", len(fires), fires[:min(1, len(fires))], err)
+		}
+		if err := sch.AddFire(ctx, store.ScheduleFire{ID: store.NewID(t0), OrgID: "elsewhere", ScheduleID: a.ID, Outcome: store.FireStarted}); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a fire for another org's schedule: %v", err)
+		}
+		if err := sch.Delete(ctx, "org", a.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := sch.Fires(ctx, "org", a.ID, 0); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a deleted schedule's history: %v", err)
+		}
+		if err := sch.Delete(ctx, "org", a.ID); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("a second delete: %v", err)
+		}
+	},
+	// @decision(DL-192) @decision(DL-193)
+	"due schedules come oldest first across orgs, and an owner's are paused together": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sch := s.Schedules()
+		mk := func(id, org, owner, name string, next time.Time, state store.ScheduleState) {
+			t.Helper()
+			if err := sch.Create(ctx, store.Schedule{ID: id, OrgID: org, OwnerID: owner, Name: name, Request: []byte(`{}`),
+				Cron: "@hourly", Zone: "UTC", State: state, NextRunAt: next}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		mk("01S1", "org", "u1", "late", t0.Add(-2*time.Hour), store.ScheduleActive)
+		mk("01S2", "other", "u9", "now", t0, store.ScheduleActive)
+		mk("01S3", "org", "u1", "later", t0.Add(time.Hour), store.ScheduleActive)
+		mk("01S4", "org", "u1", "paused", t0.Add(-3*time.Hour), store.SchedulePaused)
+		due, err := sch.Due(ctx, t0, 10)
+		if err != nil || len(due) != 2 || due[0].ID != "01S1" || due[1].ID != "01S2" {
+			t.Errorf("due = %+v, %v", due, err)
+		}
+		if due, _ := sch.Due(ctx, t0, 1); len(due) != 1 {
+			t.Errorf("the limit gave %d", len(due))
+		}
+		n, err := sch.PauseOwned(ctx, "org", "u1", "owner removed")
+		if err != nil || n != 2 {
+			t.Errorf("paused %d, %v; want the two active ones", n, err)
+		}
+		if got, _ := sch.Get(ctx, "org", "01S3"); got.State != store.SchedulePaused || got.PausedReason != "owner removed" {
+			t.Errorf("after pausing %+v", got)
+		}
+		if got, _ := sch.Get(ctx, "other", "01S2"); got.State != store.ScheduleActive {
+			t.Error("another org's schedule was paused")
+		}
+		boom := errors.New("boom")
+		_ = s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.Schedules().Delete(ctx, "other", "01S2"); err != nil {
+				return err
+			}
+			return boom
+		})
+		if _, err := sch.Get(ctx, "other", "01S2"); err != nil {
+			t.Errorf("a rolled-back delete removed the schedule: %v", err)
+		}
+	},
+	// @decision(DL-192) @decision(DL-193)
+	"a fire changes only what it owns, and only while the slot is the one it read": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		sch := s.Schedules()
+		slot, next := t0.Add(time.Hour), t0.Add(2*time.Hour)
+		sc := store.Schedule{ID: "01FIRE", OrgID: "org", OwnerID: "u1", Name: "f", Request: []byte(`{"goal":"g"}`),
+			Cron: "@hourly", Zone: "UTC", State: store.ScheduleActive, NextRunAt: slot}
+		if err := sch.Create(ctx, sc); err != nil {
+			t.Fatal(err)
+		}
+		read := func() store.Schedule {
+			t.Helper()
+			got, err := sch.Get(ctx, "org", sc.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return got
+		}
+		// A fire for a slot the row no longer holds changes nothing.
+		if err := sch.RecordFire(ctx, "org", sc.ID, store.FireRecord{From: t0, Next: next, Outcome: store.FireFailed, PauseAfter: 1, PauseReason: "x"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(); got.Failures != 0 || got.State != store.ScheduleActive || !got.NextRunAt.Equal(slot) {
+			t.Errorf("a stale fire changed the row: %+v", got)
+		}
+		for i := 1; i <= 2; i++ {
+			from := read().NextRunAt
+			if err := sch.RecordFire(ctx, "org", sc.ID, store.FireRecord{From: from, Next: from.Add(time.Hour), Outcome: store.FireFailed,
+				PauseAfter: 3, PauseReason: "three"}); err != nil {
+				t.Fatal(err)
+			}
+			if got := read(); got.Failures != i || got.State != store.ScheduleActive || !got.NextRunAt.Equal(from.Add(time.Hour)) {
+				t.Errorf("after failure %d: %+v", i, got)
+			}
+		}
+		if err := sch.RecordFire(ctx, "org", sc.ID, store.FireRecord{From: read().NextRunAt, Outcome: store.FireSkipped, PauseAfter: 3}); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(); got.Failures != 2 {
+			t.Errorf("a skip changed the count to %d", got.Failures)
+		}
+		if err := sch.RecordFire(ctx, "org", sc.ID, store.FireRecord{From: read().NextRunAt, Outcome: store.FireFailed, PauseAfter: 3, PauseReason: "three"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(); got.Failures != 3 || got.State != store.SchedulePaused || got.PausedReason != "three" {
+			t.Errorf("the third failure: %+v", got)
+		}
+		resumed := read()
+		resumed.State, resumed.PausedReason, resumed.Failures = store.ScheduleActive, "", 0
+		if err := sch.Update(ctx, resumed); err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.RecordFire(ctx, "org", sc.ID, store.FireRecord{From: read().NextRunAt, Outcome: store.FireStarted, Pause: true, PauseReason: "done"}); err != nil {
+			t.Fatal(err)
+		}
+		if got := read(); got.Failures != 0 || got.State != store.SchedulePaused || got.PausedReason != "done" || got.Name != "f" || got.Cron != "@hourly" {
+			t.Errorf("a pause now: %+v", got)
+		}
+	},
+	// @decision(DL-192) @decision(DL-193)
+	"a job records its schedule and slot, each pair once": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		slot := t0.Add(time.Hour)
+		mk := func(id string) error {
+			t.Helper()
+			sess := runningSession(t, s, "org", "u1", "job-"+id)
+			j := job(id, "org", "u1", sess.ID, store.JobQueued)
+			j.ScheduleID, j.ScheduledFor = "01SCHED", &slot
+			return s.Jobs().Create(ctx, j)
+		}
+		if err := mk("01J1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := mk("01J2"); !errors.Is(err, store.ErrConflict) {
+			t.Errorf("a second job for one schedule and slot: %v", err)
+		}
+		got, err := s.Jobs().Get(ctx, "org", "01J1")
+		if err != nil || got.ScheduleID != "01SCHED" || got.ScheduledFor == nil || !got.ScheduledFor.Equal(slot) {
+			t.Errorf("get = %+v, %v", got, err)
+		}
+		if l, _ := s.Jobs().List(ctx, "org", store.JobFilter{ScheduleID: "01SCHED"}); len(l) != 1 {
+			t.Errorf("by schedule: %d", len(l))
+		}
+		if n, _ := s.Jobs().Count(ctx, "org", store.JobFilter{ScheduleID: "01OTHER"}); n != 0 {
+			t.Errorf("another schedule counts %d", n)
+		}
+	},
 	// @decision(DL-186)
 	"an org's seen reasoning modes are laid over, bounded and kept for one version": func(t *testing.T, s store.Store) {
 		ctx := context.Background()

@@ -481,6 +481,14 @@ A `sync` job (DL-100 to DL-102) is seeded from the checkout `spov jobs create --
 - The hook is a guardrail, not a boundary: `/shell` and the proxied API bypass it, and job egress defaults to `open` (DL-040, DL-031).
 - The goal passes through a quoted heredoc and a `json.Marshal` literal. Any replacement encoder must escape U+2028, U+2029, `<`, `>` and `&` (DL-039; `TestPluginSourceEscapesTheGoal`, `TestEntrypointRefusesAPluginContainingTheHeredocTerminator`).
 
+## Scheduled jobs
+
+A schedule (DL-191 to DL-196) is a stored job request (`store.Schedule.Request`, `server.JobRequest` as JSON, report or pr only) with a cadence, on a hosted server only.
+
+- The cadence is five cron fields or `@hourly`/`@daily`/`@weekly`/`@monthly` in an IANA zone, at most hourly over its next 400 slots (`checkCadence`, `MinScheduleInterval`); a save checks the request with `CheckScheduledJob`, which runs `prepareJob`, the checking half of `CreateJob` (DL-191; `TestACadenceIsFiveFieldsOrADescriptorAtMostHourly`, `TestAScheduledJobIsCheckedAsACreateWithoutCreating`).
+- `RunSchedules` runs on the reconciler's replica (`serve.go`), reads `ScheduleStore.Due` (unscoped, in `unscopedQueries`) every minute and fires each through `createJob` as the owner (`scheduleOwner`, `auth.PrincipalOf`, never admin); the job records `ScheduleID` and `ScheduledFor`, unique together in both stores, so a slot fires once; the create's transaction re-reads and locks the schedule (`jobOrigin.check`, `ScheduleStore.Lock`) and a fire's bookkeeping is `ScheduleStore.RecordFire`, which writes only what a fire owns while the row still holds its slot, so an edit, pause or off-boarding during a fire is never undone; a slot is a wall-clock time, once across a daylight-saving change (`cadence.next`); slots more than an hour late are one `missed` entry and only the newest fires (DL-192; `TestADueScheduleCreatesItsJobAsItsOwnerForItsSlot`, `TestMissedSlotsFireOnceForTheNewest`, `TestAFireNeedsAnOwnerWhoMayStillSignIn`, the store contract's "a job records its schedule and slot, each pair once").
+- A slot is skipped while the schedule's previous job is unfinished or at the job limit; three failed fires in a row pause it; each keeps its newest 50 fires; off-boarding pauses the owner's schedules before anything else (DL-193; `TestASlotIsSkippedWhileBusyOrAtTheJobLimit`, `TestThreeFailedFiresInARowPauseTheSchedule`, `TestRemovingAPersonPausesTheirSchedules`).
+
 ## Jobs and the two quotas
 
 <!-- @decision(DL-045) @decision(DL-009) -->

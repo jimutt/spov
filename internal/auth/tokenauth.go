@@ -87,13 +87,23 @@ func (a *TokenAuthenticator) Authenticate(r *http.Request) (Principal, error) {
 //
 // @decision(DL-006) @decision(DL-128) @decision(DL-140)
 func (a *TokenAuthenticator) principalOf(user store.User) (Principal, error) {
+	return PrincipalOf(a.Allowlist, user)
+}
+
+// PrincipalOf is the principal a user row stands for now, by the same
+// rules a token's: a person while the allowlist covers them, a service
+// account while it is not deleted. A schedule's fire acts as its owner
+// through it (DL-192).
+//
+// @decision(DL-140) @decision(DL-192)
+func PrincipalOf(list *Allowlist, user store.User) (Principal, error) {
 	switch {
 	case personRow(user):
 		// A row not yet bound to an account (zero) is covered only by
 		// an address entry until its next sign-in binds it.
 		//
 		// @decision(DL-128)
-		admin, allowed := a.Allowlist.Lookup(user.GithubID, user.Email)
+		admin, allowed := list.Lookup(user.GithubID, user.Email)
 		if !allowed {
 			return Principal{}, fmt.Errorf("%w: %s is no longer on the allowlist", ErrBadCredential, user.Email)
 		}

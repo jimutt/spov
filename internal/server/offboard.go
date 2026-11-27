@@ -43,6 +43,8 @@ var (
 //
 // @decision(DL-132)
 type offboardResult struct {
+	// @decision(DL-193)
+	SchedulesPaused    int
 	JobsCancelled      int
 	SessionsStopped    int
 	TokensRevoked      int
@@ -110,7 +112,16 @@ func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, us
 		s.deps.Warn("off-boarding " + who + ": " + what + ": " + redact.Error(err))
 	}
 
-	// Jobs first: a cancel stops the job's session by the path its
+	// Schedules first, so no run starts while the rest is ended.
+	//
+	// @decision(DL-193)
+	if n, err := s.deps.Store.Schedules().PauseOwned(ctx, user.OrgID, user.ID, ScheduleOwnerRemoved); err != nil {
+		left("their schedules were not paused", err)
+	} else {
+		r.SchedulesPaused = n
+	}
+
+	// Jobs next: a cancel stops the job's session by the path its
 	// state calls for, which a plain stop of that session would not.
 	unfinished, err := s.deps.Store.Jobs().List(ctx, user.OrgID, store.JobFilter{OwnerID: user.ID, States: store.JobCounts})
 	if err != nil {
@@ -235,6 +246,10 @@ func (s *Service) Offboard(ctx context.Context, p auth.Principal, who string, us
 	s.ForgetRepoListings(user.OrgID, user.ID)
 
 	detail := who + ": " + r.summary()
+	// @decision(DL-193)
+	if r.SchedulesPaused > 0 {
+		detail += "; " + plural(r.SchedulesPaused, "schedule", "paused")
+	}
 	if len(r.Left) > 0 {
 		detail += "; left: " + strings.Join(r.Left, ", ")
 	}
