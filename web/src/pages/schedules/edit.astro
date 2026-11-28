@@ -1,0 +1,9 @@
+---
+// A schedule's form, filled from the one named by ?ref=. @decision(DL-195)
+import Base from '../../layouts/Base.astro';
+import ScheduleForm from '../../components/ScheduleForm.svelte';
+---
+
+<Base title="Edit schedule — spov">
+  <ScheduleForm client:load edit={true} />
+</Base>

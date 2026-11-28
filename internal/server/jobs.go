@@ -53,25 +53,24 @@ var ErrJobNotCancellable = errors.New("server: the job has already finished")
 // @decision(DL-054)
 var ErrJobNotResumable = errors.New("server: the job is not suspended")
 
-// CreateJob records a job and the fresh session it runs in, in one
-// transaction, then enqueues the job. The session is recorded starting
-// with no sandbox; the supervisor launches it.
+// prepareJob checks a job create as CreateJob makes it and builds its
+// rows, writing nothing: a schedule's save runs it alone.
 //
-// @decision(DL-045)
-func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobRequest) (store.Job, error) {
+// @decision(DL-045) @decision(DL-191)
+func (s *Service) prepareJob(ctx context.Context, p auth.Principal, req JobRequest) (preparedJob, error) {
 	if s.deps.Jobs == nil {
-		return store.Job{}, jobs.ErrJobsNeedAServer
+		return preparedJob{}, jobs.ErrJobsNeedAServer
 	}
 	now := s.deps.Now()
 	jobID := store.NewID(now)
 	// @decision(DL-120)
 	tmpl, err := s.templateFor(ctx, p, req.Template)
 	if err != nil {
-		return store.Job{}, err
+		return preparedJob{}, err
 	}
 	sreq, err := s.jobSessionRequest(req, jobID, tmpl)
 	if err != nil {
-		return store.Job{}, inTemplate(tmpl, err)
+		return preparedJob{}, inTemplate(tmpl, err)
 	}
 	sreq = withAccountAuthor(p, sreq)
 	// One read of the profile answers both of the next two questions.
@@ -87,7 +86,7 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	// @decision(DL-187)
 	model, namedMode, err := resolveMode(model, sreq.Reasoning, src)
 	if err != nil {
-		return store.Job{}, err
+		return preparedJob{}, err
 	}
 	sreq.Model, sreq.Reasoning = model, ""
 	// Before the quota and before any row exists, so a bad model is a
@@ -96,11 +95,11 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	// @decision(DL-013)
 	modelNote, err := s.checkModel(ctx, p, sreq.Model, src)
 	if err != nil {
-		return store.Job{}, err
+		return preparedJob{}, err
 	}
 	if namedMode {
 		if err := s.checkMode(ctx, p.OrgID, sreq.Model); err != nil {
-			return store.Job{}, err
+			return preparedJob{}, err
 		}
 	}
 	// A job never takes the interactive default.
@@ -108,15 +107,15 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	// @decision(DL-043)
 	sreq.GitAccess, sreq.GitAccessPreferred = resolveGitAccess(sreq.GitAccess, sreq.GitAccessPreferred, profile.DefaultJobGitAccess)
 	if err := s.refuseGitAccess(ctx, p.OrgID, p.UserID, sreq); err != nil {
-		return store.Job{}, err
+		return preparedJob{}, err
 	}
 	// @decision(DL-075)
 	if err := s.refuseRoutedNames(ctx, p.OrgID, p.UserID, sreq.Routed); err != nil {
-		return store.Job{}, inTemplate(tmpl, err)
+		return preparedJob{}, inTemplate(tmpl, err)
 	}
 	// @decision(DL-077)
 	if err := s.refuseRoutesWithoutProxy(ctx, p.OrgID, p.UserID, sreq.Routed); err != nil {
-		return store.Job{}, inTemplate(tmpl, err)
+		return preparedJob{}, inTemplate(tmpl, err)
 	}
 	// The caller's own limits, checked before anything billable. The
 	// size limits refuse here; the concurrency limit is counted inside
@@ -134,7 +133,7 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 		if errors.As(err, &over) {
 			s.deps.Metrics.QuotaRefused(ctx, telemetry.QuotaDuration)
 		}
-		return store.Job{}, err
+		return preparedJob{}, err
 	}
 	sreq.Sandbox.Timeout = timeout
 	// A job is idle only by its own bounds, never by Modal's clock,
@@ -145,11 +144,11 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	if err := quota.checkRequest(sreq); err != nil {
 		// @decision(DL-011)
 		s.deps.Metrics.QuotaRefused(ctx, telemetry.QuotaSize)
-		return store.Job{}, err
+		return preparedJob{}, err
 	}
 	// @decision(DL-134)
 	if err := s.refuseBuildOverLimit(ctx, p.UserID, sreq); err != nil {
-		return store.Job{}, err
+		return preparedJob{}, err
 	}
 
 	sess := store.Session{
@@ -191,7 +190,7 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 		SkipPrep: req.SkipPrep,
 	}
 	if err := job.Validate(); err != nil {
-		return store.Job{}, errors.Join(ErrInvalidRequest, err)
+		return preparedJob{}, errors.Join(ErrInvalidRequest, err)
 	}
 	// The bundle is not part of the stored request; it waits in its own
 	// row until the launch applies it.
@@ -201,7 +200,59 @@ func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobReques
 	if sreq.Sync != nil {
 		seed = sreq.Sync.Bundle
 	}
-	job, err = s.createJobWithinQuota(ctx, sess, job, seed, quota.MaxConcurrentJobs, p.Service)
+	return preparedJob{sess: sess, job: job, seed: seed, maxJobs: quota.MaxConcurrentJobs, modelNote: modelNote}, nil
+}
+
+// preparedJob is a checked job create, nothing yet written: its rows,
+// its seed, the owner's concurrent job limit and the model's note.
+//
+// @decision(DL-191)
+type preparedJob struct {
+	sess      store.Session
+	job       store.Job
+	seed      []byte
+	maxJobs   int
+	modelNote string
+}
+
+// jobOrigin is the schedule and slot a job is created for.
+//
+// @decision(DL-192)
+type jobOrigin struct {
+	scheduleID string
+	slot       time.Time
+	// check runs first inside the create's transaction; an error stops
+	// the create.
+	check func(tx store.Store) error
+}
+
+// CreateJob records a job and the fresh session it runs in, in one
+// transaction, then enqueues the job. The session is recorded starting
+// with no sandbox; the supervisor launches it.
+//
+// @decision(DL-045)
+func (s *Service) CreateJob(ctx context.Context, p auth.Principal, req JobRequest) (store.Job, error) {
+	return s.createJob(ctx, p, req, nil)
+}
+
+// createJob is CreateJob for a job a schedule may have created.
+//
+// @decision(DL-045) @decision(DL-192)
+func (s *Service) createJob(ctx context.Context, p auth.Principal, req JobRequest, origin *jobOrigin) (store.Job, error) {
+	pj, err := s.prepareJob(ctx, p, req)
+	if err != nil {
+		return store.Job{}, err
+	}
+	sess, job, seed, modelNote := pj.sess, pj.job, pj.seed, pj.modelNote
+	if origin != nil {
+		slot := origin.slot
+		job.ScheduleID, job.ScheduledFor = origin.scheduleID, &slot
+	}
+	var check func(store.Store) error
+	if origin != nil {
+		check = origin.check
+	}
+	job, err = s.createJobWithinQuota(ctx, sess, job, seed, pj.maxJobs, p.Service, check)
 	if err != nil {
 		return store.Job{}, err
 	}
@@ -241,9 +292,16 @@ func storedPRPolicy(p store.PRPolicy) store.PRPolicy {
 // deleted.
 //
 // @decision(DL-045) @decision(DL-009) @decision(DL-140)
-func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, job store.Job, seed []byte, max int, service bool) (store.Job, error) {
+func (s *Service) createJobWithinQuota(ctx context.Context, sess store.Session, job store.Job, seed []byte, max int, service bool,
+	check func(store.Store) error) (store.Job, error) {
 	stored := job
 	err := s.deps.Store.Tx(ctx, func(tx store.Store) error {
+		// @decision(DL-192)
+		if check != nil {
+			if err := check(tx); err != nil {
+				return err
+			}
+		}
 		if service {
 			if err := liveServiceOwner(ctx, tx, job.OrgID, job.OwnerID); err != nil {
 				return err

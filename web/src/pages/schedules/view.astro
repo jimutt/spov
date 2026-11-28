@@ -1,0 +1,9 @@
+---
+// One schedule, named by ?ref=. @decision(DL-195)
+import Base from '../../layouts/Base.astro';
+import ScheduleView from '../../components/ScheduleView.svelte';
+---
+
+<Base title="Schedule — spov">
+  <ScheduleView client:load />
+</Base>

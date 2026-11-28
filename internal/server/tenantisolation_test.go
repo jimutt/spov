@@ -54,8 +54,11 @@ const (
 	aJobTitle          = "A's private job title"
 	// @decision(DL-160)
 	aReasoningMode = "a-private-reasoning-mode"
-	aTemplate      = "a-tmpl"
-	strangerOrg    = "org-stranger"
+	// @decision(DL-194)
+	aScheduleGoal = "A's private goal that runs every day"
+	aSchedule     = "a-sched"
+	aTemplate     = "a-tmpl"
+	strangerOrg   = "org-stranger"
 	// The service account's, which only it and an admin may reach.
 	//
 	// @decision(DL-140)
@@ -132,7 +135,9 @@ type tenantWorld struct {
 
 	run, stopped store.Session
 	job, syncJob store.Job
-	jobSession   store.Session
+	// @decision(DL-194)
+	schedule   store.Schedule
+	jobSession store.Session
 
 	// sandboxHits counts requests that reached any of A's sandboxes.
 	sandboxHits atomic.Int32
@@ -152,6 +157,8 @@ func (w *tenantWorld) markers() []string {
 		aConversationTitle, aJobTitle,
 		// @decision(DL-160)
 		aReasoningMode,
+		// @decision(DL-194)
+		aScheduleGoal,
 		w.webSessionID, w.tokenID, w.attempt,
 		w.run.SandboxID, w.askID, w.formID,
 		// @decision(DL-140)
@@ -360,6 +367,25 @@ func newTenantWorld(t *testing.T) *tenantWorld {
 		t.Fatal(err)
 	}
 	w.webSessionID = tokenID(cookie)
+
+	// A schedule of A's, with a run in its history.
+	//
+	// @decision(DL-194)
+	areq := jobRequest()
+	areq.Goal = aScheduleGoal
+	raw, _ := json.Marshal(areq)
+	w.schedule = store.Schedule{ID: store.NewID(time.Now()), OrgID: auth.LocalID, OwnerID: w.a.UserID, Name: aSchedule,
+		Request: raw, Cron: "@daily", Zone: "UTC", State: store.ScheduleActive, NextRunAt: time.Now().Add(24 * time.Hour).Truncate(time.Hour)}
+	if err := f.store.Schedules().Create(ctx, w.schedule); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Schedules().AddFire(ctx, store.ScheduleFire{ID: store.NewID(time.Now()), OrgID: auth.LocalID, ScheduleID: w.schedule.ID,
+		Slot: time.Now().Add(-time.Hour), FiredAt: time.Now(), Outcome: store.FireStarted, JobID: w.job.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if w.schedule, err = f.store.Schedules().Get(ctx, auth.LocalID, w.schedule.ID); err != nil {
+		t.Fatal(err)
+	}
 	w.hitsBase = w.sandboxHits.Load()
 	w.as(w.b)
 	return w
@@ -474,6 +500,22 @@ func (w *tenantWorld) snapshot() string {
 		w.t.Fatal(err)
 	}
 	out["templates"] = tmpls
+	// @decision(DL-194)
+	scheds, err := st.Schedules().List(ctx, auth.LocalID, store.ScheduleFilter{OwnerID: w.a.UserID})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	var schrows []string
+	for _, sc := range scheds {
+		fires, err := st.Schedules().Fires(ctx, sc.OrgID, sc.ID, 0)
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		schrows = append(schrows, fmt.Sprintf("%s %s %s %s %s next=%s failures=%d fires=%d updated=%s request=%s", sc.ID, sc.Name, sc.State,
+			sc.PausedReason, sc.Cron, sc.NextRunAt.UTC().Format(time.RFC3339), sc.Failures, len(fires),
+			sc.UpdatedAt.UTC().Format(time.RFC3339Nano), sc.Request))
+	}
+	out["schedules"] = schrows
 	toks, _ := st.Tokens().ListByUser(ctx, auth.LocalID, w.a.UserID)
 	var trows []string
 	for _, tk := range toks {
@@ -536,6 +578,7 @@ func operationsOf(api huma.API) map[string]*huma.Operation {
 func (w *tenantWorld) byRef() []route {
 	sess := w.sessionRefs()
 	jobIDs := []string{w.job.ID, w.syncJob.ID}
+	scheds := []string{w.schedule.ID, aSchedule}
 	msg := map[string]string{"id": w.msgID}
 	return []route{
 		{op: "GET /api/v1/sessions/{ref}", refs: sess},
@@ -567,8 +610,19 @@ func (w *tenantWorld) byRef() []route {
 		{op: "POST /api/v1/jobs/{id}/sync-archive", refs: jobIDs, ownerRef: w.syncJob.ID},
 		{op: "POST /api/v1/jobs/{id}/release", refs: jobIDs, ownerRef: w.syncJob.ID, body: map[string]any{}},
 
+		// A schedule, by its id and by A's name for it, which B's own
+		// namespace does not hold.
+		//
+		// @decision(DL-194)
+		{op: "GET /api/v1/schedules/{ref}", refs: scheds},
+		{op: "PATCH /api/v1/schedules/{ref}", refs: scheds, body: map[string]string{"zone": "UTC"}},
+		{op: "POST /api/v1/schedules/{ref}/pause", refs: scheds},
+		{op: "POST /api/v1/schedules/{ref}/resume", refs: scheds},
+		{op: "POST /api/v1/schedules/{ref}/run", refs: scheds},
+
 		// The destructive ones last, so the owner's control requests
 		// leave the world intact for the ones before them.
+		{op: "DELETE /api/v1/schedules/{ref}", refs: scheds},
 		{op: "DELETE /api/v1/jobs/{id}", refs: jobIDs},
 		{op: "DELETE /api/v1/sessions/{ref}", refs: sess, ownerRef: w.jobSession.ID},
 	}
@@ -625,6 +679,10 @@ func (w *tenantWorld) ownNamespace() []route {
 		{op: "GET /api/v1/jobs", query: "before=" + w.job.ID},
 		{op: "GET /api/v1/jobs", query: "session=" + w.jobSession.ID},
 		{op: "GET /api/v1/jobs", query: "state=queued"},
+		// @decision(DL-194)
+		{op: "GET /api/v1/schedules"},
+		{op: "GET /api/v1/schedules", query: "before=" + w.schedule.ID},
+		{op: "GET /api/v1/schedules", query: "all=true"},
 	}
 }
 
@@ -634,6 +692,8 @@ func (w *tenantWorld) creations() []route {
 	return []route{
 		{op: "POST /api/v1/sessions", body: repoReq("b-new")},
 		{op: "POST /api/v1/jobs", body: jobRequest()},
+		// @decision(DL-194)
+		{op: "POST /api/v1/schedules", body: ScheduleRequest{Name: aSchedule, Cron: "@daily", Job: jobRequest()}},
 	}
 }
 
@@ -843,7 +903,7 @@ func TestACreatedSessionOrJobIsTheCallersAlone(t *testing.T) {
 	before := w.snapshot()
 	for _, r := range w.creations() {
 		status, body := w.send(w.b, r.method(), r.path(""), r.body)
-		if status != http.StatusAccepted {
+		if status != http.StatusAccepted && status != http.StatusCreated {
 			t.Fatalf("B: %s = %d %s", r.op, status, body)
 		}
 	}
@@ -989,6 +1049,10 @@ func TestALaunchCannotNameAnotherUsersTemplate(t *testing.T) {
 					body = req
 				case JobRequest:
 					req.Template = name
+					body = req
+				// @decision(DL-194)
+				case ScheduleRequest:
+					req.Job.Template = name
 					body = req
 				default:
 					t.Fatalf("%s: a creation body of type %T", r.op, r.body)

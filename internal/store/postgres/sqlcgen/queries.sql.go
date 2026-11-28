@@ -11,6 +11,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addScheduleFire = `-- name: AddScheduleFire :execrows
+insert into schedule_fires (id, org_id, schedule_id, slot, fired_at, outcome, reason, job_id, missed)
+select $1::text, s.org_id, s.id, $2::timestamptz, $3::timestamptz,
+       $4::text, $5::text, $6::text, $7::int
+from schedules s
+where s.org_id = $8::text and s.id = $9::text
+`
+
+type AddScheduleFireParams struct {
+	ID         string
+	Slot       pgtype.Timestamptz
+	FiredAt    pgtype.Timestamptz
+	Outcome    string
+	Reason     string
+	JobID      string
+	Missed     int32
+	OrgID      string
+	ScheduleID string
+}
+
+// @decision(DL-193)
+func (q *Queries) AddScheduleFire(ctx context.Context, arg AddScheduleFireParams) (int64, error) {
+	result, err := q.db.Exec(ctx, addScheduleFire,
+		arg.ID,
+		arg.Slot,
+		arg.FiredAt,
+		arg.Outcome,
+		arg.Reason,
+		arg.JobID,
+		arg.Missed,
+		arg.OrgID,
+		arg.ScheduleID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const appendAdminEvent = `-- name: AppendAdminEvent :exec
 insert into admin_events (id, org_id, actor, action, detail, at)
 values ($1, $2, $3, $4, $5, $6)
@@ -158,13 +197,15 @@ where org_id = $1
   and ($2::text is null or session_id = $2::text)
   and ($3::text is null or owner_id = $3::text)
   and (cardinality($4::text[]) = 0 or state = any($4::text[]))
+  and ($5::text is null or schedule_id = $5::text)
 `
 
 type CountJobsParams struct {
-	OrgID     string
-	SessionID *string
-	OwnerID   *string
-	States    []string
+	OrgID      string
+	SessionID  *string
+	OwnerID    *string
+	States     []string
+	ScheduleID *string
 }
 
 func (q *Queries) CountJobs(ctx context.Context, arg CountJobsParams) (int64, error) {
@@ -173,6 +214,7 @@ func (q *Queries) CountJobs(ctx context.Context, arg CountJobsParams) (int64, er
 		arg.SessionID,
 		arg.OwnerID,
 		arg.States,
+		arg.ScheduleID,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -262,6 +304,24 @@ func (q *Queries) CountMintsSince(ctx context.Context, arg CountMintsSinceParams
 	return count, err
 }
 
+const countSchedules = `-- name: CountSchedules :one
+select count(*) from schedules
+where org_id = $1
+  and ($2::text is null or owner_id = $2::text)
+`
+
+type CountSchedulesParams struct {
+	OrgID   string
+	OwnerID *string
+}
+
+func (q *Queries) CountSchedules(ctx context.Context, arg CountSchedulesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countSchedules, arg.OrgID, arg.OwnerID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAPIToken = `-- name: CreateAPIToken :exec
 insert into api_tokens (id, org_id, user_id, token_hash, name, last_used_at,
                         expires_at, revoked_at, created_at, updated_at, issued_by)
@@ -343,9 +403,9 @@ insert into jobs (id, org_id, owner_id, session_id, kind, state, goal, unfinishe
                   attempt, created_at, updated_at, started_at, stopped_at, check_command,
                   check_proposed, cursor, verdict, assessment, model,
                   max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at,
-                  pr_policy, skip_prep, title)
+                  pr_policy, skip_prep, title, schedule_id, scheduled_for)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26, $27)
+        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
 `
 
 type CreateJobParams struct {
@@ -376,6 +436,8 @@ type CreateJobParams struct {
 	PrPolicy           string
 	SkipPrep           bool
 	Title              *string
+	ScheduleID         *string
+	ScheduledFor       pgtype.Timestamptz
 }
 
 // EVERY column the row carries, not only the ones a job happens to be
@@ -412,6 +474,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) error {
 		arg.PrPolicy,
 		arg.SkipPrep,
 		arg.Title,
+		arg.ScheduleID,
+		arg.ScheduledFor,
 	)
 	return err
 }
@@ -440,6 +504,48 @@ func (q *Queries) CreateMint(ctx context.Context, arg CreateMintParams) error {
 		arg.Port,
 		arg.ExpiresAt,
 		arg.CreatedAt,
+	)
+	return err
+}
+
+const createSchedule = `-- name: CreateSchedule :exec
+insert into schedules (id, org_id, owner_id, name, request, cron, zone, state, paused_reason,
+                       next_run_at, failures, created_at, updated_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+`
+
+type CreateScheduleParams struct {
+	ID           string
+	OrgID        string
+	OwnerID      string
+	Name         string
+	Request      []byte
+	Cron         string
+	Zone         string
+	State        string
+	PausedReason string
+	NextRunAt    pgtype.Timestamptz
+	Failures     int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// @decision(DL-191)
+func (q *Queries) CreateSchedule(ctx context.Context, arg CreateScheduleParams) error {
+	_, err := q.db.Exec(ctx, createSchedule,
+		arg.ID,
+		arg.OrgID,
+		arg.OwnerID,
+		arg.Name,
+		arg.Request,
+		arg.Cron,
+		arg.Zone,
+		arg.State,
+		arg.PausedReason,
+		arg.NextRunAt,
+		arg.Failures,
+		arg.CreatedAt,
+		arg.UpdatedAt,
 	)
 	return err
 }
@@ -689,6 +795,23 @@ func (q *Queries) DeleteSandboxTemplate(ctx context.Context, arg DeleteSandboxTe
 	return result.RowsAffected(), nil
 }
 
+const deleteSchedule = `-- name: DeleteSchedule :execrows
+delete from schedules where org_id = $1 and id = $2
+`
+
+type DeleteScheduleParams struct {
+	OrgID string
+	ID    string
+}
+
+func (q *Queries) DeleteSchedule(ctx context.Context, arg DeleteScheduleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSchedule, arg.OrgID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSessionModelVariants = `-- name: DeleteSessionModelVariants :exec
 delete from session_model_variants where session_id = $1 and org_id = $2
 `
@@ -835,6 +958,54 @@ func (q *Queries) DisableUser(ctx context.Context, arg DisableUserParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const dueSchedules = `-- name: DueSchedules :many
+select id, org_id, owner_id, name, request, cron, zone, state, paused_reason, next_run_at, failures, created_at, updated_at from schedules
+where state = 'active' and next_run_at <= $1
+order by next_run_at, id
+limit $2
+`
+
+type DueSchedulesParams struct {
+	NextRunAt pgtype.Timestamptz
+	Limit     int32
+}
+
+// Across orgs: only the firing loop on the reconciler's replica reads it.
+// @decision(DL-192)
+func (q *Queries) DueSchedules(ctx context.Context, arg DueSchedulesParams) ([]Schedule, error) {
+	rows, err := q.db.Query(ctx, dueSchedules, arg.NextRunAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Schedule
+	for rows.Next() {
+		var i Schedule
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Request,
+			&i.Cron,
+			&i.Zone,
+			&i.State,
+			&i.PausedReason,
+			&i.NextRunAt,
+			&i.Failures,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const endCurrentRun = `-- name: EndCurrentRun :exec
@@ -1074,7 +1245,7 @@ func (q *Queries) GetImagePrune(ctx context.Context) (pgtype.Timestamptz, error)
 }
 
 const getJob = `-- name: GetJob :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs where org_id = $1 and id = $2
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title, schedule_id, scheduled_for from jobs where org_id = $1 and id = $2
 `
 
 type GetJobParams struct {
@@ -1113,12 +1284,14 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (Job, error) {
 		&i.PrPolicy,
 		&i.SkipPrep,
 		&i.Title,
+		&i.ScheduleID,
+		&i.ScheduledFor,
 	)
 	return i, err
 }
 
 const getJobBySession = `-- name: GetJobBySession :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs where org_id = $1 and session_id = $2
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title, schedule_id, scheduled_for from jobs where org_id = $1 and session_id = $2
 `
 
 type GetJobBySessionParams struct {
@@ -1157,6 +1330,8 @@ func (q *Queries) GetJobBySession(ctx context.Context, arg GetJobBySessionParams
 		&i.PrPolicy,
 		&i.SkipPrep,
 		&i.Title,
+		&i.ScheduleID,
+		&i.ScheduledFor,
 	)
 	return i, err
 }
@@ -1187,7 +1362,7 @@ func (q *Queries) GetJobFile(ctx context.Context, arg GetJobFileParams) (JobFile
 }
 
 const getJobForUpdate = `-- name: GetJobForUpdate :one
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs where org_id = $1 and id = $2 for update
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title, schedule_id, scheduled_for from jobs where org_id = $1 and id = $2 for update
 `
 
 type GetJobForUpdateParams struct {
@@ -1230,6 +1405,8 @@ func (q *Queries) GetJobForUpdate(ctx context.Context, arg GetJobForUpdateParams
 		&i.PrPolicy,
 		&i.SkipPrep,
 		&i.Title,
+		&i.ScheduleID,
+		&i.ScheduledFor,
 	)
 	return i, err
 }
@@ -1352,6 +1529,67 @@ func (q *Queries) GetSandboxTemplate(ctx context.Context, arg GetSandboxTemplate
 		&i.UserID,
 		&i.Name,
 		&i.Settings,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getSchedule = `-- name: GetSchedule :one
+select id, org_id, owner_id, name, request, cron, zone, state, paused_reason, next_run_at, failures, created_at, updated_at from schedules where org_id = $1 and id = $2
+`
+
+type GetScheduleParams struct {
+	OrgID string
+	ID    string
+}
+
+func (q *Queries) GetSchedule(ctx context.Context, arg GetScheduleParams) (Schedule, error) {
+	row := q.db.QueryRow(ctx, getSchedule, arg.OrgID, arg.ID)
+	var i Schedule
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Request,
+		&i.Cron,
+		&i.Zone,
+		&i.State,
+		&i.PausedReason,
+		&i.NextRunAt,
+		&i.Failures,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getScheduleByName = `-- name: GetScheduleByName :one
+select id, org_id, owner_id, name, request, cron, zone, state, paused_reason, next_run_at, failures, created_at, updated_at from schedules where org_id = $1 and owner_id = $2 and name = $3
+`
+
+type GetScheduleByNameParams struct {
+	OrgID   string
+	OwnerID string
+	Name    string
+}
+
+func (q *Queries) GetScheduleByName(ctx context.Context, arg GetScheduleByNameParams) (Schedule, error) {
+	row := q.db.QueryRow(ctx, getScheduleByName, arg.OrgID, arg.OwnerID, arg.Name)
+	var i Schedule
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Request,
+		&i.Cron,
+		&i.Zone,
+		&i.State,
+		&i.PausedReason,
+		&i.NextRunAt,
+		&i.Failures,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -1747,7 +1985,7 @@ func (q *Queries) JobExists(ctx context.Context, arg JobExistsParams) (bool, err
 }
 
 const jobsBySessions = `-- name: JobsBySessions :many
-select distinct on (session_id) id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs
+select distinct on (session_id) id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title, schedule_id, scheduled_for from jobs
 where org_id = $1 and session_id = any($2::text[])
 order by session_id, id desc
 `
@@ -1801,6 +2039,8 @@ func (q *Queries) JobsBySessions(ctx context.Context, arg JobsBySessionsParams) 
 			&i.PrPolicy,
 			&i.SkipPrep,
 			&i.Title,
+			&i.ScheduleID,
+			&i.ScheduledFor,
 		); err != nil {
 			return nil, err
 		}
@@ -2394,23 +2634,25 @@ func (q *Queries) ListJobFiles(ctx context.Context, arg ListJobFilesParams) ([]L
 }
 
 const listJobs = `-- name: ListJobs :many
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title, schedule_id, scheduled_for from jobs
 where org_id = $1
   and ($2::text is null or session_id = $2::text)
   and ($3::text is null or owner_id = $3::text)
   and (cardinality($4::text[]) = 0 or state = any($4::text[]))
   and ($5::text is null or id < $5::text)
+  and ($6::text is null or schedule_id = $6::text)
 order by id desc
-limit $6::int
+limit $7::int
 `
 
 type ListJobsParams struct {
-	OrgID     string
-	SessionID *string
-	OwnerID   *string
-	States    []string
-	Before    *string
-	RowLimit  *int32
+	OrgID      string
+	SessionID  *string
+	OwnerID    *string
+	States     []string
+	Before     *string
+	ScheduleID *string
+	RowLimit   *int32
 }
 
 // Newest first, one page: rows below `before`, at most `row_limit`. A
@@ -2422,6 +2664,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 		arg.OwnerID,
 		arg.States,
 		arg.Before,
+		arg.ScheduleID,
 		arg.RowLimit,
 	)
 	if err != nil {
@@ -2459,6 +2702,8 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.PrPolicy,
 			&i.SkipPrep,
 			&i.Title,
+			&i.ScheduleID,
+			&i.ScheduledFor,
 		); err != nil {
 			return nil, err
 		}
@@ -2471,7 +2716,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 }
 
 const listLiveJobs = `-- name: ListLiveJobs :many
-select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title from jobs
+select id, org_id, owner_id, session_id, kind, state, goal, error, attempt, created_at, updated_at, started_at, stopped_at, cursor, check_command, verdict, check_proposed, assessment, model, max_duration_seconds, clock_started_at, clock_used_seconds, unfinished, sync_applied_at, pr_policy, skip_prep, title, schedule_id, scheduled_for from jobs
 where state not in ('succeeded', 'failed', 'cancelled')
 order by id desc
 `
@@ -2515,6 +2760,8 @@ func (q *Queries) ListLiveJobs(ctx context.Context) ([]Job, error) {
 			&i.PrPolicy,
 			&i.SkipPrep,
 			&i.Title,
+			&i.ScheduleID,
+			&i.ScheduledFor,
 		); err != nil {
 			return nil, err
 		}
@@ -2768,6 +3015,105 @@ func (q *Queries) ListSandboxTemplates(ctx context.Context, arg ListSandboxTempl
 	return items, nil
 }
 
+const listScheduleFires = `-- name: ListScheduleFires :many
+select f.id, f.org_id, f.schedule_id, f.slot, f.fired_at, f.outcome, f.reason, f.job_id, f.missed from schedule_fires f
+join schedules s on s.id = f.schedule_id and s.org_id = $1
+where f.schedule_id = $2
+order by f.id desc
+limit $3
+`
+
+type ListScheduleFiresParams struct {
+	OrgID      string
+	ScheduleID string
+	Limit      int32
+}
+
+func (q *Queries) ListScheduleFires(ctx context.Context, arg ListScheduleFiresParams) ([]ScheduleFire, error) {
+	rows, err := q.db.Query(ctx, listScheduleFires, arg.OrgID, arg.ScheduleID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ScheduleFire
+	for rows.Next() {
+		var i ScheduleFire
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.ScheduleID,
+			&i.Slot,
+			&i.FiredAt,
+			&i.Outcome,
+			&i.Reason,
+			&i.JobID,
+			&i.Missed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSchedules = `-- name: ListSchedules :many
+select id, org_id, owner_id, name, request, cron, zone, state, paused_reason, next_run_at, failures, created_at, updated_at from schedules
+where org_id = $1
+  and ($2::text is null or owner_id = $2::text)
+  and ($3::text is null or id < $3::text)
+order by id desc
+limit $4::int
+`
+
+type ListSchedulesParams struct {
+	OrgID    string
+	OwnerID  *string
+	Before   *string
+	RowLimit *int32
+}
+
+func (q *Queries) ListSchedules(ctx context.Context, arg ListSchedulesParams) ([]Schedule, error) {
+	rows, err := q.db.Query(ctx, listSchedules,
+		arg.OrgID,
+		arg.OwnerID,
+		arg.Before,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Schedule
+	for rows.Next() {
+		var i Schedule
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.OwnerID,
+			&i.Name,
+			&i.Request,
+			&i.Cron,
+			&i.Zone,
+			&i.State,
+			&i.PausedReason,
+			&i.NextRunAt,
+			&i.Failures,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUserCredentials = `-- name: ListUserCredentials :many
 select id, org_id, user_id, platform, ciphertext, nonce, key_version, verified_as, created_at, updated_at, scopes, expires_at, route from user_credentials where org_id = $1 and user_id = $2 order by platform
 `
@@ -2964,6 +3310,37 @@ func (q *Queries) LockOwnerForQuota(ctx context.Context, arg LockOwnerForQuotaPa
 	return err
 }
 
+const lockSchedule = `-- name: LockSchedule :one
+select id, org_id, owner_id, name, request, cron, zone, state, paused_reason, next_run_at, failures, created_at, updated_at from schedules where org_id = $1 and id = $2 for update
+`
+
+type LockScheduleParams struct {
+	OrgID string
+	ID    string
+}
+
+// @decision(DL-192)
+func (q *Queries) LockSchedule(ctx context.Context, arg LockScheduleParams) (Schedule, error) {
+	row := q.db.QueryRow(ctx, lockSchedule, arg.OrgID, arg.ID)
+	var i Schedule
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Request,
+		&i.Cron,
+		&i.Zone,
+		&i.State,
+		&i.PausedReason,
+		&i.NextRunAt,
+		&i.Failures,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const lockSession = `-- name: LockSession :one
 select id from sessions where id = $1 and org_id = $2 for no key update
 `
@@ -3069,6 +3446,32 @@ func (q *Queries) NewestImage(ctx context.Context, requestKey string) (Image, er
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const pauseOwnedSchedules = `-- name: PauseOwnedSchedules :execrows
+update schedules set state = 'paused', paused_reason = $3, updated_at = $4
+where org_id = $1 and owner_id = $2 and state = 'active'
+`
+
+type PauseOwnedSchedulesParams struct {
+	OrgID        string
+	OwnerID      string
+	PausedReason string
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// @decision(DL-193)
+func (q *Queries) PauseOwnedSchedules(ctx context.Context, arg PauseOwnedSchedulesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pauseOwnedSchedules,
+		arg.OrgID,
+		arg.OwnerID,
+		arg.PausedReason,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const putAllowlistAccount = `-- name: PutAllowlistAccount :exec
@@ -3704,6 +4107,49 @@ func (q *Queries) RecordImage(ctx context.Context, arg RecordImageParams) error 
 	return err
 }
 
+const recordScheduleFire = `-- name: RecordScheduleFire :exec
+update schedules set
+    failures = case $1::text when 'started' then 0 when 'failed' then failures + 1 else failures end,
+    state = case when state = 'active' and ($2::bool or ($1::text = 'failed'
+        and $3::int > 0 and failures + 1 >= $3::int)) then 'paused' else state end,
+    paused_reason = case when state = 'active' and ($2::bool or ($1::text = 'failed'
+        and $3::int > 0 and failures + 1 >= $3::int)) then $4::text
+        else paused_reason end,
+    next_run_at = coalesce($5::timestamptz, next_run_at),
+    updated_at = $6::timestamptz
+where org_id = $7::text and id = $8::text and next_run_at = $9::timestamptz
+`
+
+type RecordScheduleFireParams struct {
+	Outcome     string
+	Pause       bool
+	PauseAfter  int32
+	PauseReason string
+	Next        pgtype.Timestamptz
+	Now         pgtype.Timestamptz
+	OrgID       string
+	ID          string
+	FromSlot    pgtype.Timestamptz
+}
+
+// Only the fields a fire owns, and only while the row still holds the
+// slot the fire read. SET reads the row's values from before it.
+// @decision(DL-192) @decision(DL-193)
+func (q *Queries) RecordScheduleFire(ctx context.Context, arg RecordScheduleFireParams) error {
+	_, err := q.db.Exec(ctx, recordScheduleFire,
+		arg.Outcome,
+		arg.Pause,
+		arg.PauseAfter,
+		arg.PauseReason,
+		arg.Next,
+		arg.Now,
+		arg.OrgID,
+		arg.ID,
+		arg.FromSlot,
+	)
+	return err
+}
+
 const relabelAllowlistAccount = `-- name: RelabelAllowlistAccount :exec
 update allowlist_entries set github_login = $3, github_name = $4
 where org_id = $1 and github_id = $2
@@ -4099,6 +4545,26 @@ func (q *Queries) TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) (i
 	return result.RowsAffected(), nil
 }
 
+const trimScheduleFires = `-- name: TrimScheduleFires :exec
+delete from schedule_fires d
+where d.schedule_id = $1::text and d.id not in (
+    select k.id from schedule_fires k where k.schedule_id = $1::text
+    order by k.id desc limit $2::int
+)
+`
+
+type TrimScheduleFiresParams struct {
+	ScheduleID string
+	Keep       int32
+}
+
+// Keeps a schedule's newest fires.
+// @decision(DL-193)
+func (q *Queries) TrimScheduleFires(ctx context.Context, arg TrimScheduleFiresParams) error {
+	_, err := q.db.Exec(ctx, trimScheduleFires, arg.ScheduleID, arg.Keep)
+	return err
+}
+
 const updateDeviceCode = `-- name: UpdateDeviceCode :execrows
 update device_codes
 set org_id = $2, user_id = $3, status = $4, name = $5, expires_at = $6,
@@ -4239,6 +4705,48 @@ func (q *Queries) UpdateRun(ctx context.Context, arg UpdateRunParams) (int64, er
 		arg.SnapshotState,
 		arg.SnapshotAt,
 		arg.FirstMessage,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateSchedule = `-- name: UpdateSchedule :execrows
+update schedules
+set name = $3, request = $4, cron = $5, zone = $6, state = $7, paused_reason = $8,
+    next_run_at = $9, failures = $10, updated_at = $11
+where org_id = $1 and id = $2
+`
+
+type UpdateScheduleParams struct {
+	OrgID        string
+	ID           string
+	Name         string
+	Request      []byte
+	Cron         string
+	Zone         string
+	State        string
+	PausedReason string
+	NextRunAt    pgtype.Timestamptz
+	Failures     int32
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// @decision(DL-191)
+func (q *Queries) UpdateSchedule(ctx context.Context, arg UpdateScheduleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateSchedule,
+		arg.OrgID,
+		arg.ID,
+		arg.Name,
+		arg.Request,
+		arg.Cron,
+		arg.Zone,
+		arg.State,
+		arg.PausedReason,
+		arg.NextRunAt,
+		arg.Failures,
+		arg.UpdatedAt,
 	)
 	if err != nil {
 		return 0, err

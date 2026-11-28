@@ -65,6 +65,9 @@ func (p pgJobs) Create(ctx context.Context, j store.Job) error {
 		SkipPrep: j.SkipPrep,
 		// @decision(DL-150)
 		Title: nonEmptyText(j.Title),
+		// @decision(DL-192)
+		ScheduleID:   nonEmptyText(j.ScheduleID),
+		ScheduledFor: tsPtr(j.ScheduledFor),
 	}))
 }
 
@@ -136,7 +139,7 @@ func (p pgJobs) List(ctx context.Context, orgID string, f store.JobFilter) ([]st
 	}
 	rows, err := p.s.q.ListJobs(ctx, sqlcgen.ListJobsParams{
 		OrgID: orgID, SessionID: session, OwnerID: owner, States: states,
-		Before: before, RowLimit: limit,
+		Before: before, RowLimit: limit, ScheduleID: jobScheduleArg(f),
 	})
 	if err != nil {
 		return nil, mapErr("list jobs", err)
@@ -150,12 +153,22 @@ func (p pgJobs) List(ctx context.Context, orgID string, f store.JobFilter) ([]st
 func (p pgJobs) Count(ctx context.Context, orgID string, f store.JobFilter) (int, error) {
 	session, owner, states := jobFilterArgs(f)
 	n, err := p.s.q.CountJobs(ctx, sqlcgen.CountJobsParams{
-		OrgID: orgID, SessionID: session, OwnerID: owner, States: states,
+		OrgID: orgID, SessionID: session, OwnerID: owner, States: states, ScheduleID: jobScheduleArg(f),
 	})
 	if err != nil {
 		return 0, mapErr("count jobs", err)
 	}
 	return int(n), nil
+}
+
+// jobScheduleArg is a filter's schedule as the queries take it.
+//
+// @decision(DL-193)
+func jobScheduleArg(f store.JobFilter) *string {
+	if f.ScheduleID == "" {
+		return nil
+	}
+	return &f.ScheduleID
 }
 
 // jobFilterArgs is a filter's conditions as the queries bind them.

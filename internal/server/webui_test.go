@@ -144,6 +144,10 @@ func TestOwnsPath(t *testing.T) {
 		//
 		// @decision(DL-061)
 		"/jobs/new", "/jobs/new/", "/jobs",
+		// The schedule pages; `/api/v1/schedules` is the server's.
+		//
+		// @decision(DL-195)
+		"/schedules", "/schedules/", "/schedules/new", "/schedules/view", "/schedules/edit",
 		"/_astro/app.css", "/favicon.svg", "/index.html",
 		// Near misses on the reserved prefixes: these are page names,
 		// not the surfaces above.

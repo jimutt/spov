@@ -37,6 +37,8 @@ func TestTheReadAndCreateCommandsTakeJSON(t *testing.T) {
 		"jobs apply", "jobs release",
 		// @decision(DL-122)
 		"templates", "templates list", "templates show",
+		// @decision(DL-196)
+		"jobs schedule", "jobs schedule list", "jobs schedule show", "jobs schedule create",
 		// Its own format, DL-023's one exception. @decision(DL-123)
 		"init",
 	} {

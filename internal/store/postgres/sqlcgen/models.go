@@ -129,6 +129,8 @@ type Job struct {
 	PrPolicy           string
 	SkipPrep           bool
 	Title              *string
+	ScheduleID         *string
+	ScheduledFor       pgtype.Timestamptz
 }
 
 type JobDeliverable struct {
@@ -229,6 +231,34 @@ type SandboxTemplate struct {
 	Settings  []byte
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type Schedule struct {
+	ID           string
+	OrgID        string
+	OwnerID      string
+	Name         string
+	Request      []byte
+	Cron         string
+	Zone         string
+	State        string
+	PausedReason string
+	NextRunAt    pgtype.Timestamptz
+	Failures     int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type ScheduleFire struct {
+	ID         string
+	OrgID      string
+	ScheduleID string
+	Slot       pgtype.Timestamptz
+	FiredAt    pgtype.Timestamptz
+	Outcome    string
+	Reason     string
+	JobID      string
+	Missed     int32
 }
 
 type Session struct {

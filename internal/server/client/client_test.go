@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -636,5 +637,76 @@ func TestAServerWithoutAPinAnswersNotFound(t *testing.T) {
 	c := stub(t, map[string]http.HandlerFunc{})
 	if _, err := c.OpenCodePin(context.Background()); !IsNotFound(err) {
 		t.Errorf("err = %v, want a 404 an older server would give", err)
+	}
+}
+
+// The schedule calls reach their routes, escape the name and decode
+// the views; a run decodes the job's id.
+//
+// @decision(DL-196)
+func TestTheScheduleCallsReachTheirRoutes(t *testing.T) {
+	var seen []string
+	view := func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Method+" "+r.URL.EscapedPath()+"?"+r.URL.RawQuery)
+		_ = json.NewEncoder(w).Encode(server.ScheduleView{Name: r.PathValue("ref")})
+	}
+	c := stub(t, map[string]http.HandlerFunc{
+		"POST /api/v1/schedules": func(w http.ResponseWriter, r *http.Request) {
+			var req server.ScheduleRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			seen = append(seen, "POST create "+req.Name+" "+req.Cron+" "+req.Job.Goal)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(server.ScheduleView{Name: req.Name})
+		},
+		"GET /api/v1/schedules": func(w http.ResponseWriter, r *http.Request) {
+			seen = append(seen, "GET list?"+r.URL.RawQuery)
+			_, _ = fmt.Fprint(w, `{"schedules":[{"name":"a"}],"next":"01B","total":3}`)
+		},
+		"GET /api/v1/schedules/{ref}":         view,
+		"PATCH /api/v1/schedules/{ref}":       view,
+		"POST /api/v1/schedules/{ref}/pause":  view,
+		"POST /api/v1/schedules/{ref}/resume": view,
+		"DELETE /api/v1/schedules/{ref}": func(w http.ResponseWriter, r *http.Request) {
+			seen = append(seen, "DELETE "+r.PathValue("ref"))
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"POST /api/v1/schedules/{ref}/run": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprint(w, `{"job_id":"01JOB"}`)
+		},
+	})
+	ctx := context.Background()
+	if v, err := c.CreateSchedule(ctx, server.ScheduleRequest{Name: "n", Cron: "@daily", Job: server.JobRequest{Goal: "g"}}); err != nil || v.Name != "n" {
+		t.Errorf("create = %+v, %v", v, err)
+	}
+	page, err := c.ListSchedules(ctx, Page{States: []string{"ignored"}, Limit: 200, Before: "01A"})
+	if err != nil || len(page.Schedules) != 1 || page.Next != "01B" || page.Total != 3 {
+		t.Errorf("list = %+v, %v", page, err)
+	}
+	cron := "@hourly"
+	for name, call := range map[string]func() (server.ScheduleView, error){
+		"get": func() (server.ScheduleView, error) { return c.GetSchedule(ctx, "a b") },
+		"update": func() (server.ScheduleView, error) {
+			return c.UpdateSchedule(ctx, "a b", server.SchedulePatch{Cron: &cron})
+		},
+		"pause":  func() (server.ScheduleView, error) { return c.PauseSchedule(ctx, "a b") },
+		"resume": func() (server.ScheduleView, error) { return c.ResumeSchedule(ctx, "a b") },
+	} {
+		if v, err := call(); err != nil || v.Name != "a b" {
+			t.Errorf("%s = %+v, %v", name, v, err)
+		}
+	}
+	if err := c.DeleteSchedule(ctx, "a b"); err != nil {
+		t.Errorf("delete: %v", err)
+	}
+	if id, err := c.RunSchedule(ctx, "n"); err != nil || id != "01JOB" {
+		t.Errorf("run = %q, %v", id, err)
+	}
+	for _, want := range []string{"POST create n @daily g", "GET list?before=01A&limit=200", "DELETE a b",
+		"GET /api/v1/schedules/a%20b?", "PATCH /api/v1/schedules/a%20b?",
+		"POST /api/v1/schedules/a%20b/pause?", "POST /api/v1/schedules/a%20b/resume?"} {
+		if !slices.Contains(seen, want) {
+			t.Errorf("no %q among %q", want, seen)
+		}
 	}
 }

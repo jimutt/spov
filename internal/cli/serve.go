@@ -519,6 +519,9 @@ func runServe(ctx context.Context, env *Env, opts serveOptions) error {
 			// @decision(DL-045) @decision(DL-004)
 			if deps.Jobs != nil {
 				loop("job sweep", func() { deps.Jobs.RunSweep(ctx) })
+				// Schedules create jobs, on one replica as the sweep
+				// queues them. @decision(DL-192)
+				loop("schedules", func() { srv.Service().RunSchedules(ctx) })
 			}
 			// Re-minting writes into sandboxes, so it runs on one
 			// replica too.

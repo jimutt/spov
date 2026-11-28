@@ -203,6 +203,42 @@ it `held`. Nobody can attach to it or stop it by accident: `spov stop` and
 reads the state with `POST /api/v1/jobs/{id}/sync-export` and ends the hold
 with `POST /api/v1/jobs/{id}/release`.
 
+## Schedules
+
+A schedule creates the same job on a cadence, on a hosted server (a local one
+refuses: nothing runs while your machine sleeps). `spov jobs schedule create`
+takes a name, the goal and every flag `spov jobs create` takes to describe the
+job (except `--wait`, `--timeout`, `--hold` and `--kind sync`), plus a cadence:
+
+```sh
+spov jobs schedule create deps "update the dependencies and open a pull request" \
+  --repo alice/spov --kind pr --check ./spov/scripts/check.sh --daily 02:00
+spov jobs schedule create audit --goal-file audit.md --kind report \
+  --weekly "mon 09:00" --tz Europe/Stockholm
+```
+
+The cadence is `--cron` (five fields, or `@hourly`, `@daily`, `@weekly`,
+`@monthly`) or one of `--hourly`, `--daily HH:MM`, `--weekly "DAY HH:MM"` and
+`--monthly "DAY HH:MM"` (day of the month, 1 to 28; `--cron` writes a later one), read in `--tz`, by default this
+machine's zone, else UTC. A schedule runs at most once an hour. A run is skipped
+while the schedule's previous job is unfinished or you are at the job limit,
+and three failed runs in a row pause it.
+
+```sh
+spov jobs schedule                 # your schedules (also: list)
+spov jobs schedule show deps       # its next runs and its history
+spov jobs schedule edit deps --daily 03:00 --model anthropic/claude-sonnet-5
+spov jobs schedule pause deps      # and resume, from its next slot
+spov jobs schedule run deps        # runs it now; exits 1 with the reason if skipped
+spov jobs schedule delete deps     # asks first; --yes does not
+```
+
+`edit` changes only what you give. A goal or any job flag changes the stored
+job: the flags are applied over it and the whole job is sent back, without
+reading your configuration again. `list`, `show` and `create` take `--json`.
+Each run is an ordinary job, listed by `spov jobs` and marked with its
+schedule on the dashboard.
+
 ## What a job's agent may do
 
 A job's agent runs under a permission allowlist for its kind: a `report` job,

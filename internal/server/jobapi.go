@@ -152,7 +152,12 @@ type JobView struct {
 	//
 	// @decision(DL-149) @decision(DL-150)
 	Title string `json:"title,omitempty" doc:"What the job is about: its session's main conversation's title, else the one the preparation pass gave it; absent when it has neither. One line of at most 120 characters, written by a model"`
-	Goal  string `json:"goal"`
+	// Schedule names the schedule that created the job, if one did; its
+	// name is empty once the schedule is deleted.
+	//
+	// @decision(DL-194)
+	Schedule *JobScheduleView `json:"schedule,omitempty"`
+	Goal     string           `json:"goal"`
 	// Model is what the job was asked to run on, so a finished job's
 	// verdict is comparable against another run's.
 	//
@@ -401,10 +406,15 @@ func (s *Server) jobViews(ctx context.Context, list []store.Job) ([]JobView, err
 	if len(sessionIDs) > 0 {
 		titles = s.titles(ctx, principal(ctx), sessionIDs)
 	}
+	// @decision(DL-194)
+	scheduleNames := s.svc.scheduleNames(ctx, principal(ctx).OrgID, list)
 	out := make([]JobView, 0, len(list))
 	for _, j := range list {
 		v := jobViewOf(j, members[j.ID])
 		v.Title = titleOf(titles[j.SessionID], j.Title)
+		if j.ScheduleID != "" {
+			v.Schedule = &JobScheduleView{ID: j.ScheduleID, Name: scheduleNames[j.ScheduleID]}
+		}
 		if j.Kind == store.JobKindSync {
 			v.Sync = syncViewOf(j, members[j.ID], sessions[j.SessionID], runs[j.SessionID])
 		}

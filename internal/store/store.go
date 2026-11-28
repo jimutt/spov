@@ -56,6 +56,10 @@ type Store interface {
 	//
 	// @decision(DL-186)
 	ModelModes() ModelModeStore
+	// Schedules is a hosted server's scheduled job requests.
+	//
+	// @decision(DL-191)
+	Schedules() ScheduleStore
 	// Tx runs fn atomically where the backend can. The memory store
 	// serialises transactions with a mutex so the semantics hold there
 	// too. fn must not call back into the outer store, must not retain
@@ -1586,6 +1590,12 @@ type Job struct {
 	//
 	// @decision(DL-150)
 	Title string
+	// ScheduleID and ScheduledFor name the schedule and slot that created
+	// the job, or nothing; a pair is created at most once.
+	//
+	// @decision(DL-192)
+	ScheduleID   string
+	ScheduledFor *time.Time
 	// Error is the terminal failure, redacted of anything secret. It is
 	// set on failure and also on a park, where it says what is being
 	// waited on.
@@ -1764,6 +1774,10 @@ type JobFilter struct {
 	//
 	// @decision(DL-012)
 	Limit int
+	// ScheduleID keeps only the jobs one schedule created.
+	//
+	// @decision(DL-193)
+	ScheduleID string
 }
 
 func (f JobFilter) match(j Job) bool {
@@ -1777,6 +1791,10 @@ func (f JobFilter) match(j Job) bool {
 		return false
 	}
 	if len(f.States) > 0 && !slices.Contains(f.States, j.State) {
+		return false
+	}
+	// @decision(DL-193)
+	if f.ScheduleID != "" && j.ScheduleID != f.ScheduleID {
 		return false
 	}
 	return true

@@ -528,9 +528,9 @@ insert into jobs (id, org_id, owner_id, session_id, kind, state, goal, unfinishe
                   attempt, created_at, updated_at, started_at, stopped_at, check_command,
                   check_proposed, cursor, verdict, assessment, model,
                   max_duration_seconds, clock_started_at, clock_used_seconds, sync_applied_at,
-                  pr_policy, skip_prep, title)
+                  pr_policy, skip_prep, title, schedule_id, scheduled_for)
 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23, $24, $25, $26, $27);
+        $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29);
 
 -- name: GetJob :one
 select * from jobs where org_id = $1 and id = $2;
@@ -566,6 +566,7 @@ where org_id = $1
   and (sqlc.narg(owner_id)::text is null or owner_id = sqlc.narg(owner_id)::text)
   and (cardinality(sqlc.arg(states)::text[]) = 0 or state = any(sqlc.arg(states)::text[]))
   and (sqlc.narg(before)::text is null or id < sqlc.narg(before)::text)
+  and (sqlc.narg(schedule_id)::text is null or schedule_id = sqlc.narg(schedule_id)::text)
 order by id desc
 limit sqlc.narg(row_limit)::int;
 
@@ -574,7 +575,8 @@ select count(*) from jobs
 where org_id = $1
   and (sqlc.narg(session_id)::text is null or session_id = sqlc.narg(session_id)::text)
   and (sqlc.narg(owner_id)::text is null or owner_id = sqlc.narg(owner_id)::text)
-  and (cardinality(sqlc.arg(states)::text[]) = 0 or state = any(sqlc.arg(states)::text[]));
+  and (cardinality(sqlc.arg(states)::text[]) = 0 or state = any(sqlc.arg(states)::text[]))
+  and (sqlc.narg(schedule_id)::text is null or schedule_id = sqlc.narg(schedule_id)::text);
 
 -- name: CountLiveJobsForOwner :one
 -- Every state that is not terminal, `queued` included: a queued job
@@ -835,3 +837,94 @@ set models = case
 -- name: GetModelModes :one
 -- @decision(DL-186)
 select models from model_modes_seen where org_id = $1 and opencode = $2;
+
+-- name: CreateSchedule :exec
+-- @decision(DL-191)
+insert into schedules (id, org_id, owner_id, name, request, cron, zone, state, paused_reason,
+                       next_run_at, failures, created_at, updated_at)
+values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+
+-- name: GetSchedule :one
+select * from schedules where org_id = $1 and id = $2;
+
+-- name: GetScheduleByName :one
+select * from schedules where org_id = $1 and owner_id = $2 and name = $3;
+
+-- name: ListSchedules :many
+select * from schedules
+where org_id = $1
+  and (sqlc.narg(owner_id)::text is null or owner_id = sqlc.narg(owner_id)::text)
+  and (sqlc.narg(before)::text is null or id < sqlc.narg(before)::text)
+order by id desc
+limit sqlc.narg(row_limit)::int;
+
+-- name: CountSchedules :one
+select count(*) from schedules
+where org_id = $1
+  and (sqlc.narg(owner_id)::text is null or owner_id = sqlc.narg(owner_id)::text);
+
+-- name: UpdateSchedule :execrows
+-- @decision(DL-191)
+update schedules
+set name = $3, request = $4, cron = $5, zone = $6, state = $7, paused_reason = $8,
+    next_run_at = $9, failures = $10, updated_at = $11
+where org_id = $1 and id = $2;
+
+-- name: DeleteSchedule :execrows
+delete from schedules where org_id = $1 and id = $2;
+
+-- name: DueSchedules :many
+-- Across orgs: only the firing loop on the reconciler's replica reads it.
+-- @decision(DL-192)
+select * from schedules
+where state = 'active' and next_run_at <= $1
+order by next_run_at, id
+limit $2;
+
+-- name: AddScheduleFire :execrows
+-- @decision(DL-193)
+insert into schedule_fires (id, org_id, schedule_id, slot, fired_at, outcome, reason, job_id, missed)
+select sqlc.arg(id)::text, s.org_id, s.id, sqlc.arg(slot)::timestamptz, sqlc.arg(fired_at)::timestamptz,
+       sqlc.arg(outcome)::text, sqlc.arg(reason)::text, sqlc.arg(job_id)::text, sqlc.arg(missed)::int
+from schedules s
+where s.org_id = sqlc.arg(org_id)::text and s.id = sqlc.arg(schedule_id)::text;
+
+-- name: TrimScheduleFires :exec
+-- Keeps a schedule's newest fires.
+-- @decision(DL-193)
+delete from schedule_fires d
+where d.schedule_id = sqlc.arg(schedule_id)::text and d.id not in (
+    select k.id from schedule_fires k where k.schedule_id = sqlc.arg(schedule_id)::text
+    order by k.id desc limit sqlc.arg(keep)::int
+);
+
+-- name: ListScheduleFires :many
+select f.* from schedule_fires f
+join schedules s on s.id = f.schedule_id and s.org_id = $1
+where f.schedule_id = $2
+order by f.id desc
+limit $3;
+
+-- name: PauseOwnedSchedules :execrows
+-- @decision(DL-193)
+update schedules set state = 'paused', paused_reason = $3, updated_at = $4
+where org_id = $1 and owner_id = $2 and state = 'active';
+
+-- name: LockSchedule :one
+-- @decision(DL-192)
+select * from schedules where org_id = $1 and id = $2 for update;
+
+-- name: RecordScheduleFire :exec
+-- Only the fields a fire owns, and only while the row still holds the
+-- slot the fire read. SET reads the row's values from before it.
+-- @decision(DL-192) @decision(DL-193)
+update schedules set
+    failures = case sqlc.arg(outcome)::text when 'started' then 0 when 'failed' then failures + 1 else failures end,
+    state = case when state = 'active' and (sqlc.arg(pause)::bool or (sqlc.arg(outcome)::text = 'failed'
+        and sqlc.arg(pause_after)::int > 0 and failures + 1 >= sqlc.arg(pause_after)::int)) then 'paused' else state end,
+    paused_reason = case when state = 'active' and (sqlc.arg(pause)::bool or (sqlc.arg(outcome)::text = 'failed'
+        and sqlc.arg(pause_after)::int > 0 and failures + 1 >= sqlc.arg(pause_after)::int)) then sqlc.arg(pause_reason)::text
+        else paused_reason end,
+    next_run_at = coalesce(sqlc.narg(next)::timestamptz, next_run_at),
+    updated_at = sqlc.arg(now)::timestamptz
+where org_id = sqlc.arg(org_id)::text and id = sqlc.arg(id)::text and next_run_at = sqlc.arg(from_slot)::timestamptz;

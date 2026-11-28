@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -64,6 +65,13 @@ type Memory struct {
 	//
 	// @decision(DL-186)
 	seenModes map[string]seenModes
+	// schedules are the hosted server's scheduled job requests, by id,
+	// and scheduleFires each one's history, newest last. Not journaled:
+	// a local server has none.
+	//
+	// @decision(DL-191) @decision(DL-193)
+	schedules     map[string]Schedule
+	scheduleFires map[string][]ScheduleFire
 	// @decision(DL-045)
 	jobs map[string]Job
 	// runs are each session's runs, oldest first, by session ID.
@@ -108,6 +116,8 @@ func NewMemory() *Memory {
 		proxyCAs:        map[string]proxyCA{},
 		modelVariants:   map[string]ModelVariants{},
 		seenModes:       map[string]seenModes{},
+		schedules:       map[string]Schedule{},
+		scheduleFires:   map[string][]ScheduleFire{},
 		mints:           map[string]Mint{},
 		users:           map[string]User{},
 		tokens:          map[string]APIToken{},
@@ -207,6 +217,11 @@ func (m *Memory) Jobs() JobStore { return memJobs{m} }
 // @decision(DL-085)
 func (m *Memory) Runs() RunStore { return memRuns{m} }
 
+// Schedules implements Store.
+//
+// @decision(DL-191)
+func (m *Memory) Schedules() ScheduleStore { return memSchedules{m} }
+
 // ModelModes implements Store.
 //
 // @decision(DL-186)
@@ -234,6 +249,8 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 	variants := cloneMap(m.modelVariants)
 	// @decision(DL-186)
 	seen := cloneMap(m.seenModes)
+	// @decision(DL-191)
+	schedules, fires := cloneMap(m.schedules), cloneMap(m.scheduleFires)
 	// @decision(DL-034)
 	cas := cloneMap(m.proxyCAs)
 	// Nested, so a write into a job's own map is undone too.
@@ -250,7 +267,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		eventsBySession: m.eventsBySession, eventSeqs: m.eventSeqs, messageKeys: m.messageKeys,
 		messagesBySession: m.messagesBySession,
 		jobs:              m.jobs, runs: m.runs, eventPos: m.eventPos, undo: &undo, inTx: true, pending: &pending,
-		jobSeeds: m.jobSeeds, modelVariants: m.modelVariants, seenModes: m.seenModes, proxyCAs: m.proxyCAs,
+		jobSeeds: m.jobSeeds, modelVariants: m.modelVariants, seenModes: m.seenModes, schedules: m.schedules, scheduleFires: m.scheduleFires, proxyCAs: m.proxyCAs,
 		deliverables: m.deliverables, jobFiles: m.jobFiles}
 	committed := false
 	defer func() {
@@ -278,6 +295,7 @@ func (m *Memory) Tx(_ context.Context, fn func(Store) error) (err error) {
 		m.runs = runs
 		m.modelVariants = variants
 		m.seenModes = seen
+		m.schedules, m.scheduleFires = schedules, fires
 		m.proxyCAs = cas
 		m.deliverables, m.jobFiles = delivered, files
 		m.eventPos = pos
@@ -1914,6 +1932,13 @@ func (s memJobs) Create(_ context.Context, j Job) error {
 		if cur.OrgID == j.OrgID && cur.SessionID == j.SessionID {
 			return ErrConflict
 		}
+		// One job per schedule and slot, as the unique index has it.
+		//
+		// @decision(DL-192)
+		if j.ScheduleID != "" && cur.ScheduleID == j.ScheduleID && cur.ScheduledFor != nil && j.ScheduledFor != nil &&
+			cur.ScheduledFor.Equal(*j.ScheduledFor) {
+			return ErrConflict
+		}
 	}
 	now := s.m.now()
 	if j.CreatedAt.IsZero() {
@@ -1991,6 +2016,10 @@ func (s memJobs) Update(_ context.Context, j Job) error {
 	//
 	// @decision(DL-137) @decision(DL-138)
 	j.PRPolicy, j.SkipPrep = cur.PRPolicy, cur.SkipPrep
+	// Fixed at create.
+	//
+	// @decision(DL-192)
+	j.ScheduleID, j.ScheduledFor = cur.ScheduleID, copyTime(cur.ScheduledFor)
 	// Set while the row has none, and kept after.
 	//
 	// @decision(DL-150)
@@ -2079,6 +2108,7 @@ func copyJob(j Job) Job {
 	j.StartedAt, j.StoppedAt = copyTime(j.StartedAt), copyTime(j.StoppedAt)
 	j.ClockStartedAt = copyTime(j.ClockStartedAt)
 	j.SyncAppliedAt = copyTime(j.SyncAppliedAt)
+	j.ScheduledFor = copyTime(j.ScheduledFor)
 	return j
 }
 
@@ -2353,4 +2383,228 @@ func (s memModelModes) Seen(_ context.Context, orgID, openCode string) (map[stri
 		return map[string][]string{}, nil
 	}
 	return cloneVariants(cur.models), nil
+}
+
+type memSchedules struct{ m *Memory }
+
+// copySchedule keeps a stored schedule from sharing its request.
+func copySchedule(s Schedule) Schedule {
+	s.Request = slices.Clone(s.Request)
+	return s
+}
+
+// validSchedule refuses what Postgres's constraints and jsonb refuse.
+func validSchedule(sc Schedule) error {
+	if sc.State != ScheduleActive && sc.State != SchedulePaused {
+		return fmt.Errorf("store: schedule state %q", sc.State)
+	}
+	if !json.Valid(sc.Request) {
+		return errors.New("store: a schedule's request is not JSON")
+	}
+	return nil
+}
+
+// Create implements ScheduleStore.
+//
+// @decision(DL-191)
+func (s memSchedules) Create(_ context.Context, sc Schedule) error {
+	if err := validSchedule(sc); err != nil {
+		return err
+	}
+	defer s.m.lock()()
+	if _, ok := s.m.schedules[sc.ID]; ok {
+		return ErrConflict
+	}
+	for _, cur := range s.m.schedules {
+		if cur.OrgID == sc.OrgID && cur.OwnerID == sc.OwnerID && cur.Name == sc.Name {
+			return ErrConflict
+		}
+	}
+	now := s.m.now()
+	if sc.CreatedAt.IsZero() {
+		sc.CreatedAt = now
+	}
+	sc.UpdatedAt = now
+	s.m.schedules[sc.ID] = copySchedule(sc)
+	return nil
+}
+
+// Get implements ScheduleStore.
+func (s memSchedules) Get(_ context.Context, orgID, id string) (Schedule, error) {
+	defer s.m.lock()()
+	cur, ok := s.m.schedules[id]
+	if !ok || cur.OrgID != orgID {
+		return Schedule{}, ErrNotFound
+	}
+	return copySchedule(cur), nil
+}
+
+// GetByName implements ScheduleStore.
+func (s memSchedules) GetByName(_ context.Context, orgID, ownerID, name string) (Schedule, error) {
+	defer s.m.lock()()
+	for _, cur := range s.m.schedules {
+		if cur.OrgID == orgID && cur.OwnerID == ownerID && cur.Name == name {
+			return copySchedule(cur), nil
+		}
+	}
+	return Schedule{}, ErrNotFound
+}
+
+// List implements ScheduleStore.
+func (s memSchedules) List(_ context.Context, orgID string, f ScheduleFilter) ([]Schedule, error) {
+	defer s.m.lock()()
+	var out []Schedule
+	for _, cur := range s.m.schedules {
+		if cur.OrgID != orgID || (f.OwnerID != "" && cur.OwnerID != f.OwnerID) || (f.Before != "" && cur.ID >= f.Before) {
+			continue
+		}
+		out = append(out, copySchedule(cur))
+	}
+	slices.SortFunc(out, func(a, b Schedule) int { return strings.Compare(b.ID, a.ID) })
+	return firstN(out, f.Limit), nil
+}
+
+// Count implements ScheduleStore.
+func (s memSchedules) Count(ctx context.Context, orgID string, f ScheduleFilter) (int, error) {
+	f.Before, f.Limit = "", 0
+	all, err := s.List(ctx, orgID, f)
+	return len(all), err
+}
+
+// Update implements ScheduleStore.
+//
+// @decision(DL-191)
+func (s memSchedules) Update(_ context.Context, sc Schedule) error {
+	if err := validSchedule(sc); err != nil {
+		return err
+	}
+	defer s.m.lock()()
+	cur, ok := s.m.schedules[sc.ID]
+	if !ok || cur.OrgID != sc.OrgID {
+		return ErrNotFound
+	}
+	for _, other := range s.m.schedules {
+		if other.ID != sc.ID && other.OrgID == cur.OrgID && other.OwnerID == cur.OwnerID && other.Name == sc.Name {
+			return ErrConflict
+		}
+	}
+	sc.OwnerID, sc.CreatedAt = cur.OwnerID, cur.CreatedAt
+	sc.UpdatedAt = s.m.now()
+	s.m.schedules[sc.ID] = copySchedule(sc)
+	return nil
+}
+
+// Lock implements ScheduleStore; the memory store's transactions hold
+// its one lock already.
+func (s memSchedules) Lock(ctx context.Context, orgID, id string) (Schedule, error) {
+	return s.Get(ctx, orgID, id)
+}
+
+// RecordFire implements ScheduleStore.
+//
+// @decision(DL-192) @decision(DL-193)
+func (s memSchedules) RecordFire(_ context.Context, orgID, id string, r FireRecord) error {
+	defer s.m.lock()()
+	cur, ok := s.m.schedules[id]
+	if !ok || cur.OrgID != orgID {
+		return ErrNotFound
+	}
+	if !cur.NextRunAt.Equal(r.From) {
+		return nil
+	}
+	pause := r.Pause || (r.Outcome == FireFailed && r.PauseAfter > 0 && cur.Failures+1 >= r.PauseAfter)
+	switch r.Outcome {
+	case FireStarted:
+		cur.Failures = 0
+	case FireFailed:
+		cur.Failures++
+	}
+	if pause && cur.State == ScheduleActive {
+		cur.State, cur.PausedReason = SchedulePaused, r.PauseReason
+	}
+	if !r.Next.IsZero() {
+		cur.NextRunAt = r.Next
+	}
+	cur.UpdatedAt = s.m.now()
+	s.m.schedules[id] = cur
+	return nil
+}
+
+// Delete implements ScheduleStore.
+func (s memSchedules) Delete(_ context.Context, orgID, id string) error {
+	defer s.m.lock()()
+	cur, ok := s.m.schedules[id]
+	if !ok || cur.OrgID != orgID {
+		return ErrNotFound
+	}
+	delete(s.m.schedules, id)
+	delete(s.m.scheduleFires, id)
+	return nil
+}
+
+// Due implements ScheduleStore.
+//
+// @decision(DL-192)
+func (s memSchedules) Due(_ context.Context, now time.Time, limit int) ([]Schedule, error) {
+	defer s.m.lock()()
+	var out []Schedule
+	for _, cur := range s.m.schedules {
+		if cur.State == ScheduleActive && !cur.NextRunAt.After(now) {
+			out = append(out, copySchedule(cur))
+		}
+	}
+	slices.SortFunc(out, func(a, b Schedule) int {
+		if c := a.NextRunAt.Compare(b.NextRunAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return firstN(out, limit), nil
+}
+
+// AddFire implements ScheduleStore.
+//
+// @decision(DL-193)
+func (s memSchedules) AddFire(_ context.Context, f ScheduleFire) error {
+	defer s.m.lock()()
+	cur, ok := s.m.schedules[f.ScheduleID]
+	if !ok || cur.OrgID != f.OrgID {
+		return ErrNotFound
+	}
+	// A new slice, so a transaction's copy of the old one is untouched.
+	fires := append(slices.Clone(s.m.scheduleFires[f.ScheduleID]), f)
+	if n := len(fires) - MaxScheduleHistory; n > 0 {
+		fires = fires[n:]
+	}
+	s.m.scheduleFires[f.ScheduleID] = fires
+	return nil
+}
+
+// Fires implements ScheduleStore.
+func (s memSchedules) Fires(_ context.Context, orgID, scheduleID string, limit int) ([]ScheduleFire, error) {
+	defer s.m.lock()()
+	cur, ok := s.m.schedules[scheduleID]
+	if !ok || cur.OrgID != orgID {
+		return nil, ErrNotFound
+	}
+	fires := slices.Clone(s.m.scheduleFires[scheduleID])
+	slices.Reverse(fires)
+	return firstN(fires, limit), nil
+}
+
+// PauseOwned implements ScheduleStore.
+//
+// @decision(DL-193)
+func (s memSchedules) PauseOwned(_ context.Context, orgID, ownerID, reason string) (int, error) {
+	defer s.m.lock()()
+	n := 0
+	now := s.m.now()
+	for id, cur := range s.m.schedules {
+		if cur.OrgID == orgID && cur.OwnerID == ownerID && cur.State == ScheduleActive {
+			cur.State, cur.PausedReason, cur.UpdatedAt = SchedulePaused, reason, now
+			s.m.schedules[id] = cur
+			n++
+		}
+	}
+	return n, nil
 }

@@ -105,6 +105,10 @@ var unscopedQueries = map[string]map[string]string{
 	"Snapshots": {
 		"internal/server/snapshots.go": "background: the exit-snapshot collection and pruning passes",
 	},
+	// @decision(DL-192)
+	"Due": {
+		"internal/server/schedules.go": "background: the firing loop on the reconciler's replica, which acts as each schedule's owner",
+	},
 }
 
 // TestUnscopedStoreQueriesAreOnlyCalledFromBackgroundPasses scans the
