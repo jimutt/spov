@@ -58,7 +58,7 @@ const stub = vi.hoisted(() => {
       );
   });
   // Whether /me says the caller is an admin.
-  const state = { admin: false };
+  const state = { admin: false, defaultModel: "anthropic/claude-sonnet-5" };
   const fetched = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
@@ -73,6 +73,7 @@ const stub = vi.hoisted(() => {
             key_env: "ANTHROPIC_API_KEY",
             have_key: true,
             models: ["anthropic/claude-sonnet-5", "anthropic/claude-opus-5"],
+            variants: { "anthropic/claude-sonnet-5": ["low", "high"], "anthropic/claude-opus-5": ["low"] },
           },
         ],
       });
@@ -87,7 +88,7 @@ const stub = vi.hoisted(() => {
         user_id: "u",
         org_id: "o",
         admin: state.admin,
-        default_model: "anthropic/claude-sonnet-5",
+        default_model: state.defaultModel,
         git_name: "Ada",
         git_email: "ada@example.com",
         quota: {
@@ -238,6 +239,90 @@ describe("the Service accounts section on the Settings page", () => {
       target.remove();
     } finally {
       stub.state.admin = false;
+    }
+  });
+});
+
+/**
+ * The default model's reasoning mode: seeded from the stored default's
+ * #mode, kept across a choice of a model that offers it, back to
+ * Default for one that does not, and a mode no longer offered drawn
+ * disabled with a note.
+ *
+ * @decision(DL-189)
+ */
+describe("the default model's reasoning choice on the Settings page", () => {
+  async function open(defaultModel: string) {
+    stub.state.defaultModel = defaultModel;
+    const target = document.createElement("div");
+    document.body.append(target);
+    const app = mount(Settings, { target });
+    await settle();
+    return {
+      target,
+      reasoning: () => target.querySelector("#settings-reasoning") as HTMLSelectElement | null,
+      pick: (label: string) => {
+        (target.querySelector("#settings-model") as HTMLButtonElement).click();
+        flushSync();
+        (Array.from(target.querySelectorAll('[data-testid="model-picker-option"]')).find(
+          (o) => o.textContent?.trim() === label,
+        ) as HTMLButtonElement).click();
+        flushSync();
+      },
+      done: () => {
+        unmount(app);
+        target.remove();
+        stub.state.defaultModel = "anthropic/claude-sonnet-5";
+      },
+    };
+  }
+
+  it("seeds the mode from the stored default and follows the model", async () => {
+    const page = await open("anthropic/claude-sonnet-5#high");
+    try {
+      await seededAndFollowed(page);
+    } finally {
+      page.done();
+    }
+  });
+
+  async function seededAndFollowed(page: Awaited<ReturnType<typeof open>>) {
+    const picker = page.target.querySelector("#settings-model") as HTMLButtonElement;
+    expect(picker.textContent).toContain("anthropic/claude-sonnet-5");
+    expect(picker.textContent).not.toContain("#high");
+    const select = page.reasoning()!;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(["", "low", "high"]);
+    expect(select.value).toBe("high");
+    const save = page.target.querySelector("#model-form button[type=submit]") as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+
+    page.pick("claude-opus-5");
+    expect(page.reasoning()!.value).toBe("");
+    expect(save.disabled).toBe(false);
+
+    page.reasoning()!.value = "low";
+    page.reasoning()!.dispatchEvent(new Event("change", { bubbles: true }));
+    flushSync();
+    page.pick("claude-sonnet-5");
+    expect(page.reasoning()!.value).toBe("low");
+  }
+
+  it("draws a stored mode no longer offered as disabled, with a note, and keeps it for the same model", async () => {
+    const page = await open("anthropic/claude-sonnet-5#max");
+    try {
+      const select = page.reasoning()!;
+      expect(select.value).toBe("max");
+      const max = Array.from(select.options).find((o) => o.value === "max")!;
+      expect(max.disabled).toBe(true);
+      expect(max.textContent).toContain("not offered");
+      expect(page.target.textContent).toContain("runs on the model's own default");
+      // Choosing the same model again changes nothing.
+      page.pick("claude-sonnet-5");
+      expect(page.reasoning()!.value).toBe("max");
+      const save = page.target.querySelector("#model-form button[type=submit]") as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+    } finally {
+      page.done();
     }
   });
 });

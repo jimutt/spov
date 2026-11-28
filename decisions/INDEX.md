@@ -2,6 +2,14 @@
 
 | ID | Title | Status | Namespace | Tags |
 |----|-------|--------|-----------|------|
+| DL-190 | spov fly and spov jobs create take --reasoning | accepted | cli | reasoning-before-launch |
+| DL-189 | The job, session and Settings forms offer the chosen model's reasoning modes | accepted | web | reasoning-before-launch |
+| DL-188 | A conversation opens on its mode only when its sandbox offers it, and otherwise on the model's default with a note | accepted | server | reasoning-before-launch |
+| DL-187 | The model list offers each model's reasoning modes, and a launch's own mode is checked against them | accepted | server | reasoning-before-launch |
+| DL-186 | The newest reasoning modes a sandbox reported are kept for its organisation and pin | accepted | server | reasoning-before-launch |
+| DL-185 | The pinned build's reasoning modes are recorded with the pin | accepted | opencode | reasoning-before-launch |
+| DL-184 | A job's sandbox turns OpenCode's automations off | accepted | opencode | jobs, opencode-2.4, automations |
+| DL-183 | Re-read a model list the sandbox has not built yet | accepted | server | models, recorder, opencode-2.4 |
 | DL-182 | A job's loop waits for its own background shell commands as it waits for its subagents | accepted | jobs | opencode-2-3, jobs, plugin, completion |
 | DL-181 | A thought with no words is neither drawn nor counted | accepted | web | session-page, transcript |
 | DL-180 | A synthetic message OpenCode added is named by the server and drawn folded in every session, a shell result as one line | accepted | web | session-page, transcript, opencode-2-3 |

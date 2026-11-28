@@ -812,3 +812,26 @@ select * from sandbox_templates where org_id = $1 and user_id = $2 order by name
 
 -- name: DeleteSandboxTemplate :execrows
 delete from sandbox_templates where org_id = $1 and user_id = $2 and name = $3;
+
+-- name: KeepModelModes :exec
+-- @decision(DL-186)
+-- Another version's row goes; each model named replaces its entry; a
+-- merge over the byte bound keeps the report alone, and a report over
+-- it alone writes nothing.
+with gone as (
+    delete from model_modes_seen where org_id = $1 and opencode <> $2
+)
+insert into model_modes_seen (org_id, opencode, models, updated_at)
+select $1, $2, sqlc.arg(models)::jsonb, $3
+where octet_length(sqlc.arg(models)::jsonb::text) <= sqlc.arg(max_bytes)::int
+on conflict (org_id, opencode) do update
+set models = case
+        when octet_length((model_modes_seen.models || excluded.models)::text) <= sqlc.arg(max_bytes)::int
+        then model_modes_seen.models || excluded.models
+        else excluded.models
+    end,
+    updated_at = excluded.updated_at;
+
+-- name: GetModelModes :one
+-- @decision(DL-186)
+select models from model_modes_seen where org_id = $1 and opencode = $2;

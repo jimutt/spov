@@ -34,23 +34,24 @@ import (
 // @decision(DL-045) @decision(DL-023)
 func newJobsCreateCmd(env *Env) *cobra.Command {
 	var (
-		kind     string
-		repos    []string
-		landing  string
-		goalFile string
-		check    string
-		model    string
-		clock    string
-		access   string
-		asJSON   bool
-		routed   routedFlags
-		template templateFlags
-		envVars  []string
-		wait     bool
-		timeout  time.Duration
-		hold     string
-		prPolicy string
-		noPrep   bool
+		kind      string
+		repos     []string
+		landing   string
+		goalFile  string
+		check     string
+		model     string
+		reasoning string
+		clock     string
+		access    string
+		asJSON    bool
+		routed    routedFlags
+		template  templateFlags
+		envVars   []string
+		wait      bool
+		timeout   time.Duration
+		hold      string
+		prPolicy  string
+		noPrep    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "create [goal]",
@@ -74,7 +75,7 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 			}
 			return createJob(cmd.Context(), env, createOptions{
 				Goal: goal, Kind: kind, Repos: repos, Landing: landing, Check: check,
-				Model: model, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
+				Model: model, Reasoning: reasoning, MaxDuration: clock, GitAccess: access, JSON: asJSON, Routed: routed,
 				Template: template,
 				Env:      envVars, Wait: wait, Timeout: timeout, Hold: hold,
 				PRPolicy: prPolicy, NoPrep: noPrep,
@@ -111,6 +112,8 @@ func newJobsCreateCmd(env *Env) *cobra.Command {
 	// @decision(DL-014)
 	cmd.Flags().StringVar(&model, "model", "",
 		"model to run on as provider/model, e.g. anthropic/claude-sonnet-5; your account default when unset")
+	// @decision(DL-190)
+	addReasoningFlag(env, cmd, &reasoning)
 	// @decision(DL-049)
 	cmd.Flags().StringVar(&clock, "max-duration", "",
 		"how long the job may run unattended, e.g. 45m; sandbox.job_max_duration, then your account's default,"+
@@ -138,12 +141,14 @@ type createOptions struct {
 	// Env are --env KEY=VALUE.
 	//
 	// @decision(DL-096)
-	Env     []string
-	Goal    string
-	Kind    string
-	Model   string
-	Repos   []string
-	Landing string
+	Env   []string
+	Goal  string
+	Kind  string
+	Model string
+	// Reasoning is --reasoning. @decision(DL-190)
+	Reasoning string
+	Repos     []string
+	Landing   string
 	// Check is the repo's own check command; gate 1 of the verdict.
 	//
 	// @decision(DL-050)
@@ -208,6 +213,10 @@ func readGoal(args []string, file string) (string, error) {
 func createJob(ctx context.Context, env *Env, opts createOptions) error {
 	if opts.Goal == "" {
 		return errors.New("a job needs a goal")
+	}
+	// @decision(DL-190)
+	if err := checkReasoning(opts.Model, opts.Reasoning); err != nil {
+		return err
 	}
 	// Checked before the server is asked, as the server checks again.
 	//
@@ -293,6 +302,8 @@ func createJob(ctx context.Context, env *Env, opts createOptions) error {
 		Landing: opts.Landing,
 		Check:   opts.Check,
 		Model:   opts.Model,
+		// @decision(DL-190)
+		Reasoning: strings.TrimSpace(opts.Reasoning),
 		// @decision(DL-049)
 		MaxDuration:          firstNonEmpty(opts.MaxDuration, configuredDuration(sb.JobMaxDuration)),
 		MaxDurationPreferred: opts.MaxDuration == "" && sb.JobMaxDuration > 0,

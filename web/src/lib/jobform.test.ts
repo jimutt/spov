@@ -33,6 +33,7 @@ import {
   type ModelProvider,
   type Repo,
   repoUnreachable,
+  withModeOf,
 } from "./jobform";
 
 const repo = (platform: string, owner: string, name: string): Repo => ({
@@ -187,6 +188,15 @@ describe("the draft", () => {
     expect(body.repos).toEqual([
       { platform: "gh", owner: "acme", name: "app" },
     ]);
+  });
+
+  // @decision(DL-189)
+  it("sends the reasoning mode on the model, and only with a model", () => {
+    expect(toJobRequest({ ...ready(), model: "anthropic/claude-sonnet-5", mode: "high" }).model).toBe("anthropic/claude-sonnet-5#high");
+    expect(toJobRequest({ ...ready(), model: "anthropic/claude-sonnet-5#low", mode: "high" }).model).toBe("anthropic/claude-sonnet-5#high");
+    expect(toJobRequest({ ...ready(), model: "anthropic/claude-sonnet-5", mode: "" }).model).toBe("anthropic/claude-sonnet-5");
+    expect("model" in toJobRequest({ ...ready(), model: "", mode: "high" })).toBe(false);
+    expect(withModeOf("openrouter/acme/x", " max ")).toBe("openrouter/acme/x#max");
   });
 
   // @decision(DL-043)

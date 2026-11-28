@@ -1,5 +1,5 @@
 import type { components } from "./api/types";
-import { withoutVariant } from "./jobform";
+import { withoutVariant, type ModelProvider } from "./jobform";
 
 /**
  * A running session's reasoning modes: the variants each model offers
@@ -74,4 +74,31 @@ export function modelChip(ref: string): string {
   const short = model.split("/").pop() || model;
   const mode = modeOf(ref);
   return mode ? `${short} · ${mode}` : short;
+}
+
+/**
+ * formModes is what a launch is offered for a reference's model before
+ * any sandbox exists, from the models response's `variants`, in
+ * OpenCode's order; none for no model or a model with none.
+ *
+ * @decision(DL-189) @decision(DL-187)
+ */
+export function formModes(providers: ModelProvider[] | null | undefined, ref: string): string[] {
+  const model = withoutVariant(ref.trim());
+  if (!model) return [];
+  for (const p of providers ?? []) {
+    const modes = p.variants?.[model];
+    if (modes) return modes;
+  }
+  return [];
+}
+
+/**
+ * keptMode is the mode a choice of another model keeps: the same one
+ * when the new model offers it, else its default.
+ *
+ * @decision(DL-189)
+ */
+export function keptMode(mode: string, offered: string[]): string {
+  return mode && offered.includes(mode) ? mode : "";
 }

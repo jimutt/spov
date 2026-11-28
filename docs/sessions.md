@@ -81,6 +81,7 @@ back: what the agent does stays in the sandbox unless it pushes.
 |---|---|
 | `--repo owner/name` | Repository to clone; repeatable. Use `platform:owner/name` when several platforms are configured. Replaces the configured list. |
 | `--model provider/model` | Model to start on, e.g. `anthropic/claude-sonnet-5`. Changeable in the TUI. |
+| `--reasoning <mode>` | Reasoning mode of that model, or of your default model without `--model`, e.g. `high`; `default` for the model's own. Completion offers the modes the server lists for `--model`. |
 | `--web` | Open OpenCode's own web UI in a browser instead of the terminal TUI |
 | `--keep` | Leave the sandbox running when the TUI exits |
 | `--no-attach` | Launch and print how to reach it, without starting the TUI |

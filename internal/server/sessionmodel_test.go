@@ -19,7 +19,16 @@ type modelSandbox struct {
 	srv    *httptest.Server
 	paths  []string
 	models []string
+	// lists are what GET /api/model answers, one per read, the last
+	// repeated; nil answers 503.
+	//
+	// @decision(DL-188)
+	lists []string
 }
+
+// offersThinking is a model list in which anthropic/claude-sonnet-5
+// offers low and thinking.
+const offersThinking = `{"location":{"directory":"/workspace"},"data":[{"id":"claude-sonnet-5","providerID":"anthropic","variants":[{"id":"low"},{"id":"thinking"}]}]}`
 
 func newModelSandbox(t *testing.T) *modelSandbox {
 	t.Helper()
@@ -29,6 +38,20 @@ func newModelSandbox(t *testing.T) *modelSandbox {
 		switch {
 		case r.URL.Path == "/api/session":
 			_, _ = w.Write([]byte(`{"data":{"id":"ses_new"}}`))
+		// @decision(DL-188)
+		case r.Method == http.MethodGet && r.URL.Path == modelListPath:
+			if len(m.lists) == 0 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			if m.lists[0] == "401" {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_, _ = w.Write([]byte(m.lists[0]))
+			if len(m.lists) > 1 {
+				m.lists = m.lists[1:]
+			}
 		case strings.HasSuffix(r.URL.Path, "/model"):
 			raw, _ := io.ReadAll(r.Body)
 			// The measured shape: Model.Ref is an object with id and
@@ -256,6 +279,7 @@ func TestAModelThatIsNotAReferenceIsNotSent(t *testing.T) {
 // @decision(DL-014)
 func TestAVariantSurvivesTheSplit(t *testing.T) {
 	m := newModelSandbox(t)
+	m.lists = []string{offersThinking}
 	s := testService(t, nil)
 	sess := jobSessionWithModel(t, s, "anthropic/claude-sonnet-5#thinking")
 

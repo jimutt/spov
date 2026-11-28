@@ -1382,6 +1382,8 @@ export interface components {
              * @enum {string}
              */
             pr_policy?: "spov" | "goal";
+            /** @description Reasoning mode of the resolved model, one GET /api/v1/models offers for it, or default for the model's own; as the model says when empty */
+            reasoning?: string;
             repos: components["schemas"]["RepoRef"][] | null;
             sandbox?: components["schemas"]["SandboxConfigView"];
             /** @description Skip the preparation pass: no model reads the goal before the job starts, and no check is proposed */
@@ -1586,6 +1588,9 @@ export interface components {
             provider: string;
             /** @enum {string} */
             sign_in?: "opencode";
+            variants?: {
+                [key: string]: string[] | null;
+            };
         };
         ModelSwitch: {
             /**
@@ -2130,6 +2135,8 @@ export interface components {
             no_credentials?: boolean;
             /** @description OpenCode plugins as npm package specs, e.g. envsitter-guard or @scope/name@1.2.0, added to the sandbox's OpenCode config */
             plugins?: string[] | null;
+            /** @description Reasoning mode of the resolved model, one GET /api/v1/models offers for it, or default for the model's own; as the model says when empty */
+            reasoning?: string;
             repos: components["schemas"]["RepoRef"][] | null;
             sandbox?: components["schemas"]["SandboxConfigView"];
             /** @description Seed the repository from a local git branch and commit */

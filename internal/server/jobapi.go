@@ -81,6 +81,10 @@ type JobRequest struct {
 	//
 	// @decision(DL-014)
 	Model string `json:"model,omitempty" doc:"Model to run on, as provider/model; OpenCode's default when empty"`
+	// Reasoning is a reasoning mode for the model the job resolves to.
+	//
+	// @decision(DL-187)
+	Reasoning string `json:"reasoning,omitempty" maxLength:"64" doc:"Reasoning mode of the resolved model, one GET /api/v1/models offers for it, or default for the model's own; as the model says when empty"`
 	// MaxDuration is how long the job may run unattended. Empty is the
 	// caller's profile default, then 1h, clamped to the caller's limit.
 	// MaxDurationPreferred marks it as a default from the client's

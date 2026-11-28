@@ -51,6 +51,11 @@ type Store interface {
 	//
 	// @decision(DL-085)
 	Runs() RunStore
+	// ModelModes is the newest reasoning modes the organisation's
+	// sandboxes reported.
+	//
+	// @decision(DL-186)
+	ModelModes() ModelModeStore
 	// Tx runs fn atomically where the backend can. The memory store
 	// serialises transactions with a mutex so the semantics hold there
 	// too. fn must not call back into the outer store, must not retain
@@ -439,6 +444,12 @@ type SessionRequest struct {
 	// request is persisted whole, so a column beside it would be a
 	// second copy of the same fact.
 	Model string
+	// Reasoning is a request's reasoning mode named apart from its model
+	// (DL-190), which the server folds into Model before the row is
+	// written; it is never stored.
+	//
+	// @decision(DL-187)
+	Reasoning string `json:"-"`
 	// GitAccess is what the launch asked for, resolved before the row is
 	// written. GitAccessPreferred says it came from a saved preference
 	// (the CLI's config or the caller's default), so a platform that

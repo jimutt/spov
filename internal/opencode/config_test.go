@@ -344,3 +344,42 @@ func TestAnUnlistedModelIsDeclared(t *testing.T) {
 		t.Error("a declared id can close the heredoc")
 	}
 }
+
+// A job's config turns OpenCode's automations off; an interactive
+// session's leaves them to OpenCode.
+//
+// @decision(DL-184)
+func TestAJobsConfigTurnsAutomationsOff(t *testing.T) {
+	var job, interactive map[string]any
+	if err := json.Unmarshal([]byte(JobConfigJSON("m", false, nil)), &job); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(SandboxConfigJSON("m", false, nil, nil)), &interactive); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := job["automations"]; !ok || v != false {
+		t.Errorf("a job's config has automations %v, want false", v)
+	}
+	if _, ok := interactive["automations"]; ok {
+		t.Errorf("an interactive session's config sets automations: %v", interactive["automations"])
+	}
+}
+
+// The config's model never carries a #mode, which OpenCode ignores
+// there; a declared model is declared by its id alone.
+//
+// @decision(DL-187)
+func TestTheConfigsModelCarriesNoMode(t *testing.T) {
+	for name, doc := range map[string]string{
+		"interactive": SandboxConfigJSON("openrouter/acme/new-model#high", true, nil, nil),
+		"job":         JobConfigJSON("openrouter/acme/new-model#high", true, nil),
+	} {
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(doc), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		if cfg["model"] != "openrouter/acme/new-model" {
+			t.Errorf("%s: the config's model is %v", name, cfg["model"])
+		}
+	}
+}

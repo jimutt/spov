@@ -612,6 +612,11 @@ func runFlagRow(t *testing.T, flags []string, extra string) (store.Store, store.
 	// DL-013 refuses a model the deployment holds no key for, and
 	// --model is one of the flags driven through here.
 	f.deps.ProviderKeys = map[string]string{"ANTHROPIC_API_KEY": "sk-fixture"}
+	// --reasoning is checked against the modes offered (DL-187).
+	if err := f.deps.Store.ModelModes().Keep(context.Background(), auth.LocalID, f.deps.Defaults.OpenCodeVersion,
+		map[string][]string{"anthropic/claude-sonnet-5": {"low", "high"}}); err != nil {
+		t.Fatal(err)
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

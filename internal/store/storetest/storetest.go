@@ -490,6 +490,98 @@ var cases = map[string]func(t *testing.T, s store.Store){
 		}
 		kept("")
 	},
+	// @decision(DL-186)
+	"an org's seen reasoning modes are laid over, bounded and kept for one version": func(t *testing.T, s store.Store) {
+		ctx := context.Background()
+		modes := s.ModelModes()
+		seen := func(org, version string) map[string][]string {
+			t.Helper()
+			got, err := modes.Seen(ctx, org, version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return got
+		}
+		if got := seen("org", "2.4.2"); got == nil || len(got) != 0 {
+			t.Fatalf("nothing kept reads %v, want an empty map", got)
+		}
+		// A deployment that names no version keeps and reads one too.
+		if got := seen("fresh", ""); got == nil || len(got) != 0 {
+			t.Fatalf("nothing kept for no version reads %v, want an empty map", got)
+		}
+		if err := modes.Keep(ctx, "fresh", "", map[string][]string{"p/a": {"low"}}); err != nil {
+			t.Fatal(err)
+		}
+		if got := seen("fresh", ""); !reflect.DeepEqual(got, map[string][]string{"p/a": {"low"}}) {
+			t.Errorf("kept for no version: %v", got)
+		}
+		if err := modes.Keep(ctx, "org", "2.4.2", map[string][]string{"p/a": {"low", "high"}, "p/b": {"none"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := modes.Keep(ctx, "org", "2.4.2", map[string][]string{"p/a": {"high"}, "q/c": {"max"}}); err != nil {
+			t.Fatal(err)
+		}
+		want := map[string][]string{"p/a": {"high"}, "p/b": {"none"}, "q/c": {"max"}}
+		if got := seen("org", "2.4.2"); !reflect.DeepEqual(got, want) {
+			t.Errorf("after two reports %v, want %v", got, want)
+		}
+		if got := seen("other", "2.4.2"); len(got) != 0 {
+			t.Errorf("another org reads %v", got)
+		}
+		got := seen("org", "2.4.2")
+		got["p/a"][0] = "changed"
+		if seen("org", "2.4.2")["p/a"][0] != "high" {
+			t.Error("a reader changed what is kept")
+		}
+		// A report past the bound alone keeps the row as it was.
+		many := func(prefix string, n int) map[string][]string {
+			out := map[string][]string{}
+			for i := range n {
+				out[fmt.Sprintf("%s/model-%06d", prefix, i)] = []string{"low", "medium", "high"}
+			}
+			return out
+		}
+		if err := modes.Keep(ctx, "org", "2.4.2", many("p", store.MaxSeenModelModesBytes/40)); err != nil {
+			t.Fatal(err)
+		}
+		if got := seen("org", "2.4.2"); !reflect.DeepEqual(got, want) {
+			t.Errorf("a report past the bound changed what is kept: %d models", len(got))
+		}
+		// A merge past the bound gives way to the report alone.
+		first, second := many("a", store.MaxSeenModelModesBytes/80), many("b", store.MaxSeenModelModesBytes/80)
+		for _, report := range []map[string][]string{first, second} {
+			if err := modes.Keep(ctx, "org", "2.4.2", report); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := seen("org", "2.4.2"); !reflect.DeepEqual(got, second) {
+			t.Errorf("a merge past the bound kept %d models, want the second report's %d", len(got), len(second))
+		}
+		// Another version's report drops this one's.
+		if err := modes.Keep(ctx, "org", "2.5.0", map[string][]string{"p/a": {"xhigh"}}); err != nil {
+			t.Fatal(err)
+		}
+		if got := seen("org", "2.4.2"); len(got) != 0 {
+			t.Errorf("the older version is still kept: %v", got)
+		}
+		if got := seen("org", "2.5.0"); !reflect.DeepEqual(got, map[string][]string{"p/a": {"xhigh"}}) {
+			t.Errorf("the new version reads %v", got)
+		}
+		// A transaction that fails keeps nothing it wrote.
+		boom := errors.New("boom")
+		err := s.Tx(ctx, func(tx store.Store) error {
+			if err := tx.ModelModes().Keep(ctx, "org", "2.5.0", map[string][]string{"p/z": {"low"}}); err != nil {
+				return err
+			}
+			return boom
+		})
+		if !errors.Is(err, boom) {
+			t.Fatalf("the transaction returned %v", err)
+		}
+		if _, ok := seen("org", "2.5.0")["p/z"]; ok {
+			t.Error("a rolled-back report was kept")
+		}
+	},
 	// @decision(DL-159)
 	"a session's model variants are kept for their sandbox while it runs there": func(t *testing.T, s store.Store) {
 		ctx := context.Background()

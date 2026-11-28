@@ -607,7 +607,7 @@ const (
 //	go test -tags integration ./internal/sandbox/ -run ActionVocabulary
 //
 // @decision(DL-040)
-const ActionVocabularyVersion = "2.3.0"
+const ActionVocabularyVersion = "2.4.2"
 
 // PermissionsForKind is the allowlist a job of this kind runs under.
 //

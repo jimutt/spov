@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modeOf, modelChip, modesOf, switchedTo, withMode, type ModelVariants } from "./reasoning";
+import { formModes, keptMode, modeOf, modelChip, modesOf, switchedTo, withMode, type ModelVariants } from "./reasoning";
 
 /**
  * The reasoning choice's logic: which modes a model offers in this
@@ -62,5 +62,32 @@ describe("the chip", () => {
     expect(modelChip("anthropic/claude-opus-5")).toBe("claude-opus-5");
     expect(modelChip("openrouter/z-ai/glm-5#thinking")).toBe("glm-5 · thinking");
     expect(modelChip("")).toBe("");
+  });
+});
+
+/**
+ * Before a launch the modes come from the model list, and a choice of
+ * another model keeps a mode only when that model offers it.
+ *
+ * @decision(DL-189)
+ */
+describe("a form's reasoning choice", () => {
+  const providers = [
+    { provider: "anthropic", name: "Anthropic", key_env: "ANTHROPIC_API_KEY", have_key: true,
+      models: ["anthropic/a", "anthropic/b"], variants: { "anthropic/a": ["low", "high"] } },
+    { provider: "openai", name: "OpenAI", key_env: "OPENAI_API_KEY", have_key: false, models: ["openai/c"] },
+  ];
+  it("reads the modes of the model, with or without a mode on it", () => {
+    expect(formModes(providers, "anthropic/a")).toEqual(["low", "high"]);
+    expect(formModes(providers, "anthropic/a#high")).toEqual(["low", "high"]);
+    expect(formModes(providers, "anthropic/b")).toEqual([]);
+    expect(formModes(providers, "openai/c")).toEqual([]);
+    expect(formModes(providers, "")).toEqual([]);
+    expect(formModes(undefined, "anthropic/a")).toEqual([]);
+  });
+  it("keeps a mode the new model offers, else goes back to Default", () => {
+    expect(keptMode("high", ["low", "high"])).toBe("high");
+    expect(keptMode("max", ["low", "high"])).toBe("");
+    expect(keptMode("", ["low"])).toBe("");
   });
 });

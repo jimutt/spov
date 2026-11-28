@@ -65,7 +65,7 @@ func Defaults() Config {
 // resolves an image nobody has published.
 //
 // @decision(DL-035) @decision(DL-032)
-const DefaultOpenCodeVersion = "2.3.0"
+const DefaultOpenCodeVersion = "2.4.2"
 
 // MinIdleTimeout is the floor the sandbox package enforces; re-exported
 // so config errors can name it.

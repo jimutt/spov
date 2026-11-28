@@ -232,11 +232,13 @@ func TestAnEmptyModelSkipsBothChecks(t *testing.T) {
 	}
 }
 
-// A `#variant` reference is accepted.
+// A `#variant` reference the model is offered with is accepted
+// (DL-187 refuses one it is not).
 //
-// @decision(DL-013) @decision(DL-014)
+// @decision(DL-013) @decision(DL-014) @decision(DL-187)
 func TestAVariantIsAcceptedByTheCheck(t *testing.T) {
 	f := modelFixture(t)
+	offerModes(t, f, map[string][]string{testModel: {"high"}})
 	resp, body := createSessionWith(t, f, testModel+"#high")
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("a variant reference was refused: %d %s", resp.StatusCode, body)

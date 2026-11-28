@@ -36,6 +36,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 		gitName              string
 		gitEmail             string
 		model                string
+		reasoning            string
 		gitAccess            string
 		sync                 bool
 		noSync               bool
@@ -59,6 +60,7 @@ func newFlyCmd(env *Env) *cobra.Command {
 				Keep:                 keep,
 				Name:                 name,
 				Model:                model,
+				Reasoning:            reasoning,
 				AllowVersionMismatch: allowVersionMismatch,
 				NoAttach:             noAttach,
 				Web:                  web,
@@ -92,6 +94,8 @@ func newFlyCmd(env *Env) *cobra.Command {
 	// @decision(DL-014)
 	cmd.Flags().StringVar(&model, "model", "",
 		"model to start on as provider/model, e.g. anthropic/claude-sonnet-5; changeable in the TUI")
+	// @decision(DL-190)
+	addReasoningFlag(env, cmd, &reasoning)
 	// @decision(DL-043)
 	cmd.Flags().StringVar(&gitAccess, "git-access", "",
 		"how far the sandbox's git credentials reach: repos (this session's) or all (every repository they can);"+
@@ -151,6 +155,11 @@ type flyOptions struct {
 	//
 	// @decision(DL-014)
 	Model string
+	// Reasoning is --reasoning, the mode of the model the launch
+	// resolves to.
+	//
+	// @decision(DL-190)
+	Reasoning string
 	// GitAccess is --git-access; empty falls back to sandbox.git_access.
 	//
 	// @decision(DL-043)
@@ -167,6 +176,10 @@ type flyOptions struct {
 //
 // @decision(DL-023) @decision(DL-025) @decision(DL-024)
 func runFly(ctx context.Context, env *Env, opts flyOptions) error {
+	// @decision(DL-190)
+	if err := checkReasoning(opts.Model, opts.Reasoning); err != nil {
+		return err
+	}
 	res, err := env.config()
 	if err != nil {
 		return err
@@ -426,6 +439,8 @@ func sessionRequest(cfg config.Config, opts flyOptions, name string, refs []serv
 		},
 		Git:   server.GitIdentityView{Name: identity.Name, Email: identity.Email},
 		Model: opts.Model,
+		// @decision(DL-190)
+		Reasoning: strings.TrimSpace(opts.Reasoning),
 		// @decision(DL-043)
 		GitAccess: store.GitAccess(firstNonEmpty(opts.GitAccess, sb.GitAccess)), GitAccessPreferred: opts.GitAccess == "" && sb.GitAccess != "",
 		// @decision(DL-042)

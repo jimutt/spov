@@ -51,7 +51,7 @@ func TestIntegrationSSA3WhatAPluginSeesOfASubagent(t *testing.T) {
 
 	seen := filepath.Join(t.TempDir(), "seen.jsonl")
 	model := newTaggedModel(t, func(q taggedRequest) taggedAnswer {
-		report := strings.Contains(q.latest, "subagent sessionID=")
+		report := strings.Contains(q.latest, `background-result kind=\"subagent\"`)
 		switch {
 		case !q.offered:
 			return taggedAnswer{text: "title"}
@@ -392,11 +392,13 @@ func sawSummary(all []pluginSaw) string {
 }
 
 // taggedRequest is a chat request as a taggedModel's rule reads it: the
-// tag its first user message carries, the tool results since, whether
-// tools were offered and the newest user text.
+// tag its first user message carries, the tool results since, the
+// background results (a subagent's report, a shell command's result),
+// whether tools were offered and the newest user text.
 type taggedRequest struct {
 	tag     string
 	tools   int
+	reports int
 	offered bool
 	latest  string
 	users   []string
@@ -445,6 +447,13 @@ func newTaggedModel(t *testing.T, rule func(taggedRequest) taggedAnswer) *tagged
 			switch msg.Role {
 			case "user":
 				text, _ := json.Marshal(msg.Content)
+				// From 2.4 a background result reaches the model as a
+				// user message of its own; it is not a person writing.
+				if strings.Contains(string(text), "background-result kind=") {
+					q.reports++
+					q.latest = string(text)
+					continue
+				}
 				if q.tag == "" {
 					q.tag = probeTag(string(text))
 				}
@@ -646,10 +655,10 @@ func TestIntegrationSSA3TheLoopWaitsForItsSubagent(t *testing.T) {
 			return taggedAnswer{tool: "glob", args: `{"pattern":"*.txt"}`, delay: 8 * time.Second}
 		case q.tag == "CHILD-H":
 			return taggedAnswer{text: "child report"}
+		case strings.Contains(q.latest, `background-result kind=\"subagent\"`):
+			return taggedAnswer{text: "read the report"}
 		case q.tools > 0, strings.Contains(q.latest, opencode.LoopStoppedMarker):
 			return taggedAnswer{text: "called"}
-		case strings.Contains(q.latest, "subagent sessionID="):
-			return taggedAnswer{text: "read the report"}
 		case strings.Contains(q.latest, "Continue working"):
 			return taggedAnswer{tool: opencode.CompletionTool, args: `{"summary":"done"}`}
 		case q.tag == "JOB-H":

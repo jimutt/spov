@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/jimutt/spov/internal/auth"
 	"github.com/jimutt/spov/internal/modelcat"
+	"github.com/jimutt/spov/internal/prep"
 	"github.com/jimutt/spov/internal/redact"
 	"github.com/jimutt/spov/internal/safego"
 	"github.com/jimutt/spov/internal/store"
@@ -36,6 +38,20 @@ const (
 	MaxModelVariants      = 64
 	MaxModelListReads     = 3
 )
+
+// ModelListWaits is how many more times one read asks again, a
+// ModelListPause apart, while the sandbox lists no model at all: from
+// 2.4 OpenCode builds its list a few seconds after it starts.
+//
+// @decision(DL-183)
+const (
+	ModelListWaits = 10
+	ModelListPause = time.Second
+)
+
+// errNoModelsListed is a model list that names no model, which is one
+// not built yet.
+var errNoModelsListed = errors.New("the sandbox lists no model yet")
 
 // modelListPath is OpenCode's model list: every model the sandbox can
 // run, each with its variants.
@@ -83,8 +99,14 @@ func (r *Recorder) startModelVariants(ctx context.Context, c *capture) {
 		rctx, cancel := context.WithTimeout(parent, SandboxReadTimeout)
 		defer cancel()
 		var err error
-		if safego.Do("recorder model list of session "+sess.ID, r.warn, func() { err = r.readModelVariants(rctx, sess, conn) }) {
-			err = errors.New("the read panicked")
+		for wait := 0; ; wait++ {
+			if safego.Do("recorder model list of session "+sess.ID, r.warn, func() { err = r.readModelVariants(rctx, sess, conn) }) {
+				err = errors.New("the read panicked")
+			}
+			// @decision(DL-183)
+			if !errors.Is(err, errNoModelsListed) || wait == ModelListWaits || r.sleep(rctx, ModelListPause) != nil {
+				break
+			}
 		}
 		r.mu.Lock()
 		st.running = false
@@ -123,11 +145,75 @@ func (r *Recorder) readModelVariants(ctx context.Context, sess store.Session, co
 	if err != nil {
 		return err
 	}
-	err = r.store.Sessions().SetModelVariants(ctx, sess.OrgID, sess.ID, sess.SandboxID, models)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
+	return keepModesOf(ctx, r.store, r.openCode, r.warn, sess, models)
+}
+
+// keepModesOf keeps a list read from the session's sandbox for that
+// sandbox, and lays it over its org's seen modes; a session that no
+// longer runs there is not an error. The recorder and an opening that
+// read the list first both keep it here.
+//
+// @decision(DL-159) @decision(DL-186) @decision(DL-188)
+func keepModesOf(ctx context.Context, st store.Store, pin string, warn func(string), sess store.Session, models map[string][]string) error {
+	err := st.Sessions().SetModelVariants(ctx, sess.OrgID, sess.ID, sess.SandboxID, models)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("keep them: %s", redact.Error(err))
 	}
+	keepSeenModes(ctx, st, pin, warn, sess, models)
 	return nil
+}
+
+// keepSeenModes lays a run's list over its org's seen modes when the
+// run's sandbox ran the deployment's pinned OpenCode, keeping only the
+// providers spov carries. A failure is logged and changes nothing else.
+//
+// @decision(DL-186)
+func keepSeenModes(ctx context.Context, st store.Store, pin string, warn func(string), sess store.Session, models map[string][]string) {
+	if pin == "" {
+		return
+	}
+	run, err := st.Runs().Current(ctx, sess.OrgID, sess.ID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		warn(fmt.Sprintf("session %s: the organisation's reasoning modes were not kept: %s", sess.ID, redact.Error(err)))
+	}
+	if err != nil || run.SandboxID != sess.SandboxID || run.OpenCode != pin {
+		return
+	}
+	carried := map[string]bool{}
+	for _, p := range prep.Catalogue() {
+		carried[p.ID] = true
+	}
+	kept := map[string][]string{}
+	for ref, modes := range models {
+		if provider, _, _ := strings.Cut(ref, "/"); carried[provider] {
+			kept[ref] = modes
+		}
+	}
+	if len(kept) == 0 {
+		return
+	}
+	if err := st.ModelModes().Keep(ctx, sess.OrgID, run.OpenCode, kept); err != nil {
+		warn(fmt.Sprintf("session %s: the organisation's reasoning modes were not kept: %s", sess.ID, redact.Error(err)))
+	}
+}
+
+// ModelModes is the reasoning modes a launch on this deployment is
+// offered for a provider/model reference: the newest its org's
+// sandboxes reported on the pinned build, else the snapshot shipped
+// with that build, else none. A store error is returned, never
+// answered from the snapshot, so a caller does not refuse a mode the
+// org's sandboxes reported.
+//
+// @decision(DL-186) @decision(DL-185)
+func (s *Service) ModelModes(ctx context.Context, orgID, ref string) ([]string, error) {
+	lookup, err := s.modeLookup(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return lookup(ref), nil
 }
 
 // parseModelVariants reads OpenCode's model list into each model's
@@ -153,6 +239,10 @@ func parseModelVariants(body []byte) (map[string][]string, error) {
 	}
 	if err := json.Unmarshal(body, &list); err != nil || list.Data == nil {
 		return nil, errors.New("the sandbox's answer is not a model list")
+	}
+	// @decision(DL-183)
+	if len(*list.Data) == 0 {
+		return nil, errNoModelsListed
 	}
 	out := map[string][]string{}
 	// size counts what the kept list's JSON takes: {} and, per model,

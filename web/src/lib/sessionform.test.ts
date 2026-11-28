@@ -13,6 +13,12 @@ describe("the session form", () => {
     expect(toSessionRequest([repo])).toEqual({ repos: [repo] });
   });
 
+  // @decision(DL-189)
+  it("sends the reasoning mode on the model, and only with a model", () => {
+    expect(toSessionRequest([repo], "anthropic/claude-sonnet-5", "", "high").model).toBe("anthropic/claude-sonnet-5#high");
+    expect(toSessionRequest([repo], "", "", "high")).toEqual({ repos: [repo] });
+  });
+
   // @decision(DL-121)
   it("sends a template only when one is chosen", async () => {
     expect(toSessionRequest([repo], "", "")).toEqual({ repos: [repo] });

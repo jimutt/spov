@@ -191,6 +191,13 @@ export interface JobDraft {
    * account default, then to OpenCode's (DL-014).
    */
   model: string;
+  /**
+   * The model's reasoning mode, sent on the model as `#mode`; empty is
+   * the model's default, and it is sent only with a model.
+   *
+   * @decision(DL-189)
+   */
+  mode: string;
   /** A shell command, run at /workspace; empty leaves gate 1 unverified. */
   check: string;
   /**
@@ -235,7 +242,7 @@ export function defaultAccessLabel(jobDefault: string | undefined, loaded: boole
  * to choose rather than the one they get by not looking.
  */
 export function emptyDraft(): JobDraft {
-  return { goal: "", kind: "report", repos: [], model: INHERIT, check: "", clock: "", access: "", template: "" };
+  return { goal: "", kind: "report", repos: [], model: INHERIT, mode: "", check: "", clock: "", access: "", template: "" };
 }
 
 /**
@@ -269,7 +276,8 @@ export function toJobRequest(draft: JobDraft): JobRequest {
     repos: draft.repos,
   };
   const model = draft.model.trim();
-  if (model) body.model = model;
+  // @decision(DL-189)
+  if (model) body.model = withModeOf(model, draft.mode);
   const check = draft.check.trim();
   if (check) body.check = check;
   if (draft.clock) body.max_duration = draft.clock;
@@ -538,6 +546,18 @@ export function withoutVariant(ref: string): string {
   const variant = ref.slice(hash + 1);
   if (!model || !variant) return ref;
   return model;
+}
+
+/**
+ * withModeOf is a model reference with a form's reasoning mode on it,
+ * in place of any it names; an empty mode leaves the reference as it is,
+ * unlike reasoning.ts's `withMode`, which reads "" as the model's default.
+ *
+ * @decision(DL-189)
+ */
+export function withModeOf(model: string, mode: string): string {
+  const m = mode.trim();
+  return m ? `${withoutVariant(model)}#${m}` : model;
 }
 
 /**

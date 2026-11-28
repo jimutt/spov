@@ -146,6 +146,11 @@ type Recorder struct {
 	interval time.Duration
 	// maxPages is MaxMessagePages unless a test lowers it.
 	maxPages int
+	// openCode is the deployment's pinned OpenCode version: only a run
+	// on it reports its organisation's seen reasoning modes.
+	//
+	// @decision(DL-186)
+	openCode string
 
 	// The three seams to a sandbox. connect obtains the credential
 	// pair, events opens the volatile stream over it, and fetch reads
@@ -206,11 +211,13 @@ func NewRecorder(svc *Service, st store.Store, now func() time.Time, warn func(s
 		warn = func(string) {}
 	}
 	var metrics *telemetry.Metrics
+	openCode := ""
 	if svc != nil {
 		metrics = svc.deps.Metrics
+		openCode = svc.deps.Defaults.OpenCodeVersion
 	}
 	return &Recorder{
-		store: st, now: now, warn: warn, interval: ReconcileInterval, metrics: metrics, maxPages: MaxMessagePages,
+		store: st, now: now, warn: warn, interval: ReconcileInterval, metrics: metrics, maxPages: MaxMessagePages, openCode: openCode,
 		maxConversations: MaxSessionConversations, maxRows: MaxSessionRows, maxBytes: DefaultSessionBytes,
 		// A span is a server-side act, so it reuses a cached connection
 		// and a redial usually costs no mint.

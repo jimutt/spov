@@ -444,8 +444,12 @@ func (s *Service) firstConversation(ctx context.Context, conn Connection, sess s
 	if err != nil {
 		return "", fmt.Errorf("opening a conversation: %w", err)
 	}
-	// @decision(DL-014)
-	if err := setConversationModel(ctx, conn, id, sess.Request.Model); err != nil {
+	// @decision(DL-014) @decision(DL-188)
+	model, err := s.openingModel(ctx, conn, sess)
+	if err != nil {
+		return "", err
+	}
+	if err := setConversationModel(ctx, conn, id, model); err != nil {
 		s.deps.Warn(fmt.Sprintf("steer %s: setting the model: %s", sess.ID, redact.Error(err)))
 	}
 	if _, err := s.deps.Store.Conversations().UpsertConversation(ctx, store.Conversation{

@@ -172,6 +172,12 @@ type Deps struct {
 	//
 	// @decision(DL-003)
 	StorePoll time.Duration
+	// ModelListPause is how long an opening waits between reads of a
+	// model list its sandbox has not built yet; zero is ModelListPause.
+	// A seam, as StorePoll is.
+	//
+	// @decision(DL-188)
+	ModelListPause time.Duration
 	// TrustedProxies are the peers whose X-Forwarded-For the per-address
 	// limits read (server.trusted_proxies). Empty trusts no peer's.
 	//

@@ -34,6 +34,9 @@
   import RoutedCredentials from './RoutedCredentials.svelte';
   import Templates from './Templates.svelte';
   import ModelPicker from './ModelPicker.svelte';
+  import ReasoningPicker from './ReasoningPicker.svelte';
+  import { formModes, keptMode, modeOf } from '../lib/reasoning';
+  import { withModeOf, withoutVariant } from '../lib/jobform';
   import OpenCodeConnect from './OpenCodeConnect.svelte';
   import OrgSettings from './OrgSettings.svelte';
   import Allowlist from './Allowlist.svelte';
@@ -119,6 +122,16 @@
 
   // A stale note is worse than none: "will run on X" beside a select
   // showing Y, or a refusal of a model no longer chosen.
+  // The stored default with another model chosen: the same model keeps
+  // its mode, another keeps it only where the read list offers it, and
+  // nothing is judged before the list is read. @decision(DL-189)
+  function chosenModel(next: string): string {
+    if (next === withoutVariant(model.value) || !models.loaded) {
+      return next ? withModeOf(next, modeOf(model.value)) : next;
+    }
+    return withModeOf(next, keptMode(modeOf(model.value), formModes(models.data?.providers, next)));
+  }
+
   function reconsider() {
     note = '';
     failure = undefined;
@@ -270,9 +283,11 @@
     <label class={fieldLabel} for="settings-model">Model</label>
     <div class="mb-5">
       <!-- @decision(DL-061) -->
+      <!-- The stored default is provider/model#mode; the pickers show
+           its two halves. @decision(DL-189) -->
       <ModelPicker
         id="settings-model"
-        bind:value={model.value}
+        bind:value={() => withoutVariant(model.value), (v) => (model.value = chosenModel(v))}
         {groups}
         defaultLabel="No default: OpenCode chooses"
         onchange={reconsider}
@@ -283,6 +298,16 @@
         <p class={help}>{keys}</p>
       {/if}
     </div>
+    {#if withoutVariant(model.value)}
+      <ReasoningPicker
+        id="settings-reasoning"
+        bind:value={() => modeOf(model.value), (m) => (model.value = withModeOf(withoutVariant(model.value), m))}
+        modes={formModes(models.data?.providers, model.value)}
+        known={models.loaded}
+        note="Not offered for this model now: a launch on your default runs on the model's own default instead."
+        onchange={reconsider}
+      />
+    {/if}
 
     <!-- role="status": it reports the server's answer, and nothing
          went wrong, so it is announced politely. -->

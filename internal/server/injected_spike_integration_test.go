@@ -132,6 +132,13 @@ func TestIntegrationSOI1InjectedMessages(t *testing.T) {
 			}
 		case m.Metadata["source"] == "shell":
 			kinds["shell"]++
+			// The server serves the output without OpenCode's wrapper,
+			// which a renamed wrapper would leave in place.
+			parts := syntheticParts{Description: m.Description, Metadata: m.Metadata, Text: m.Text}
+			if in, text := injectedOf(parts, m.Text); in == nil || in.Shell == nil || strings.Contains(text, "result kind=") ||
+				strings.Contains(text, "<shell ") {
+				t.Errorf("the server does not unwrap this build's shell result: %q", clip(text, 200))
+			}
 		case m.Metadata["instruction"] != nil:
 			kinds["instructions"]++
 		default:

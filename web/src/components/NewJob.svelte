@@ -29,6 +29,8 @@
   import { listTemplates, templateAccessLabel } from '../lib/templates';
   import Problem from './Problem.svelte';
   import ModelPicker from './ModelPicker.svelte';
+  import ReasoningPicker from './ReasoningPicker.svelte';
+  import { formModes, keptMode } from '../lib/reasoning';
   import RepoPicker from './RepoPicker.svelte';
   import TemplatePicker from './TemplatePicker.svelte';
   import { field, fieldBase, fieldMono, help, label, more, moreSummary, pageTitle, primaryLarge } from './ui';
@@ -50,6 +52,8 @@
   let failure = $state<unknown>(undefined);
 
   const groups = $derived(modelGroups(models.data?.providers));
+  // @decision(DL-189)
+  const modes = $derived(formModes(models.data?.providers, draft.model));
   const problems = $derived(draftProblems(draft));
   const keys = $derived(keyNote(groups));
   // @decision(DL-061)
@@ -176,7 +180,14 @@
       <div class="mb-7 min-w-0">
         <label class={label} for="job-model">Model</label>
         <!-- @decision(DL-061) -->
-        <ModelPicker id="job-model" bind:value={draft.model} {groups} defaultLabel={inheritLabel} describedby="job-model-notes" />
+        <ModelPicker
+          id="job-model"
+          bind:value={draft.model}
+          {groups}
+          defaultLabel={inheritLabel}
+          describedby="job-model-notes"
+          onchange={() => (draft.mode = keptMode(draft.mode, formModes(models.data?.providers, draft.model)))}
+        />
         <!-- Pointed at by the select's aria-describedby. Both notes exist
              because a disabled option is commonly skipped by a screen
              reader, and the first one explains the value already selected —
@@ -190,6 +201,9 @@
           {/if}
         </div>
       </div>
+
+      <!-- @decision(DL-189) -->
+      <ReasoningPicker id="job-reasoning" bind:value={draft.mode} {modes} known={models.loaded} />
 
       <div class="mb-7 min-w-0">
         <label class={label} for="job-clock">Time limit</label>

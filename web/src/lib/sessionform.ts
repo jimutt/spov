@@ -1,6 +1,6 @@
 import { ApiError, type Problem } from "./api/client";
 import type { components } from "./api/types";
-import { Committed, sessionPath, type RepoRef } from "./jobform";
+import { Committed, sessionPath, withModeOf, type RepoRef } from "./jobform";
 
 /**
  * The session form's logic: a repository picker and the account's
@@ -30,9 +30,10 @@ export function sessionProblems(repos: RepoRef[]): string[] {
  *
  * @decision(DL-061) @decision(DL-121)
  */
-export function toSessionRequest(repos: RepoRef[], model = "", template = ""): SessionRequest {
+export function toSessionRequest(repos: RepoRef[], model = "", template = "", mode = ""): SessionRequest {
   const body: SessionRequest = { repos };
-  if (model.trim()) body.model = model.trim();
+  // @decision(DL-189)
+  if (model.trim()) body.model = withModeOf(model.trim(), mode);
   if (template) body.template = template;
   return body;
 }
@@ -58,8 +59,9 @@ export async function startAndGo(
   go: (url: string) => void,
   model = "",
   template = "",
+  mode = "",
 ): Promise<void> {
-  const r = await post(toSessionRequest(repos, model, template));
+  const r = await post(toSessionRequest(repos, model, template, mode));
   if (!r.response.ok) throw new ApiError(r.response.status, r.error as Problem | undefined);
   const id = r.data?.id;
   if (!id) {
