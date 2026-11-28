@@ -143,7 +143,7 @@ describe("a schedule's page", () => {
     confirmRun(target);
     await settle();
     const link = target.querySelector('[data-testid="schedule-started"] a') as HTMLAnchorElement | null;
-    expect(link?.getAttribute("href")).toBe("/session/?id=job-01JOB");
+    expect(link?.getAttribute("href")).toBe("/session/?id=job-01job");
   });
 
   it("says why a run did not start", async () => {

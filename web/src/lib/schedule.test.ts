@@ -145,7 +145,8 @@ describe("a schedule's runs", () => {
     expect(outcomeWord({ ...at, outcome: "started", reason: "already run" })).toBe("Already run");
     expect(outcomeWord({ ...at, outcome: "missed", missed: 5 })).toBe("5 runs missed");
     expect(outcomeWord({ ...at, outcome: "skipped" })).toBe("Skipped");
-    expect(jobPage("01ABC")).toBe("/session/?id=job-01ABC");
+    // The server names a job's session with the id in lower case.
+    expect(jobPage("01M8HS2H1S35XJ5PGQ3Y0DX4HA")).toBe("/session/?id=job-01m8hs2h1s35xj5pgq3y0dx4ha");
     expect(pausedLine("paused by a@b.test")).toBe("Paused by a@b.test");
     expect(pausedLine("3 failed runs in a row")).toBe("Paused: 3 failed runs in a row");
     expect(pausedLine("")).toBe("Paused");

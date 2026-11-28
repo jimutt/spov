@@ -205,9 +205,12 @@ export function pausedLine(reason?: string | null): string {
   return /^paused\b/i.test(r) ? r[0].toUpperCase() + r.slice(1) : `Paused: ${r}`;
 }
 
-/** A job's session page, by the name its session has. */
+/**
+ * A job's session page, by the name its session has: "job-" and the
+ * job's id in lower case, as the server's jobSessionName makes it.
+ */
 export function jobPage(jobID: string): string {
-  return `/session/?id=job-${encodeURIComponent(jobID)}`;
+  return `/session/?id=job-${encodeURIComponent(jobID.toLowerCase())}`;
 }
 
 /** A schedule's own page, by its id, which reaches it for an admin too. */
